@@ -12,10 +12,18 @@ wifi.powersave=2
 wifi.backend=wpa_supplicant
 '
 
+# sm8550-wifi-backend.path watches these files, and PathChanged/PathModified
+# also fire on attribute changes (IN_ATTRIB). A chown/chmod that changes
+# nothing still counts. NetworkManager's ExecStartPre/ExecStartPost run this
+# script outside the service, so each of those runs restarted the service;
+# at boot that passed the start limit and systemd stopped the path unit,
+# leaving nothing to undo Steam switching to iwd. Only touch a file that is
+# actually wrong.
 write_one() {
   local dest="$1"
   mkdir -p "$(dirname "$dest")"
   if [[ -f "$dest" ]] && cmp -s <(printf '%s' "$BODY") "$dest"; then
+    [[ "$(stat -c '%u:%g %a' "$dest" 2>/dev/null)" == "0:0 644" ]] && return 0
     chown root:root "$dest" 2>/dev/null || true
     chmod 0644 "$dest" 2>/dev/null || true
     return 0
