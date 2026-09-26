@@ -4,7 +4,7 @@
 
 ## What these tools do
 
-The scripts in **steamos-oficial/external-and-mods/ufs-install** repartition the **internal UFS** storage on Qualcomm SM8550 handhelds (AYN Odin 2 and similar) to install **this project's SteamOS** alongside **Android**, using a **ROCKNIX ABL** dual-boot layout with **three Linux partitions** (`ROCKNIX` + `STORAGE` + `HOME`).
+The scripts in **external-and-mods/ufs-install** repartition the **internal UFS** storage on Qualcomm SM8650 handhelds (KONKR Pocket FIT; AYANEO Pocket S2 untested) to install **this project's SteamOS** alongside **Android**, using a **ROCKNIX ABL** dual-boot layout with **three Linux partitions** (`ROCKNIX` + `STORAGE` + `HOME`).
 
 This is **not** a supported manufacturer procedure. It is an **experimental community tool**.
 
@@ -24,13 +24,13 @@ After installation or a failed attempt:
 
 - **Android may not boot** until you perform a **factory data reset** from recovery (expected after userdata wipe).
 - **Linux may not boot** from microSD or from internal UFS if the kernel, partitions, or cmdline are wrong (black screen, hang, etc.).
-- **Both systems can fail** at the same time, leaving the device unusable without recovery steps (recovery mode, SD boot, ABL “Uninstall ROCKNIX”, EDL flash, etc.).
+- **Both systems can fail** at the same time, leaving the device unusable without recovery steps (recovery mode, SD boot, ABL “UNINSTALL CFW”, EDL flash, etc.).
 
 ## Requirements (your responsibility)
 
 - **ROCKNIX ABL** already installed and working (1.1.8 or compatible).
 - Boot **SteamOS from microSD** (not from UFS) when running the installer.
-- A **UFS-capable `/boot/KERNEL`** from this project's kernel build (`root=UUID=` + `masi.ufsroot=PARTLABEL=STORAGE`).
+- A current **`/boot/KERNEL`** from this project's SM8650 kernel build (its initramfs mounts `root=PARTLABEL=STORAGE`, and the UFS drivers are built in). The installer checks both.
 - Correct **ABL device profile** (“Set the Device” → your exact model).
 
 ## No warranty
@@ -59,7 +59,7 @@ If you do not agree, **do not run the installer**.
 
 ## Other UFS layouts
 
-These scripts target the **SteamOS three-partition layout** (`ROCKNIX` + `STORAGE` + `HOME`). They will **refuse** an old two-partition `ROCKNIX` + `STORAGE` install. Use ABL **Uninstall ROCKNIX** (and remove a leftover `HOME` if needed) before a fresh install.
+These scripts target the **SteamOS three-partition layout** (`ROCKNIX` + `STORAGE` + `HOME`) placed directly after Android `userdata`. They **refuse** to install when any other partition already follows `userdata` (another distro, an old two-partition install, leftovers). Use ABL **UNINSTALL CFW** (and remove a leftover `HOME` if needed) before a fresh install.
 
 ## License
 

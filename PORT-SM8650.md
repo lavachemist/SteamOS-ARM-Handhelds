@@ -98,7 +98,7 @@ which would fight `konkrd` over the fan and drive AYN-only LEDs.
 | GPU userspace | patched A740 Turnip | Frame's stock Turnip/zink (A750) |
 | Controller | `rsinput` serial MCU | USB XInput pad → InputPlumber `deck-uhid` (+ optional MCU link) |
 | Audio | `AYN-Odin2` | `SM8650-APS2`: WSA884x speakers + WCD939x, ROCKNIX UCM |
-| UFS installer | shipped | not shipped (SM8550 layouts; unvalidated here) |
+| UFS installer | shipped | ported: single-write `sfdisk` repartition (from Armada), `root=PARTLABEL=STORAGE` via the initramfs; installed and booted from UFS on a Pocket FIT |
 
 ## Build (Mac → Colima, native arm64)
 

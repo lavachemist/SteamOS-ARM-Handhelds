@@ -12,18 +12,6 @@ warn() { printf '\033[1;33m[ufs-diagnose]\033[0m %s\n' "$*" >&2; }
 
 [[ $EUID -eq 0 ]] || { echo "Run as root: sudo $0"; exit 1; }
 
-detect_ufs_device() {
-  local dev
-  for dev in /dev/sd? /dev/nvme0n1 /dev/mmcblk?; do
-    [[ -b "$dev" ]] || continue
-    if lsblk -rn -o PARTLABEL "$dev" 2>/dev/null | grep -qx userdata; then
-      echo "$dev"
-      return
-    fi
-  done
-  echo ""
-}
-
 part_by_label() {
   local device=$1 label=$2
   lsblk -rn -o NAME,PARTLABEL "$device" | awk -v l="$label" '$2==l {print "/dev/"$1; exit}'
@@ -46,6 +34,13 @@ if [[ -z "$DEVICE" ]]; then
 fi
 
 log "Internal UFS: ${DEVICE}"
+
+MODULAR="$(ufs_modular_drivers)"
+if [[ -n "$MODULAR" ]]; then
+  warn "UFS drivers are loadable modules (${MODULAR}); internal boot cannot find its root. Rebuild the kernel with them =y."
+else
+  log "UFS drivers: built into the kernel (OK for internal boot)"
+fi
 
 echo
 echo "--- Partition table ---"
@@ -81,7 +76,7 @@ case "$LAYOUT" in
     echo "  Old MaSi-OS / ROCKNIX style (2 Linux partitions, no HOME):"
     echo "    ROCKNIX  = boot / KERNEL  (${RK})"
     echo "    STORAGE  = Linux rootfs  (${ST})"
-    echo "  This SteamOS installer will not reuse that layout. Uninstall ROCKNIX first."
+    echo "  This SteamOS installer will not reuse that layout. Use ABL 'UNINSTALL CFW' first."
     ;;
   incompatible-or-partial)
     echo "  ROCKNIX present but STORAGE/HOME missing, or layout is incomplete."
@@ -100,8 +95,13 @@ esac
 echo
 echo "--- SD boot KERNEL (reference) ---"
 if [[ -f /boot/KERNEL ]]; then
-  file /boot/KERNEL
+  file /boot/KERNEL 2>/dev/null || true
   echo "SD /boot/KERNEL: $(describe_kernel_root /boot/KERNEL)"
+  if kernel_supports_partlabel_root /boot/KERNEL; then
+    log "SD KERNEL initramfs supports root=PARTLABEL= (UFS boot)"
+  else
+    warn "SD KERNEL initramfs has no root=PARTLABEL= support — update the SD image before installing"
+  fi
 else
   warn "/boot/KERNEL not found on SD"
 fi
@@ -116,8 +116,8 @@ if [[ -n "$RK" && -b "$RK" ]]; then
       echo "Internal KERNEL root target: $(describe_kernel_root /tmp/rkdiag/KERNEL)"
       if verify_ufs_rocknix_kernel_cmdline /tmp/rkdiag/KERNEL 2>/dev/null; then
         log "Internal KERNEL cmdline OK for UFS boot (root=PARTLABEL=STORAGE)"
-      elif verify_internal_kernel_cmdline /tmp/rkdiag/KERNEL 2>/dev/null; then
-        warn "Internal KERNEL still has SD root=UUID= — UFS boot may black-screen without SD"
+      elif kernel_targets_sd_root /tmp/rkdiag/KERNEL; then
+        warn "Internal KERNEL still boots the microSD root — UFS boot fails without the SD"
         warn "Fix: sudo ./ufs-fix-internal-boot.sh --kernel-only"
       else
         warn "Internal KERNEL cmdline wrong — Linux will not boot from UFS"
@@ -139,6 +139,12 @@ if [[ -n "$ST" && -b "$ST" ]]; then
   if mount "$ST" /tmp/stdiag 2>/dev/null; then
     df -h /tmp/stdiag
     [[ -f /tmp/stdiag/etc/fstab ]] && { echo "fstab:"; cat /tmp/stdiag/etc/fstab; }
+    if [[ "$(readlink /tmp/stdiag/etc/systemd/system/systemd-repart.service)" == /dev/null ]]; then
+      log "systemd-repart masked on STORAGE (OK)"
+    else
+      warn "systemd-repart not masked on STORAGE; it may add partitions to internal storage at boot"
+      warn "Fix: sudo ./ufs-fix-internal-boot.sh --fstab-only"
+    fi
     umount /tmp/stdiag
   else
     warn "Could not mount ${ST} (empty or corrupt?)"
@@ -178,12 +184,12 @@ case "$LAYOUT" in
   old-2part)
     echo "  Expected layout:    ROCKNIX + STORAGE + HOME"
     echo "  This device has:    ROCKNIX + STORAGE only"
-    echo "  Action:             ABL 'Uninstall ROCKNIX', then fresh SteamOS UFS install"
+    echo "  Action:             ABL 'UNINSTALL CFW', then fresh SteamOS UFS install"
     ;;
   incompatible-or-partial|mixed-or-unknown)
     echo "  Expected layout:    ROCKNIX + STORAGE + HOME"
     echo "  Partial install:    sudo ./install-masios-to-internal.sh --deploy-only"
-    echo "  Other layouts:      ABL 'Uninstall ROCKNIX' (remove leftover HOME if needed)"
+    echo "  Other layouts:      ABL 'UNINSTALL CFW' (remove leftover HOME if needed)"
     echo "  Boot/cmdline fix:   only if ROCKNIX + STORAGE + HOME already exist"
     ;;
   android-only)
@@ -193,6 +199,6 @@ esac
 echo
 echo "  Restore full Android userdata size (expand partition):"
 echo "    NOT done by ufs-fix-internal-boot.sh"
-echo "    Use ABL 'Uninstall ROCKNIX' OR EDL flash"
-echo "    ABL Uninstall may leave HOME; delete that partition if it remains."
+echo "    Use ABL 'UNINSTALL CFW' (or an EDL flash)"
+echo "    UNINSTALL CFW may leave HOME; delete that partition if it remains."
 echo "================================================================"

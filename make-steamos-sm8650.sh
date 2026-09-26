@@ -410,11 +410,6 @@ EOF
   # Decky / MESA / UFS ask for the user password on first boot.
   restore_image_suid "${MNT}/root"
 
-  # The Easy UFS Installer (external-and-mods/ufs-install) repartitions
-  # SM8550 UFS layouts; it is not validated on SM8650 and is not shipped.
-  sudo_run rm -f "${MNT}/root/usr/share/applications/easy-ufs-install.desktop" \
-    "${MNT}/root/usr/share/applications/ufs-install.desktop" 2>/dev/null || true
-
   log "Copying /home/steamos"
   if [[ -d "${R}/home/steamos" ]]; then
     sudo_run mkdir -p "${MNT}/home/steamos"
