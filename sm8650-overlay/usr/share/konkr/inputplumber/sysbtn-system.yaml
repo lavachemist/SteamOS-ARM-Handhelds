@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/capability_map_v2.json
-# Variant: steam (trackpad clicks, remappable in Steam)
+# Variant: system (F13/F14 for konkrd actions)
 # MCU "system" buttons from konkr_sysbtn (the MCU link, on by default).
 # IDs follow the Elite driver (ROCKNIX 0069); positions verified on a
 # Pocket FIT:
@@ -26,11 +26,11 @@ name: KONKR Pocket FIT MCU buttons (Steam Deck layout)
 id: konkr_pocketfit_sysbtn
 
 mapping:
-  - name: K → right trackpad click
+  - name: K → F13 (konkrd)
     source_events:
       - evdev: {event_type: KEY, event_code: BTN_TRIGGER_HAPPY1, value_type: button}
     target_event:
-      touchpad: {name: RightPad, touch: {button: Press}}
+      keyboard: KeyF13
   - name: = → Quick Access
     source_events:
       - evdev: {event_type: KEY, event_code: BTN_TRIGGER_HAPPY2, value_type: button}
@@ -46,10 +46,10 @@ mapping:
       - evdev: {event_type: KEY, event_code: BTN_TRIGGER_HAPPY4, value_type: button}
     target_event:
       gamepad: {button: RightPaddle2}
-  - name: Custom Function → left trackpad click
+  - name: Custom Function → F14 (konkrd)
     source_events:
       - evdev: {event_type: KEY, event_code: BTN_TRIGGER_HAPPY5, value_type: button}
     target_event:
-      touchpad: {name: LeftPad, touch: {button: Press}}
+      keyboard: KeyF14
 
 filtered_events: []

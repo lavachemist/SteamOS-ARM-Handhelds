@@ -524,8 +524,8 @@ if [[ -d "$R/var/lib/overlays/etc/upper" ]]; then
 
   ln -sfn /usr/lib/systemd/system/konkrd.service \
     "$R/var/lib/overlays/etc/upper/systemd/system/multi-user.target.wants/konkrd.service"
-  # MCU link is on by default (verified on the Pocket FIT: Quick Access and
-  # Performance buttons, stick RGB). konkrctl mcu disable re-blacklists it.
+  # MCU link is on by default (verified on the Pocket FIT: =, Custom Function,
+  # K, LC and RC buttons, stick RGB). konkrctl mcu disable re-blacklists it.
   # The build rootfs is reused across builds, so drop a blacklist left by
   # testing `konkrctl mcu disable` — v1.0/v1.1 shipped with the buttons dead.
   rm -f "$R/etc/modprobe.d/konkr-mcu.conf" "$R/var/lib/overlays/etc/upper/modprobe.d/konkr-mcu.conf"

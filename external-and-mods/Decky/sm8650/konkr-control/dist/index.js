@@ -30,6 +30,7 @@ const setMcu = callable("set_mcu");
 const setFan = callable("set_fan");
 const setButton = callable("set_button");
 const setPowerLed = callable("set_power_led");
+const setButtonsMode = callable("set_buttons_mode");
 
 const PROFILES = [
     { data: "silent", label: "Silent", desc: "Quiet fan, GPU capped at 75%, no game boost" },
@@ -53,6 +54,8 @@ const ACTIONS = [
 ];
 
 const row = (child) => jsx(DFL.PanelSectionRow, { children: child });
+// Separate lines in a field description.
+const lines = (...items) => jsx("div", { children: items.map((t, i) => jsx("div", { children: t }, i)) });
 const note = (text) => row(jsx("div", { style: { fontSize: "12px", opacity: 0.75 }, children: text }));
 
 function Content() {
@@ -72,6 +75,7 @@ function Content() {
     const prof = PROFILES.find((p) => p.data === st.profile) || PROFILES[1];
     const fan = st.fan || { mode: "auto", fixed: 50, boost: false };
     const buttons = st.buttons || {};
+    const steamButtons = (st.buttons_mode || "steam") === "steam";
     const status = [
         st.temp_c != null ? `${st.temp_c} °C` : null,
         st.fan_rpm != null ? `fan ${st.fan_rpm} rpm (${Math.round((st.fan_pwm || 0) / 2.55)}%)` : null,
@@ -136,19 +140,32 @@ function Content() {
             })),
         ] }),
         jsxs(DFL.PanelSection, { title: "Buttons", children: [
-            row(jsx(DFL.DropdownItem, {
-                label: "KONKR button",
-                rgOptions: ACTIONS,
-                selectedOption: buttons.F13 || "rgb-next",
-                onChange: (o) => setButton("F13", o.data).then(refresh),
+            row(jsx(DFL.ToggleField, {
+                label: "Steam Remap",
+                description: steamButtons
+                    ? lines("Custom Function = Left Trackpad Click", "K = Right Trackpad Click", "Bind them in controller settings.")
+                    : "Off: buttons map to actions selected below",
+                checked: steamButtons,
+                onChange: (v) => setButtonsMode(v ? "steam" : "system").then(() => {
+                    toaster.toast({ title: "KONKR Control", body: "Buttons switched, controller reconnects" });
+                    refresh();
+                }),
             })),
             row(jsx(DFL.DropdownItem, {
-                label: "Performance button",
+                label: "Custom Function",
+                disabled: steamButtons,
                 rgOptions: ACTIONS,
                 selectedOption: buttons.F14 || "profile-next",
                 onChange: (o) => setButton("F14", o.data).then(refresh),
             })),
-            note("Home = Steam button · right front button = Quick Access · Power: tap to sleep, hold for the power menu"),
+            row(jsx(DFL.DropdownItem, {
+                label: "K",
+                disabled: steamButtons,
+                rgOptions: ACTIONS,
+                selectedOption: buttons.F13 || "rgb-next",
+                onChange: (o) => setButton("F13", o.data).then(refresh),
+            })),
+            note("Navigation → Steam · = → Quick Access · Power: tap to sleep, hold for the power menu"),
         ] }),
         jsxs(DFL.PanelSection, { title: "Hardware", children: [
             row(jsx(DFL.ToggleField, {
@@ -164,7 +181,7 @@ function Content() {
     ] });
 }
 
-// Toast whenever the profile or fan boost changes (KONKR button, konkrctl or
+// Toast whenever the profile or fan boost changes (K / Custom Function, konkrctl or
 // this panel), like Android's on-screen mode switch. Registered at plugin
 // load, so it works with Quick Access closed and over games.
 const MODE_TOAST = {

@@ -19,22 +19,34 @@ AYANEO Pocket S2 shares the ROCKNIX dtsi and gets a DTB too (untested).
 
 ### Controls (Steam sees a real Steam Deck controller)
 
-| Pocket FIT | Steam | Source |
+| Pocket FIT (official name, position) | Steam | Source |
 |------------|-------|--------|
-| KONKR / home (`BTN_MODE`) | Steam button | USB pad |
-| extra front button (`BTN5`) | Quick Access (…) | USB pad |
-| LC1 / RC1 back buttons (`BTN_Z` / `BTN_C`) | L4 / R4 | USB pad |
-| KONKR (MCU) | Quick Access | MCU link* |
-| LC / RC next to the shoulders | L5 / R5 | MCU link* |
-| front-top-right (Performance) | F14 → cycle **Silent / Balanced / Turbo** | MCU link* |
-| front-bottom-right | F13 → cycle stick RGB preset | MCU link* |
-| Hall triggers (either trigger mode), sticks, D-pad, ABXY, Start/Select | as on a Deck | USB pad |
+| **Navigation** (above the left stick, `BTN_MODE`) | Steam button | USB pad |
+| **=** (smaller button below the right stick) | Quick Access (…) | MCU link* |
+| **LC1 / RC1** (back, `BTN_Z` / `BTN_C`) | L4 / R4 | USB pad |
+| **LC / RC** (top, next to the bumpers) | L5 / R5 | MCU link* |
+| **Custom Function** (above ABXY) | **Left Trackpad Click** (remappable in Steam) or F14 action | MCU link* |
+| **K** (larger button below the right stick) | **Right Trackpad Click** (remappable in Steam) or F13 action | MCU link* |
+| **View / Menu**, Hall triggers (either trigger mode), sticks, D-pad, ABXY | as on a Deck | USB pad |
+
+The Deck controller has no spare buttons (L4/R4/L5/R5 are in use), but the
+Pocket FIT has no trackpads, so their clicks are free: by default the Custom
+Function and K buttons send them and can be bound per game in Steam.
+KONKR Control → Buttons → **Steam Remap** off (or `konkrctl buttons
+system`) makes them send F13/F14 instead, and `konkrd` runs the action picked
+there (default: F14 cycles **Silent / Balanced / Turbo**, F13 cycles the stick
+RGB preset). konkrd swaps the InputPlumber capability map and restarts it,
+because InputPlumber 0.78 profiles can't translate trackpad clicks.
+
+The pad itself comes in two firmware modes: Xbox (`045e:028e`, xpad) and HID
+(`4001:0428` "AYANEO Controller", hid-generic, right stick on `ABS_Z/ABS_RZ`).
+Each has its own capability map.
 
 \*The **MCU link** is the ROCKNIX `konkr_sysbtn` UART driver (written for the
 Pocket FIT Elite), bound to the FIT's controller UART (`uart13 @894000`). It
 works on the regular FIT and is on by default. `konkrctl mcu disable` turns it
 off; `konkrctl monitor` shows which button sends what. Button actions live in
-`/etc/konkrd.conf`.
+`/etc/konkrd.conf` and KONKR Control.
 
 ### Performance: why Linux was slower than GameNative on Android, and the fixes
 
@@ -80,7 +92,7 @@ konkr-game compat %command%    # strict TSO / split locks for crashing games
 - Power LED (PM8550 LPG, RGB): profile colour flash on change (blue/green/red),
   then amber while charging, green when full, red pulse below 15%.
 - Stick RGB rings (MCU link): static / breath / rainbow / off from KONKR
-  Control, `konkrctl rgb`, or the front-bottom-right button.
+  Control, `konkrctl rgb`, or the K button (system button mode).
 
 ### Quick Access panel: KONKR Control (Decky)
 
