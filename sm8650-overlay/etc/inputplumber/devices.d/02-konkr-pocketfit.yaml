@@ -39,6 +39,15 @@ source_devices:
       product_id: "0002"
       handler: event*
     capability_map_id: konkr_pocketfit_deck
+  # HID gamepad firmware ("AYANEO Controller"): hid-generic puts the right
+  # stick on ABS_Z/ABS_RZ and swaps X/Y vs xpad, so it needs its own map.
+  # Listed before the internal-port catch-all below so it wins.
+  - group: gamepad
+    evdev:
+      vendor_id: "4001"
+      product_id: "0428"
+      handler: event*
+    capability_map_id: konkr_pocketfit_hid
   # Whatever is on the pad's internal USB port: some units report another
   # USB id (controller mode/firmware), and unclaimed, Steam shows the raw pad
   # with the Xbox layout and no Quick Access. InputPlumber matches phys_path

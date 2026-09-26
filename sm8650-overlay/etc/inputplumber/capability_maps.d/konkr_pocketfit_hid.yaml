@@ -1,0 +1,140 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/capability_map_v2.json
+# KONKR Pocket FIT built-in pad in its HID gamepad firmware mode: USB
+# 4001:0428 "AYANEO Controller", handled by hid-generic (not xpad) →
+# virtual Steam Deck controller.
+#
+# Layout, from the HID report descriptor and verified per control on a
+# Pocket FIT:
+#   right stick   Z / Rz  → ABS_Z / ABS_RZ   (xpad uses ABS_RX/RY; there
+#                                              ABS_Z/RZ are the triggers)
+#   triggers      Brake / Accelerator → ABS_BRAKE / ABS_GAS (also buttons 9/10)
+#   X / Y         button 4 / 5 → BTN_NORTH / BTN_WEST. InputPlumber's Deck
+#                 target sends North to the Deck's X and West to its Y (the
+#                 BTN_X/BTN_Y aliases), so these map straight through, as in
+#                 upstream's dinput_generic.
+#   back L / R    button 6 / 3 → BTN_Z / BTN_C
+#   KONKR / home  button 13 → BTN_MODE
+# The extra front and side buttons are not on this pad in HID mode; they
+# arrive through the MCU link (konkr_pocketfit_sysbtn).
+version: 2
+kind: CapabilityMap
+name: KONKR Pocket FIT HID firmware (Steam Deck layout)
+id: konkr_pocketfit_hid
+
+mapping:
+  - name: Steam
+    source_events:
+      - evdev: {event_type: KEY, event_code: BTN_MODE, value_type: button}
+    target_event:
+      gamepad: {button: Guide}
+
+  - name: A
+    source_events:
+      - evdev: {event_type: KEY, event_code: BTN_SOUTH, value_type: button}
+    target_event:
+      gamepad: {button: South}
+  - name: B
+    source_events:
+      - evdev: {event_type: KEY, event_code: BTN_EAST, value_type: button}
+    target_event:
+      gamepad: {button: East}
+  - name: X
+    source_events:
+      - evdev: {event_type: KEY, event_code: BTN_NORTH, value_type: button}
+    target_event:
+      gamepad: {button: North}
+  - name: Y
+    source_events:
+      - evdev: {event_type: KEY, event_code: BTN_WEST, value_type: button}
+    target_event:
+      gamepad: {button: West}
+
+  - name: Start
+    source_events:
+      - evdev: {event_type: KEY, event_code: BTN_START, value_type: button}
+    target_event:
+      gamepad: {button: Start}
+  - name: Select
+    source_events:
+      - evdev: {event_type: KEY, event_code: BTN_SELECT, value_type: button}
+    target_event:
+      gamepad: {button: Select}
+
+  - name: L1
+    source_events:
+      - evdev: {event_type: KEY, event_code: BTN_TL, value_type: button}
+    target_event:
+      gamepad: {button: LeftBumper}
+  - name: R1
+    source_events:
+      - evdev: {event_type: KEY, event_code: BTN_TR, value_type: button}
+    target_event:
+      gamepad: {button: RightBumper}
+
+  - name: L2
+    source_events:
+      - evdev: {event_type: ABS, event_code: ABS_BRAKE, value_type: trigger}
+    target_event:
+      gamepad: {trigger: {name: LeftTrigger}}
+  - name: R2
+    source_events:
+      - evdev: {event_type: ABS, event_code: ABS_GAS, value_type: trigger}
+    target_event:
+      gamepad: {trigger: {name: RightTrigger}}
+
+  - name: L4 (back left)
+    source_events:
+      - evdev: {event_type: KEY, event_code: BTN_Z, value_type: button}
+    target_event:
+      gamepad: {button: LeftPaddle1}
+  - name: R4 (back right)
+    source_events:
+      - evdev: {event_type: KEY, event_code: BTN_C, value_type: button}
+    target_event:
+      gamepad: {button: RightPaddle1}
+
+  - name: Left Stick
+    source_events:
+      - evdev: {event_type: ABS, event_code: ABS_X, value_type: joystick_x}
+      - evdev: {event_type: ABS, event_code: ABS_Y, value_type: joystick_y}
+    target_event:
+      gamepad: {axis: {name: LeftStick}}
+  - name: Right Stick
+    source_events:
+      - evdev: {event_type: ABS, event_code: ABS_Z, value_type: joystick_x}
+      - evdev: {event_type: ABS, event_code: ABS_RZ, value_type: joystick_y}
+    target_event:
+      gamepad: {axis: {name: RightStick}}
+  - name: L3
+    source_events:
+      - evdev: {event_type: KEY, event_code: BTN_THUMBL, value_type: button}
+    target_event:
+      gamepad: {button: LeftStick}
+  - name: R3
+    source_events:
+      - evdev: {event_type: KEY, event_code: BTN_THUMBR, value_type: button}
+    target_event:
+      gamepad: {button: RightStick}
+
+  - name: Dpad Left
+    source_events:
+      - evdev: {event_type: ABS, event_code: ABS_HAT0X, value_type: button, axis_direction: negative}
+    target_event:
+      gamepad: {button: DPadLeft}
+  - name: Dpad Right
+    source_events:
+      - evdev: {event_type: ABS, event_code: ABS_HAT0X, value_type: button, axis_direction: positive}
+    target_event:
+      gamepad: {button: DPadRight}
+  - name: Dpad Up
+    source_events:
+      - evdev: {event_type: ABS, event_code: ABS_HAT0Y, value_type: button, axis_direction: negative}
+    target_event:
+      gamepad: {button: DPadUp}
+  - name: Dpad Down
+    source_events:
+      - evdev: {event_type: ABS, event_code: ABS_HAT0Y, value_type: button, axis_direction: positive}
+    target_event:
+      gamepad: {button: DPadDown}
+
+filtered_events: []
