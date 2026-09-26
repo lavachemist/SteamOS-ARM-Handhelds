@@ -133,6 +133,11 @@ Output: `/work/steamos-sm8650.img`.
 
 ## Other stuff fixed on the Pocket FIT
 
+- Boot: quiet (no kernel text or boot logo; `CMDLINE_QUIET=0` for debugging,
+  the full log still lands in `bootlog.txt`). Game Mode starts ~4.3 s after
+  power-on instead of ~7.3 s: speaker setup no longer holds boot while the
+  ADSP loads (WirePlumber waits for it instead), and the Deck's `atomupd` and
+  `steamos-boot` are masked (no A/B slots here; `steamos-boot` never finished).
 - Standby: the Frame's ADB, USB gadget, power monitor and FPGA services are
   masked since they just crash-loop and keep the SoC awake. Sleep runs
   `konkr-standby`, which turns the panel off, freezes the session, takes the

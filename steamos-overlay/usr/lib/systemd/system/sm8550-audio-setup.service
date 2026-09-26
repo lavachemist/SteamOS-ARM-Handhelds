@@ -4,12 +4,17 @@ After=sound.target systemd-modules-load.service
 Wants=sound.target
 
 [Service]
-Type=oneshot
+# Type=exec, not oneshot: the script waits for the ASoC card, which only
+# appears once the ADSP firmware is up (~9 s after power-on on the Pocket FIT).
+# As a oneshot wanted by multi-user.target it held multi-user/graphical, and
+# with them the start of Game Mode, for those ~4 s. Nothing needs it finished
+# first (konkr-volume re-applies the amp gain), and the udev rule starts it
+# again, a no-op thanks to RemainAfterExit, when the card appears.
+Type=exec
 RemainAfterExit=yes
 StandardOutput=journal
 StandardError=journal
 ExecStart=/usr/lib/steamos/sm8550-audio-setup
 
 [Install]
-WantedBy=multi-user.target
-sound.target
+WantedBy=multi-user.target sound.target
