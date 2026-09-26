@@ -9,8 +9,11 @@ ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 R="${1:-${ROOT}/rootfs}"
 OVL="${ROOT}/steamos-overlay"
 CACHE="${ROOT}/external-and-mods/InputPlumber"
-IP_VER="${INPUTPLUMBER_VERSION:-0.78.1}"
-TGZ="${CACHE}/inputplumber-aarch64.tar.gz"
+# >= 0.79 drives the Pocket FIT's rumble motors (hidraw ayaneo_haptics source).
+IP_VER="${INPUTPLUMBER_VERSION:-0.81.0}"
+# Versioned cache name: an unversioned one silently kept an older cached
+# tarball after IP_VER was bumped.
+TGZ="${CACHE}/inputplumber-${IP_VER}-aarch64.tar.gz"
 TGZ_URL="https://github.com/ShadowBlip/InputPlumber/releases/download/v${IP_VER}/inputplumber-aarch64.tar.gz"
 
 log() { printf '==> [inputplumber] %s\n' "$*"; }
@@ -36,6 +39,12 @@ install_tarball() {
     fetch "$TGZ_URL" "$TGZ"
   fi
   [[ -s "$TGZ" ]] || die "missing ${TGZ}"
+  fetch "${TGZ_URL}.sha256.txt" "${TGZ}.sha256.txt"
+  local want got
+  want="$(awk '{print $1; exit}' "${TGZ}.sha256.txt")"
+  got="$(sha256sum "$TGZ" | awk '{print $1}')"
+  [[ -n "$want" && "$want" == "$got" ]] \
+    || die "InputPlumber ${IP_VER} tarball checksum mismatch (want ${want:-?}, got ${got}); delete ${TGZ} and retry"
   local stage="${CACHE}/extract"
   rm -rf "$stage"
   mkdir -p "$stage"

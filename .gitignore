@@ -55,6 +55,7 @@ __pycache__/
 /external-and-mods/InputPlumber/extract/
 /external-and-mods/InputPlumber/libiio-src/
 /external-and-mods/InputPlumber/*.tar.gz
+/external-and-mods/InputPlumber/*.tar.gz.sha256.txt
 
 # Valve Steam ARM client zips (fetch at image-build time)
 /external-and-mods/steam-client-arm64/
