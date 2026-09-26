@@ -1,44 +1,31 @@
-# SteamOS ARM on the KONKR Pocket FIT
+# SteamOS ARM on the KONKR Pocket FIT (fork)
 
-This is Valve's official SteamOS for ARM (the one made for the Steam Frame) running on the KONKR Pocket FIT. The Frame uses the same Snapdragon 8 Gen 3, so Valve's own graphics drivers just work on it. You get the proper Game Mode and the proper KDE desktop, same as on a Steam Deck.
+This repository is **[lavachemist](https://github.com/lavachemist)'s fork**
+of **[hashtagbasit/SteamOS-ARM-SM8650](https://github.com/hashtagbasit/SteamOS-ARM-SM8650)**,
+a port of Valve's official SteamOS for ARM (the Steam Frame image) to the KONKR
+Pocket FIT, which uses the same Snapdragon 8 Gen 3 (SM8650).
 
-It's based on [MaSi's SteamOS-ARM-SM8550](https://github.com/MaSieS4Fun/SteamOS-ARM-SM8550), and the kernel and device support come from [ROCKNIX](https://github.com/ROCKNIX/distribution). Huge thanks to both, full list in [CREDITS.md](CREDITS.md).
+## Who did what
 
-> [!NOTE]
-> **This is a fork.** The original SteamOS-ARM-SM8650 port is by **[hashtagbasit](https://github.com/hashtagbasit)**; this fork by **[lavachemist](https://github.com/lavachemist)** builds on its v1.1 (git tag `upstream-v1_1`) and adds the fixes listed under [Changes in this fork](#changes-in-this-fork). The rest of this README, written in the first person, is the original author's. Parts of this fork were developed with an AI coding assistant; see [How AI was used](#how-ai-was-used).
+| Part | Author(s) |
+|------|-----------|
+| The original SM8650 port: image builder, kernel packaging, Pocket FIT controls, performance and standby fixes, KONKR Control plugin, Android apps support. Everything up to v1.1 (git tag `upstream-v1_1`). | **[hashtagbasit](https://github.com/hashtagbasit)** |
+| The base that port is built on: SteamOS-ARM-SM8550 (image builder, SteamOS ARM overlay, scripts, the original UFS installer) | **[MaSi](https://github.com/MaSieS4Fun/SteamOS-ARM-SM8550)** |
+| Kernel, device tree, firmware, audio UCM, ABL bootloader | **[ROCKNIX](https://github.com/ROCKNIX)** |
+| The changes listed under [Changes in this fork](#changes-in-this-fork) | **lavachemist**, working with **Claude Opus 5.5** (Anthropic) via Claude Code; see [How AI was used](#how-ai-was-used) |
+| Code and fixes this fork uses from other projects | See [Credits](#credits) |
+
+All other files in the repository keep the authorship shown in `git log`.
+Anything not listed under [Changes in this fork](#changes-in-this-fork) is
+the original port's work, described here in summary. Its own documentation
+is in [PORT-SM8650.md](PORT-SM8650.md), which this fork has extended with
+notes on its changes.
 
 > [!WARNING]
-> I've only tested this on my Pocket FIT. There's a device tree for the AYANEO Pocket S2 too, but nobody has booted it yet.
-> First boot takes a couple of minutes, don't panic.
-
-## What's working
-
-Pretty much everything you'd expect:
-
-- Game Mode, Desktop Mode, Steam store and downloads
-- x86 games through FEX, plus ARM64 Proton
-- the controller shows up as a Steam Deck controller, back buttons too
-- every button remappable in Steam, including Custom Function and K (or set them to cycle performance profiles and stick RGB)
-- performance overlay
-- 60/90/120/144Hz, Steam switches it based on the frame limit you pick
-- Lossless Scaling frame gen through the decky-lsfg-vk plugin
-- Decky, plus a small KONKR Control plugin for profiles, fan, temps and lighting
-- wifi, audio, touchscreen, rumble
-- optional install to internal storage next to Android
-- Discover and the on-screen keyboard in desktop mode
-
-## Why this one
-
-The Steam Frame image is built for a VR headset, and other ARM builds pretty much ship it as is. A bunch of Frame services just sit there crashing in the background, which is a big part of why standby drains so fast on them. I turned all of that off and fixed what was broken:
-
-- standby that actually saves battery, around 1W instead of 3W+
-- a proper fan curve. ROCKNIX leaves the fan stuck at ~27% so the chip just cooks and throttles
-- GPU goes up to 903MHz like on Android, instead of 834
-- games and the Steam UI don't get parked on the slow little cores, so menus feel way snappier
-- ARM64 Proton games like Dying Light don't hang on the splash screen anymore
-- controls keep working after you open and close Quick Access
-- the performance overlay works (it was turned off on the SM8550 build)
-- lsfg works on ARM. The plugin only comes with an x86 version, so I built and patched one ([lsfg-vk-arm64](https://github.com/hashtagbasit/lsfg-vk-arm64) if you want it on another device)
+> This fork has only been tested on one KONKR Pocket FIT. The AYANEO Pocket
+> S2 has a device tree but has never been booted by anyone. Installing
+> requires flashing a third-party bootloader and, for internal storage,
+> erasing Android's user data.
 
 ## Changes in this fork
 
@@ -136,7 +123,74 @@ before it was committed, and the limits of each test are noted in the commit
 messages. Commits Claude helped write carry a `Co-Authored-By: Claude Opus
 5.5` trailer. As with any code, review it before relying on it.
 
-## Credits for this fork
+## What the original port provides
+
+A summary of hashtagbasit's port as of v1.1. See [PORT-SM8650.md](PORT-SM8650.md)
+for its own detailed notes.
+
+- Valve's Steam Frame SteamOS image on the Pocket FIT, with Game Mode and a
+  KDE Plasma desktop; the Frame's Adreno 750 graphics stack works unmodified.
+- x86 games through FEX, plus ARM64 Proton.
+- The controller presented to Steam as a Steam Deck controller (InputPlumber),
+  including the back buttons.
+- 60/90/120/144 Hz with Steam's frame limiter, and a working performance
+  overlay.
+- Frame generation via a patched aarch64 build of lsfg-vk and the
+  decky-lsfg-vk plugin.
+- Decky, plus the KONKR Control plugin (performance profile, fan, temperatures,
+  lighting, button actions).
+- Performance and power fixes over a stock Frame image: a real fan curve,
+  903 MHz GPU, game and UI threads kept off the little cores, and Frame
+  services that crash-looped on this hardware disabled (lower standby drain).
+- Performance profiles Silent / Balanced / Turbo (`konkrctl profile …`).
+- Experimental Android apps through Valve's Lepton with the Google Play Store
+  (`konkr-apk`; see [external-and-mods/konkr-android](external-and-mods/konkr-android/README.md)).
+
+Known issues listed by the original port: real kernel sleep (s2idle) doesn't
+wake reliably, so a custom standby is the default; the device gets hot (90 °C+)
+in heavy games; hardware rotation is disabled.
+
+## Installing
+
+**This fork has no prebuilt images.** The images on the
+[original project's releases page](https://github.com/hashtagbasit/SteamOS-ARM-SM8650/releases)
+are the original port (v1.0/v1.1) and **do not include any of this fork's
+changes**. To get them, build the image yourself (see [Building](#building)).
+
+Installing an image, as documented by the original port:
+
+1. Flash [ROCKNIX ABL](https://github.com/ROCKNIX/abl/releases) 1.1.8 or newer
+   to `abl_a` and `abl_b`. Android can still be booted from the ABL menu.
+2. Flash the `.img` to a 32 GB+ microSD card (balenaEtcher, Rufus or `dd`).
+3. Hold Volume Down while powering on, choose **Set device model** →
+   **KONKR Pocket FIT**, set the boot mode to **Linux** and select **START**.
+   The first boot takes a couple of minutes.
+
+The username is `steamos`; the password is set during setup. To move the
+system to internal storage afterwards, see the UFS installer above.
+
+## Useful commands
+
+```
+konkrctl status                  # profile, fan, clocks, temperatures
+konkrctl profile turbo           # silent | balanced | turbo
+konkrctl buttons steam           # Custom Function + K: remappable in Steam (default)
+konkrctl buttons system          # Custom Function + K: profile / RGB actions
+konkrctl rgb ff3c00              # stick colour
+konkrctl sleep s2idle            # try real kernel sleep (default is standby)
+konkr-game fast %command%        # FEX preset for launch options (also fastest / compat)
+```
+
+## Building
+
+Builds run in an arm64 Linux VM (for example Colima on a Mac). The kernel is
+in `external-and-mods/kernel-sm8650/`, gamescope in
+`external-and-mods/gamescope/`, and `make-steamos-sm8650.sh` produces the
+image; step-by-step notes are in [PORT-SM8650.md](PORT-SM8650.md). Valve's
+files and the Steam client aren't in this repository; the build downloads
+them.
+
+## Credits
 
 - **[hashtagbasit](https://github.com/hashtagbasit)**: the original
   SteamOS-ARM-SM8650 port this fork is based on.
@@ -157,73 +211,12 @@ messages. Commits Claude helped write carry a `Co-Authored-By: Claude Opus
 - **Claude Opus 5.5 (Anthropic), via Claude Code**: development assistance,
   as described above.
 
-The full list, including everything inherited from the SM8550 project, is in
-[CREDITS.md](CREDITS.md).
-
-## Profiles
-
-- **Silent**: GPU capped, quiet fan
-- **Balanced**: the default
-- **Turbo**: big cores pinned high, fan kicks in early
-
-Switch with the KONKR Control plugin, `konkrctl profile turbo` etc., or the Custom Function button in system button mode.
-
-## Installing
-
-1. Flash [ROCKNIX ABL](https://github.com/ROCKNIX/abl/releases) 1.1.8 or newer to `abl_a` and `abl_b`. Android still boots from its menu.
-2. Download all three `.7z` parts from [Releases](../../releases), open the `.001` one with 7-Zip or WinRAR (Keka or The Unarchiver on Mac) and extract it. Flash the `.img` you get to a 32GB+ microSD card with balenaEtcher or Rufus.
-3. Hold Volume Down while turning it on, go to Set device model, pick KONKR Pocket FIT, set boot mode to Linux and hit START.
-
-Username is `steamos`, you set the password during setup.
-
-## Handy commands
-
-```
-konkrctl status               # profile, fan, clocks, temps
-konkrctl sleep s2idle         # try real kernel sleep (default is standby)
-konkrctl rgb ff3c00           # stick colour
-konkr-game fast %command%     # FEX preset for launch options, also fastest / compat
-```
-
-## Android apps (experimental)
-
-Android apps run through Valve's Lepton (the Android layer the Steam Frame uses), with the Google Play Store built in. There's a Google Play Store title in your library after first login. Everything you install, from the Play Store or as an `.apk`/`.apkm`/`.xapk`/`.apks` (open it in Dolphin or drop it in `~/Android/Inbox`), shows up as its own Steam title with its icon. The first launch downloads Lepton through Steam.
-
-Apps run fullscreen with the touchscreen, the controller (as an Xbox pad) and a touch keyboard. Back/Home sit at the bottom left of Android's nav bar, Recents at the bottom right. Leave with Steam → Exit Game.
-
-```
-konkr-apk install Xbox.apkm   # same as opening it in Dolphin
-konkr-apk list
-konkr-apk remove com.gamepass
-```
-
-Games with anti-cheat that blocks emulators won't run. Android is Android 11 without Google certification, so some apps may complain. How it works is in [external-and-mods/konkr-android](external-and-mods/konkr-android/README.md).
-
-## Known issues
-
-- Real kernel sleep doesn't wake up reliably yet, that's why standby is the default.
-- It gets hot in heavy games, 90°C+ with the fan maxed out. Silent or a frame limit helps a lot.
-- Hardware rotation is off for now.
-
-## Building
-
-I build everything in an arm64 Linux VM (Colima on a Mac). Kernel is in `external-and-mods/kernel-sm8650/`, gamescope in `external-and-mods/gamescope/`, and `make-steamos-sm8650.sh` makes the image. More notes in [PORT-SM8650.md](PORT-SM8650.md).
-
-Valve's files and the Steam client aren't in this repo, the build downloads them.
-
-## Supporting the original project
-
-*(From the original author, hashtagbasit.)*
-
-I work on this in my spare time and it's free. If it got your Pocket FIT running the way you wanted, a coffee really helps.
-
-<p align="left">
-  <a href="https://ko-fi.com/aimalb"><img src="https://img.shields.io/badge/Ko--fi-Buy%20me%20a%20coffee-ff5e5b?style=for-the-badge&logo=kofi&logoColor=white" alt="Ko-fi"></a>
-  <a href="https://paypal.me/Basit2000"><img src="https://img.shields.io/badge/PayPal-Basit2000-00457c?style=for-the-badge&logo=paypal&logoColor=white" alt="PayPal"></a>
-</p>
-
-And go thank MaSi too, none of this happens without their SM8550 work.
+The full list, including everything the original port and the SM8550 project
+credit, is in [CREDITS.md](CREDITS.md).
 
 ## License
 
-Scripts and overlays are GPL-2.0, everything in `external-and-mods/` keeps its own license. See [LICENSE](LICENSE) and [CREDITS.md](CREDITS.md). Code in this fork adapted from Armada (`ufs-partition.py`) is GPL-2.0-or-later, as noted in that file.
+Scripts and overlays are GPL-2.0; everything in `external-and-mods/` keeps
+its own license. Code in this fork adapted from Armada (`ufs-partition.py`)
+is GPL-2.0-or-later, as noted in that file. See [LICENSE](LICENSE) and
+[CREDITS.md](CREDITS.md).
