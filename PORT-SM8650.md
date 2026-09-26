@@ -1,4 +1,21 @@
-# SteamOS-ARM → SM8650 (KONKR Pocket FIT)
+# SteamOS-ARM → SM8650 (KONKR Pocket FIT): technical notes
+
+This document has two parts with different authors:
+
+- **[Part 1](#part-1-original-port-notes-hashtagbasit)** is the original
+  port's technical notes, written by **hashtagbasit** for v1.1 (git tag
+  `upstream-v1_1`). The text is reproduced unchanged except for its
+  title, which the heading above replaces. Where it no longer matches this
+  fork, a **Fork note** callout says so; those callouts are not
+  part of the original.
+- **[Part 2](#part-2-changes-in-this-fork-lavachemist)** documents the
+  changes made in this fork by **lavachemist**, working with **Claude Opus
+  5.5** (Anthropic) via Claude Code. See "How AI was used" in the
+  [README](README.md).
+
+---
+
+# Part 1: Original port notes (hashtagbasit)
 
 Port of [MaSieS4Fun/SteamOS-ARM-SM8550](https://github.com/MaSieS4Fun/SteamOS-ARM-SM8550)
 to the **KONKR Pocket FIT (Snapdragon G3 Gen 3 = SM8650, Adreno 750)**, plus
@@ -19,39 +36,26 @@ AYANEO Pocket S2 shares the ROCKNIX dtsi and gets a DTB too (untested).
 
 ### Controls (Steam sees a real Steam Deck controller)
 
-| Pocket FIT (official name, position) | Steam | Source |
+| Pocket FIT | Steam | Source |
 |------------|-------|--------|
-| **Navigation** (above the left stick, `BTN_MODE`) | Steam button | USB pad |
-| **=** (smaller button below the right stick) | Quick Access (…) | MCU link* |
-| **LC1 / RC1** (back, `BTN_Z` / `BTN_C`) | L4 / R4 | USB pad |
-| **LC / RC** (top, next to the bumpers) | L5 / R5 | MCU link* |
-| **Custom Function** (above ABXY) | **Left Trackpad Click** (remappable in Steam) or F14 action | MCU link* |
-| **K** (larger button below the right stick) | **Right Trackpad Click** (remappable in Steam) or F13 action | MCU link* |
-| **View / Menu**, Hall triggers (either trigger mode), sticks, D-pad, ABXY | as on a Deck | USB pad |
+| KONKR / home (`BTN_MODE`) | Steam button | USB pad |
+| extra front button (`BTN5`) | Quick Access (…) | USB pad |
+| LC1 / RC1 back buttons (`BTN_Z` / `BTN_C`) | L4 / R4 | USB pad |
+| KONKR (MCU) | Quick Access | MCU link* |
+| LC / RC next to the shoulders | L5 / R5 | MCU link* |
+| front-top-right (Performance) | F14 → cycle **Silent / Balanced / Turbo** | MCU link* |
+| front-bottom-right | F13 → cycle stick RGB preset | MCU link* |
+| Hall triggers (either trigger mode), sticks, D-pad, ABXY, Start/Select | as on a Deck | USB pad |
 
-The Deck controller has no spare buttons (L4/R4/L5/R5 are in use), but the
-Pocket FIT has no trackpads, so their clicks are free: by default the Custom
-Function and K buttons send them and can be bound per game in Steam.
-KONKR Control → Buttons → **Steam Remap** off (or `konkrctl buttons
-system`) makes them send F13/F14 instead, and `konkrd` runs the action picked
-there (default: F14 cycles **Silent / Balanced / Turbo**, F13 cycles the stick
-RGB preset). konkrd swaps the InputPlumber capability map and restarts it,
-because InputPlumber 0.78 profiles can't translate trackpad clicks.
-
-The pad itself comes in two firmware modes: Xbox (`045e:028e`, xpad) and HID
-(`4001:0428` "AYANEO Controller", hid-generic, right stick on `ABS_Z/ABS_RZ`).
-Each has its own capability map.
-
-Rumble works in both modes. In Xbox mode xpad drives the motors. In HID mode
-the pad takes an 8-byte output report (byte 4 left motor, byte 5 right),
-which InputPlumber >= 0.79 drives from a `hidraw` source; the image ships
-0.81.0. Steam's rumble goes through the virtual Deck controller to the motors.
+> **Fork note:** this table is superseded. The fork uses KONKR's official
+> button names and changed what two of these buttons send; see
+> [Part 2 → Controls](#controls).
 
 \*The **MCU link** is the ROCKNIX `konkr_sysbtn` UART driver (written for the
 Pocket FIT Elite), bound to the FIT's controller UART (`uart13 @894000`). It
 works on the regular FIT and is on by default. `konkrctl mcu disable` turns it
 off; `konkrctl monitor` shows which button sends what. Button actions live in
-`/etc/konkrd.conf` and KONKR Control.
+`/etc/konkrd.conf`.
 
 ### Performance: why Linux was slower than GameNative on Android, and the fixes
 
@@ -97,7 +101,11 @@ konkr-game compat %command%    # strict TSO / split locks for crashing games
 - Power LED (PM8550 LPG, RGB): profile colour flash on change (blue/green/red),
   then amber while charging, green when full, red pulse below 15%.
 - Stick RGB rings (MCU link): static / breath / rainbow / off from KONKR
-  Control, `konkrctl rgb`, or the K button (system button mode).
+  Control, `konkrctl rgb`, or the front-bottom-right button.
+
+> **Fork note:** that button is the **K** button. In the fork it only
+> cycles the RGB in "system button" mode; by default it is a remappable
+> trackpad click. See [Part 2 → Controls](#controls).
 
 ### Quick Access panel: KONKR Control (Decky)
 
@@ -115,7 +123,10 @@ which would fight `konkrd` over the fan and drive AYN-only LEDs.
 | GPU userspace | patched A740 Turnip | Frame's stock Turnip/zink (A750) |
 | Controller | `rsinput` serial MCU | USB XInput pad → InputPlumber `deck-uhid` (+ optional MCU link) |
 | Audio | `AYN-Odin2` | `SM8650-APS2`: WSA884x speakers + WCD939x, ROCKNIX UCM |
-| UFS installer | shipped | ported: single-write `sfdisk` repartition (from Armada), `root=PARTLABEL=STORAGE` via the initramfs; installed and booted from UFS on a Pocket FIT |
+| UFS installer | shipped | not shipped (SM8550 layouts; unvalidated here) |
+
+> **Fork note:** the fork ports and ships the UFS installer; see
+> [Part 2 → Install to internal storage](#install-to-internal-storage-ufs).
 
 ## Build (Mac → Colima, native arm64)
 
@@ -150,17 +161,6 @@ Output: `/work/steamos-sm8650.img`.
 
 ## Other stuff fixed on the Pocket FIT
 
-- Speakers: short sounds (Steam's menu sounds) stuttered because PipeWire's
-  timer-based scheduling raced the q6apm DSP; playback on the internal card
-  is now interrupt-driven. Speakers were also much quieter than on Android
-  (mainline caps the WSA884x gain, since Linux has no speaker protection), so
-  a filter chain adds a 250 Hz high-pass and +12 dB into a look-ahead limiter
-  that keeps peaks under full scale. See `external-and-mods/konkr-audio/`.
-- Boot: quiet (no kernel text or boot logo; `CMDLINE_QUIET=0` for debugging,
-  the full log still lands in `bootlog.txt`). Game Mode starts ~4.3 s after
-  power-on instead of ~7.3 s: speaker setup no longer holds boot while the
-  ADSP loads (WirePlumber waits for it instead), and the Deck's `atomupd` and
-  `steamos-boot` are masked (no A/B slots here; `steamos-boot` never finished).
 - Standby: the Frame's ADB, USB gadget, power monitor and FPGA services are
   masked since they just crash-loop and keep the SoC awake. Sleep runs
   `konkr-standby`, which turns the panel off, freezes the session, takes the
@@ -186,3 +186,65 @@ Output: `/work/steamos-sm8650.img`.
 - AYANEO Pocket S2: has a DTB, never booted.
 - Which USB `phys_path` the internal pad uses (an external Xbox 360 pad with
   the same IDs gets merged into the same virtual Deck controller).
+
+---
+
+# Part 2: Changes in this fork (lavachemist)
+
+Written for this fork. Each change was tested on a KONKR Pocket FIT; the
+commit messages have the details of each test.
+
+## Controls
+
+| Pocket FIT (official name, position) | Steam | Source |
+|------------|-------|--------|
+| **Navigation** (above the left stick, `BTN_MODE`) | Steam button | USB pad |
+| **=** (smaller button below the right stick) | Quick Access (…) | MCU link* |
+| **LC1 / RC1** (back, `BTN_Z` / `BTN_C`) | L4 / R4 | USB pad |
+| **LC / RC** (top, next to the bumpers) | L5 / R5 | MCU link* |
+| **Custom Function** (above ABXY) | **Left Trackpad Click** (remappable in Steam) or F14 action | MCU link* |
+| **K** (larger button below the right stick) | **Right Trackpad Click** (remappable in Steam) or F13 action | MCU link* |
+| **View / Menu**, Hall triggers (either trigger mode), sticks, D-pad, ABXY | as on a Deck | USB pad |
+
+\*MCU link: see the footnote in Part 1. Button actions are set in
+`/etc/konkrd.conf` and in KONKR Control.
+
+The Deck controller has no spare buttons (L4/R4/L5/R5 are in use), but the
+Pocket FIT has no trackpads, so their clicks are free: by default the Custom
+Function and K buttons send them and can be bound per game in Steam.
+KONKR Control → Buttons → **Steam Remap** off (or `konkrctl buttons
+system`) makes them send F13/F14 instead, and `konkrd` runs the action picked
+there (default: F14 cycles **Silent / Balanced / Turbo**, F13 cycles the stick
+RGB preset). konkrd swaps the InputPlumber capability map and restarts it,
+because InputPlumber 0.78 profiles can't translate trackpad clicks.
+
+The pad itself comes in two firmware modes: Xbox (`045e:028e`, xpad) and HID
+(`4001:0428` "AYANEO Controller", hid-generic, right stick on `ABS_Z/ABS_RZ`).
+Each has its own capability map.
+
+Rumble works in both modes. In Xbox mode xpad drives the motors. In HID mode
+the pad takes an 8-byte output report (byte 4 left motor, byte 5 right),
+which InputPlumber >= 0.79 drives from a `hidraw` source; the image ships
+0.81.0. Steam's rumble goes through the virtual Deck controller to the motors.
+
+## Install to internal storage (UFS)
+
+| Area | SM8550 (MaSi) | SM8650 (this fork) |
+|------|---------------|--------------------|
+| UFS installer | shipped | ported: single-write `sfdisk` repartition (from Armada), `root=PARTLABEL=STORAGE` via the initramfs; installed and booted from UFS on a Pocket FIT |
+
+Details: [external-and-mods/ufs-install/SM8650-PORT.md](external-and-mods/ufs-install/SM8650-PORT.md).
+
+## Other fixes
+
+- Speakers: short sounds (Steam's menu sounds) stuttered because PipeWire's
+  timer-based scheduling raced the q6apm DSP; playback on the internal card
+  is now interrupt-driven. Speakers were also much quieter than on Android
+  (mainline caps the WSA884x gain, since Linux has no speaker protection), so
+  a filter chain adds a 250 Hz high-pass and +12 dB into a look-ahead limiter
+  that keeps peaks under full scale. See `external-and-mods/konkr-audio/`.
+- Boot: quiet (no kernel text or boot logo; `CMDLINE_QUIET=0` for debugging,
+  the full log still lands in `bootlog.txt`). Game Mode starts ~4.3 s after
+  power-on instead of ~7.3 s: speaker setup no longer holds boot while the
+  ADSP loads (WirePlumber waits for it instead), and the Deck's `atomupd` and
+  `steamos-boot` are masked (no A/B slots here; `steamos-boot` never finished).

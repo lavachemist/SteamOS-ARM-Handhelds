@@ -1,10 +1,40 @@
 # Credits and upstream sources
 
+This file has two parts with different authors:
+
+- **[This fork](#this-fork-lavachemist)**: who made this fork's changes and
+  the extra sources those changes use. Written for this fork.
+- **[Original credits](#original-credits-hashtagbasit-and-masi)**: the
+  credits file of hashtagbasit's SteamOS-ARM-SM8650 v1.1 (git tag
+  `upstream-v1_1`), reproduced unchanged. Its first section is
+  hashtagbasit's; the sections from "From SteamOS-ARM-SM8550 (MaSi)" onward
+  are MaSi's, carried over by that port. "We" and "our" in them refer to
+  those authors, not to this fork.
+
+## This fork (lavachemist)
+
+| Who | What |
+|-----|------|
+| **hashtagbasit** (https://github.com/hashtagbasit) | The original SteamOS-ARM-SM8650 port this fork builds on (v1.1, git tag `upstream-v1_1`) |
+| **lavachemist** (https://github.com/lavachemist) | Fork maintainer: UFS install, audio, controller, haptics and boot changes; direction, decisions and all hardware testing |
+| **Claude Opus 5.5** (Anthropic, `claude-opus-5-5`), via Claude Code | AI assistance: investigation, code, documentation and test setups, working with lavachemist. Commits carry a `Co-Authored-By: Claude Opus 5.5` trailer. See "How AI was used" in the [README](README.md) |
+
+Sources added by this fork's changes:
+
+| Source | URL | What the fork uses |
+|--------|-----|--------------------|
+| **Armada** | https://github.com/armada-os/armada | UFS installer partition-table validation, single-write `sfdisk` plan and post-write checks (`external-and-mods/ufs-install/ufs-partition.py`), GPL-2.0-or-later |
+| **InputPlumber** (ShadowBlip) | https://github.com/ShadowBlip/InputPlumber | Updated from 0.78.1 to 0.81.0 for the KONKR Pocket FIT support and AYANEO rumble driver by danyi ([@mydanyi](https://github.com/mydanyi), PR #670) that the haptics use |
+
+---
+
+## Original credits (hashtagbasit and MaSi)
+
 **SteamOS-ARM-SM8650** brings official SteamOS ARM to the KONKR Pocket FIT
 (SM8650). It's a port of MaSi's **SteamOS-ARM-SM8550**, and everything MaSi
 credits below still applies.
 
-## This port
+### This port
 
 | Source | URL | What we use |
 |--------|-----|-------------|
@@ -13,20 +43,10 @@ credits below still applies.
 | **ROCKNIX ABL** | https://github.com/ROCKNIX/abl | Bootloader with device model selection |
 | **lsfg-vk** | https://github.com/PancakeTAS/lsfg-vk · https://github.com/xXJSONDeruloXx/lsfg-vk | Frame generation layer, rebuilt for aarch64 with our patches |
 | **decky-lsfg-vk** | https://github.com/xXJSONDeruloXx/decky-lsfg-vk | Frame generation Decky plugin |
-| **Armada** | https://github.com/armada-os/armada | UFS installer partition-table validation, single-write `sfdisk` plan and post-write checks (`external-and-mods/ufs-install/ufs-partition.py`), GPL-2.0-or-later |
-| **InputPlumber** (ShadowBlip) | https://github.com/ShadowBlip/InputPlumber | Controller daemon; 0.81.0 brings the KONKR Pocket FIT support and AYANEO rumble driver by danyi ([@mydanyi](https://github.com/mydanyi), PR #670) that the haptics use |
-
-## This fork
-
-| Who | What |
-|-----|------|
-| **hashtagbasit** (https://github.com/hashtagbasit) | The original SteamOS-ARM-SM8650 port this fork builds on (v1.1, git tag `upstream-v1_1`) |
-| **lavachemist** (https://github.com/lavachemist) | Fork maintainer: UFS install, audio, controller, haptics and boot changes; direction, decisions and all hardware testing |
-| **Claude Opus 5.5** (Anthropic, `claude-opus-5-5`), via Claude Code | AI assistance: investigation, code, documentation and test setups, working with lavachemist. Commits carry a `Co-Authored-By: Claude Opus 5.5` trailer. See "How AI was used" in the README |
 
 ---
 
-## From SteamOS-ARM-SM8550 (MaSi)
+### From SteamOS-ARM-SM8550 (MaSi)
 
 **SteamOS-ARM-SM8550** adapts official SteamOS ARM to Qualcomm SM8550
 handhelds. This file lists the sources this repository is built from.
@@ -38,7 +58,7 @@ If a credit is missing or incorrect, please open an issue or pull request.
 
 ---
 
-## Previous project (required credit)
+### Previous project (required credit)
 
 This work is based on **[SteamOS-Ubuntu](https://github.com/MaSieS4Fun/SteamOS-Ubuntu)**
 by the same author.
@@ -57,7 +77,7 @@ Those two Decky plugins were adapted in SteamOS-Ubuntu from
 
 ---
 
-## Base system
+### Base system
 
 | Source | URL | What we use |
 |--------|-----|-------------|
@@ -68,7 +88,7 @@ Those two Decky plugins were adapted in SteamOS-Ubuntu from
 
 ---
 
-## Kernel and firmware
+### Kernel and firmware
 
 Inherited from **SteamOS-Ubuntu**. See
 [`external-and-mods/kernel/CREDITS.md`](external-and-mods/kernel/CREDITS.md).
@@ -84,7 +104,7 @@ Inherited from **SteamOS-Ubuntu**. See
 
 ---
 
-## Decky Loader and bundled plugins
+### Decky Loader and bundled plugins
 
 | Source | URL | What we use |
 |--------|-----|-------------|
@@ -96,7 +116,7 @@ Inherited from **SteamOS-Ubuntu**. See
 
 ---
 
-## Input, session, and graphics extras
+### Input, session, and graphics extras
 
 | Source | URL | What we use |
 |--------|-----|-------------|
@@ -110,7 +130,7 @@ Inherited from **SteamOS-Ubuntu**. See
 
 ---
 
-## Applications bundled by this overlay
+### Applications bundled by this overlay
 
 | Source | URL | What we use |
 |--------|-----|-------------|
@@ -121,7 +141,7 @@ Inherited from **SteamOS-Ubuntu**. See
 
 ---
 
-## Design inspiration
+### Design inspiration
 
 | Project | Relationship |
 |---------|--------------|
@@ -132,7 +152,7 @@ Inherited from **SteamOS-Ubuntu**. See
 
 ---
 
-## Acknowledgements
+### Acknowledgements
 
 Thanks to **Valve**, the **SteamOS-Ubuntu** testers, **Hooandee**, and
 maintainers of **kernel.org**, **Armbian**, **ROCKNIX**, **Batocera**,

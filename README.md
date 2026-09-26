@@ -18,8 +18,8 @@ Pocket FIT, which uses the same Snapdragon 8 Gen 3 (SM8650).
 All other files in the repository keep the authorship shown in `git log`.
 Anything not listed under [Changes in this fork](#changes-in-this-fork) is
 the original port's work, described here in summary. Its own documentation
-is in [PORT-SM8650.md](PORT-SM8650.md), which this fork has extended with
-notes on its changes.
+is Part 1 of [PORT-SM8650.md](PORT-SM8650.md); Part 2 of that file covers
+this fork's changes. [CREDITS.md](CREDITS.md) is split the same way.
 
 > [!WARNING]
 > This fork has only been tested on one KONKR Pocket FIT. The AYANEO Pocket
