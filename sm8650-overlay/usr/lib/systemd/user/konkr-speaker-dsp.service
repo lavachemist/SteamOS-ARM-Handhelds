@@ -1,0 +1,16 @@
+[Unit]
+Description=KONKR Pocket FIT speaker processing (high-pass + limiter)
+After=pipewire.service
+BindsTo=pipewire.service
+ConditionPathExists=/sys/firmware/devicetree/base/model
+# root's user manager (SSH logins) has no PipeWire session
+ConditionUser=!root
+
+[Service]
+ExecCondition=/bin/sh -c 'grep -qaE "KONKR Pocket FIT|AYANEO Pocket S2" /sys/firmware/devicetree/base/model'
+ExecStart=/usr/bin/pipewire -c konkr-speaker-dsp.conf
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=pipewire.service
