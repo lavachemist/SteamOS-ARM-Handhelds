@@ -223,6 +223,15 @@ for u in steamvr-program-ble.service steamvr-v4l2loopback.service \
   # which keeps the SoC out of deep idle and burned battery in standby.
   ln -sfn /dev/null "$R/etc/systemd/system/${u}"
 done
+# Steam Deck A/B update plumbing with nothing to act on here (no RAUC slots;
+# the steamos-update / steamos-select-branch hooks are stubs):
+#  - atomupd spent ~20 s at every boot competing with Steam's startup.
+#  - steamos-boot ("Boot Registration") waits forever for the Deck's
+#    partsets/self/efi partition, so boot never finished (systemd-analyze
+#    refused to report and the job stayed queued).
+for u in atomupd.service steamos-boot.service; do
+  ln -sfn /dev/null "$R/etc/systemd/system/${u}"
+done
 
 # ---------------------------------------------------------------------------
 # Audio UCM + Wi-Fi (wpa, not iwd) + BT power + gamescope Wayland session

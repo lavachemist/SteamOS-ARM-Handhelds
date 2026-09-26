@@ -3,7 +3,10 @@
 # devicetree=/dtb= here. No initramfs: root must be PARTUUID (or /dev/…),
 # the kernel cannot resolve root=UUID= on its own.
 #
-# CMDLINE_QUIET=1 hides kernel text on the panel (use once boot is proven).
+# Quiet by default: no kernel text, boot logo (the penguins) or console cursor
+# on the panel. CMDLINE_QUIET=0 shows the kernel log for debugging (also what
+# scripts/sd-debug-boot.sh uses). Either way the initramfs writes the full
+# boot log to bootlog.txt on the FAT partition.
 
 build_cmdline() {
   local partuuid="$1"
@@ -19,8 +22,8 @@ build_cmdline() {
     # put it to sleep and it looked powered off. s2idle wakes reliably.
     mem_sleep_default=s2idle
   )
-  if [[ "${CMDLINE_QUIET:-0}" == 1 ]]; then
-    parts+=(quiet loglevel=0 systemd.show_status=0)
+  if [[ "${CMDLINE_QUIET:-1}" == 1 ]]; then
+    parts+=(quiet loglevel=0 systemd.show_status=0 logo.nologo vt.global_cursor_default=0)
   else
     parts+=(console=tty0 loglevel=4)
   fi
