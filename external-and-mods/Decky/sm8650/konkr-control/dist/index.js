@@ -54,6 +54,8 @@ const ACTIONS = [
 ];
 
 const row = (child) => jsx(DFL.PanelSectionRow, { children: child });
+// Separate lines in a field description.
+const lines = (...items) => jsx("div", { children: items.map((t, i) => jsx("div", { children: t }, i)) });
 const note = (text) => row(jsx("div", { style: { fontSize: "12px", opacity: 0.75 }, children: text }));
 
 function Content() {
@@ -139,10 +141,10 @@ function Content() {
         ] }),
         jsxs(DFL.PanelSection, { title: "Buttons", children: [
             row(jsx(DFL.ToggleField, {
-                label: "Remappable in Steam",
+                label: "Steam Remap",
                 description: steamButtons
-                    ? "Custom Function = Left Trackpad Click, K = Right Trackpad Click. Bind them in the game's controller settings."
-                    : "Off: those two buttons run the actions below",
+                    ? lines("Custom Function = Left Trackpad Click", "K = Right Trackpad Click", "Bind them in controller settings.")
+                    : "Off: buttons map to actions selected below",
                 checked: steamButtons,
                 onChange: (v) => setButtonsMode(v ? "steam" : "system").then(() => {
                     toaster.toast({ title: "KONKR Control", body: "Buttons switched, controller reconnects" });

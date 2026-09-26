@@ -32,7 +32,7 @@ AYANEO Pocket S2 shares the ROCKNIX dtsi and gets a DTB too (untested).
 The Deck controller has no spare buttons (L4/R4/L5/R5 are in use), but the
 Pocket FIT has no trackpads, so their clicks are free: by default the Custom
 Function and K buttons send them and can be bound per game in Steam.
-KONKR Control → Buttons → **Remappable in Steam** off (or `konkrctl buttons
+KONKR Control → Buttons → **Steam Remap** off (or `konkrctl buttons
 system`) makes them send F13/F14 instead, and `konkrd` runs the action picked
 there (default: F14 cycles **Silent / Balanced / Turbo**, F13 cycles the stick
 RGB preset). konkrd swaps the InputPlumber capability map and restarts it,
