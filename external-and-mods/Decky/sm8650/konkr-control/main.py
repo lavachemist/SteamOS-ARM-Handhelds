@@ -20,6 +20,7 @@ STATE = "/var/lib/konkrd/state.json"
 BLACKLIST = "/etc/modprobe.d/konkr-mcu.conf"
 PROFILES = ("silent", "balanced", "turbo")
 ACTIONS = ("profile-next", "rgb-next", "sticks-toggle", "fan-boost", "none")
+BUTTON_MODES = ("steam", "system")
 
 
 def rd(path: str, default: str = "") -> str:
@@ -41,6 +42,8 @@ def load() -> dict[str, Any]:
     st.setdefault("fan", {"mode": "auto", "fixed": 50, "boost": False})
     st.setdefault("power_led", True)
     st.setdefault("buttons", {"F13": "rgb-next", "F14": "profile-next"})
+    if st.get("buttons_mode") not in BUTTON_MODES:
+        st["buttons_mode"] = "steam"
     return st
 
 
@@ -122,6 +125,7 @@ class Plugin:
             "fan": st["fan"],
             "power_led": st["power_led"],
             "buttons": st["buttons"],
+            "buttons_mode": st["buttons_mode"],
             "mcu_enabled": not os.path.exists(BLACKLIST),
             "mcu_loaded": os.path.isdir("/sys/module/konkr_sysbtn"),
             "sticks_led": bool(glob.glob("/sys/class/leds/*joysticks*")),
@@ -170,6 +174,17 @@ class Plugin:
         st["buttons"][key] = action
         save(st)
         return st["buttons"]
+
+    # "steam": the button above ABXY and the larger button below the right
+    # stick are trackpad clicks Steam can remap. "system": they run the
+    # actions above. konkrd swaps the InputPlumber map and restarts it.
+    async def set_buttons_mode(self, mode: str = "steam", **_: Any) -> str:
+        if mode not in BUTTON_MODES:
+            return load()["buttons_mode"]
+        st = load()
+        st["buttons_mode"] = mode
+        save(st)
+        return mode
 
     async def set_power_led(self, on: bool = True, **_: Any) -> bool:
         st = load()

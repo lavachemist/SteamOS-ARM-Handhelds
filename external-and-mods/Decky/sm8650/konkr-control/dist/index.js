@@ -30,6 +30,7 @@ const setMcu = callable("set_mcu");
 const setFan = callable("set_fan");
 const setButton = callable("set_button");
 const setPowerLed = callable("set_power_led");
+const setButtonsMode = callable("set_buttons_mode");
 
 const PROFILES = [
     { data: "silent", label: "Silent", desc: "Quiet fan, GPU capped at 75%, no game boost" },
@@ -72,6 +73,7 @@ function Content() {
     const prof = PROFILES.find((p) => p.data === st.profile) || PROFILES[1];
     const fan = st.fan || { mode: "auto", fixed: 50, boost: false };
     const buttons = st.buttons || {};
+    const steamButtons = (st.buttons_mode || "steam") === "steam";
     const status = [
         st.temp_c != null ? `${st.temp_c} °C` : null,
         st.fan_rpm != null ? `fan ${st.fan_rpm} rpm (${Math.round((st.fan_pwm || 0) / 2.55)}%)` : null,
@@ -136,19 +138,32 @@ function Content() {
             })),
         ] }),
         jsxs(DFL.PanelSection, { title: "Buttons", children: [
-            row(jsx(DFL.DropdownItem, {
-                label: "KONKR button",
-                rgOptions: ACTIONS,
-                selectedOption: buttons.F13 || "rgb-next",
-                onChange: (o) => setButton("F13", o.data).then(refresh),
+            row(jsx(DFL.ToggleField, {
+                label: "Remappable in Steam",
+                description: steamButtons
+                    ? "Above ABXY = Left Trackpad Click, large button below the right stick = Right Trackpad Click. Bind them in the game's controller settings."
+                    : "Off: those two buttons run the actions below",
+                checked: steamButtons,
+                onChange: (v) => setButtonsMode(v ? "steam" : "system").then(() => {
+                    toaster.toast({ title: "KONKR Control", body: "Buttons switched, controller reconnects" });
+                    refresh();
+                }),
             })),
             row(jsx(DFL.DropdownItem, {
-                label: "Performance button",
+                label: "Button above ABXY",
+                disabled: steamButtons,
                 rgOptions: ACTIONS,
                 selectedOption: buttons.F14 || "profile-next",
                 onChange: (o) => setButton("F14", o.data).then(refresh),
             })),
-            note("Home = Steam button · right front button = Quick Access · Power: tap to sleep, hold for the power menu"),
+            row(jsx(DFL.DropdownItem, {
+                label: "Large button below right stick",
+                disabled: steamButtons,
+                rgOptions: ACTIONS,
+                selectedOption: buttons.F13 || "rgb-next",
+                onChange: (o) => setButton("F13", o.data).then(refresh),
+            })),
+            note("Button above the left stick = Steam · small button below the right stick = Quick Access · Power: tap to sleep, hold for the power menu"),
         ] }),
         jsxs(DFL.PanelSection, { title: "Hardware", children: [
             row(jsx(DFL.ToggleField, {

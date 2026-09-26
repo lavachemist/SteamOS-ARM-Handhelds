@@ -14,8 +14,11 @@ handheld and wires up the extra buttons:
            uclamp.min boost so schedutil ramps the big cores immediately —
            what Android's game mode / WALT does for GameNative.
   gpu      devfreq polling 50 ms → 16 ms so the GPU clock follows frame load.
-  buttons  F13/F14 from the InputPlumber keyboard (MCU extra buttons, see
-           konkr_pocketfit_sysbtn.yaml) run configurable actions.
+  buttons  The button above ABXY and the larger one below the right stick
+           (MCU link) are either trackpad clicks that Steam can remap
+           (buttons_mode "steam", default) or F13/F14 that run configurable
+           actions here ("system"). konkrd installs the matching InputPlumber
+           capability map (see /usr/share/konkr/inputplumber/).
   leds     power LED: profile colour flash, then charge state.
 
 Config: /etc/konkrd.conf   State: /var/lib/konkrd/state.json
@@ -79,6 +82,36 @@ PROFILE_RGB = {"silent": (0, 90, 255), "balanced": (0, 255, 60), "turbo": (255, 
 
 EV_KEY = 1
 KEY_F13, KEY_F14, KEY_F15 = 183, 184, 185
+
+# Front button mode → capability map variant for the MCU buttons.
+BUTTON_MODES = ("steam", "system")
+SYSBTN_VARIANT = "/usr/share/konkr/inputplumber/sysbtn-{}.yaml"
+SYSBTN_ACTIVE = "/etc/inputplumber/capability_maps.d/konkr_pocketfit_sysbtn.yaml"
+
+
+def apply_buttons_mode(mode: str) -> None:
+    """Install the MCU button map for `mode`; restart InputPlumber only when it
+    changed. InputPlumber 0.78 profiles cannot translate to or from trackpad
+    clicks, so this cannot be a runtime profile switch."""
+    import subprocess
+    want = rd(SYSBTN_VARIANT.format(mode if mode in BUTTON_MODES else "steam"))
+    if not want:
+        log(f"buttons: missing {SYSBTN_VARIANT.format(mode)}")
+        return
+    if rd(SYSBTN_ACTIVE) == want:
+        return
+    tmp = SYSBTN_ACTIVE + ".tmp"
+    try:
+        os.makedirs(os.path.dirname(SYSBTN_ACTIVE), exist_ok=True)
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(want + "\n")
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, SYSBTN_ACTIVE)
+    except OSError as exc:
+        log(f"buttons: cannot write {SYSBTN_ACTIVE}: {exc}")
+        return
+    subprocess.run(["systemctl", "try-restart", "inputplumber.service"], check=False)
+    log(f"buttons: {mode} mode (InputPlumber restarted)")
 INPUT_EVENT = struct.Struct("llHHi")
 
 
@@ -115,6 +148,8 @@ def load_state() -> dict:
     st.setdefault("fan", {"mode": "auto", "fixed": 50, "boost": False})
     st.setdefault("power_led", True)
     st.setdefault("buttons", {"F13": "rgb-next", "F14": "profile-next"})
+    if st.get("buttons_mode") not in BUTTON_MODES:
+        st["buttons_mode"] = "steam"
     if st["rgb"].get("mode") == "rainbow":
         st["rgb"]["mode"] = "static"
     if st["profile"] not in PROFILES:
@@ -624,6 +659,7 @@ class Daemon:
         signal.signal(signal.SIGTERM, self.stop)
         self.apply_profile(flash=False)
         self.leds.apply_sticks(self.st)
+        apply_buttons_mode(self.st["buttons_mode"])
 
     def stop(self, *_):
         self.fan.failsafe_now()
@@ -712,6 +748,7 @@ class Daemon:
                 self.st = load_state()
                 self.apply_profile()
                 self.leds.apply_sticks(self.st)
+                apply_buttons_mode(self.st["buttons_mode"])
             now = time.monotonic()
             if now >= next_ui_check:
                 next_ui_check = now + 60.0

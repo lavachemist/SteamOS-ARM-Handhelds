@@ -6,6 +6,9 @@
   konkrctl rgb RRGGBB [brightness]     static stick colour
   konkrctl rgb breath RRGGBB | rainbow | off
   konkrctl mcu status|enable|disable   MCU UART driver (extra buttons + stick RGB; on by default)
+  konkrctl buttons steam|system|status button above ABXY + larger button below the
+                                       right stick: trackpad clicks Steam can remap
+                                       (steam, default) or konkrd actions (system)
   konkrctl monitor                     print key/button events from the pads
                                        (find out what each extra button sends)
   konkrctl sleep standby|s2idle|status standby (default: panel off, session
@@ -25,6 +28,7 @@ STATE = "/var/lib/konkrd/state.json"
 BLACKLIST = "/etc/modprobe.d/konkr-mcu.conf"
 S2IDLE = "/var/lib/konkrd/sleep-s2idle"
 PROFILES = ("silent", "balanced", "turbo")
+BUTTON_MODES = ("steam", "system")
 
 
 def need_root() -> None:
@@ -79,6 +83,8 @@ def status() -> None:
                 temps.append(int(v) / 1000)
     if temps:
         print(f"soc temp: {max(temps):.1f} °C (hottest cpu/gpu zone)")
+    print(f"buttons : {st.get('buttons_mode', 'steam')} "
+          f"({'remappable in Steam' if st.get('buttons_mode', 'steam') == 'steam' else 'konkrd actions'})")
     mcu = "loaded" if os.path.isdir("/sys/module/konkr_sysbtn") else "not loaded"
     print("sleep   :", "s2idle (experimental)" if os.path.exists(S2IDLE) else "standby")
     print(f"mcu     : {mcu} ({'blacklisted' if os.path.exists(BLACKLIST) else 'enabled at boot'})")
@@ -181,6 +187,17 @@ def main() -> None:
         save(st)
     elif a[0] == "mcu" and len(a) == 2:
         mcu(a[1])
+    elif a[0] == "buttons" and len(a) == 2:
+        if a[1] == "status":
+            print("buttons :", load().get("buttons_mode", "steam"))
+            return
+        if a[1] not in BUTTON_MODES:
+            sys.exit(__doc__)
+        need_root()
+        st = load()
+        st["buttons_mode"] = a[1]
+        save(st)   # konkrd switches the InputPlumber map (restarts it if needed)
+        print("buttons", a[1])
     elif a[0] == "sleep" and len(a) == 2:
         sleep_mode(a[1])
     elif a[0] == "monitor":
