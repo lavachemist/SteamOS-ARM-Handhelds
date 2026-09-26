@@ -42,6 +42,11 @@ The pad itself comes in two firmware modes: Xbox (`045e:028e`, xpad) and HID
 (`4001:0428` "AYANEO Controller", hid-generic, right stick on `ABS_Z/ABS_RZ`).
 Each has its own capability map.
 
+Rumble works in both modes. In Xbox mode xpad drives the motors. In HID mode
+the pad takes an 8-byte output report (byte 4 left motor, byte 5 right),
+which InputPlumber >= 0.79 drives from a `hidraw` source; the image ships
+0.81.0. Steam's rumble goes through the virtual Deck controller to the motors.
+
 \*The **MCU link** is the ROCKNIX `konkr_sysbtn` UART driver (written for the
 Pocket FIT Elite), bound to the FIT's controller UART (`uart13 @894000`). It
 works on the regular FIT and is on by default. `konkrctl mcu disable` turns it
