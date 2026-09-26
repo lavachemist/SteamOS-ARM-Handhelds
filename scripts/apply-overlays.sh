@@ -508,6 +508,12 @@ ln -sfn ../konkr-flatpak-appstream.timer \
 # runtime are not seen at boot on SteamOS (overlay mounted late).
 mkdir -p "$R/usr/lib/systemd/user/default.target.wants"
 ln -sfn ../konkr-volume.service "$R/usr/lib/systemd/user/default.target.wants/konkr-volume.service"
+# Speaker processing (250 Hz high-pass + look-ahead limiter, +12 dB): see
+# /usr/share/pipewire/konkr-speaker-dsp.conf. Starts with PipeWire.
+"${SCRIPT_DIR}/build-konkr-limiter-in-rootfs.sh" "$R"
+mkdir -p "$R/usr/lib/systemd/user/pipewire.service.wants"
+ln -sfn ../konkr-speaker-dsp.service \
+  "$R/usr/lib/systemd/user/pipewire.service.wants/konkr-speaker-dsp.service"
 # konkrd: fan curve (ROCKNIX leaves the fan at 70/255), profiles, game-thread
 # boost, extra buttons, LEDs. ExecCondition keeps it off non-KONKR devices.
 mkdir -p "$R/etc/systemd/system/multi-user.target.wants" "$R/var/lib/konkrd"

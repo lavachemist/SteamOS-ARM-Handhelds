@@ -133,6 +133,12 @@ Output: `/work/steamos-sm8650.img`.
 
 ## Other stuff fixed on the Pocket FIT
 
+- Speakers: short sounds (Steam's menu sounds) stuttered because PipeWire's
+  timer-based scheduling raced the q6apm DSP; playback on the internal card
+  is now interrupt-driven. Speakers were also much quieter than on Android
+  (mainline caps the WSA884x gain, since Linux has no speaker protection), so
+  a filter chain adds a 250 Hz high-pass and +12 dB into a look-ahead limiter
+  that keeps peaks under full scale. See `external-and-mods/konkr-audio/`.
 - Standby: the Frame's ADB, USB gadget, power monitor and FPGA services are
   masked since they just crash-loop and keep the SoC awake. Sleep runs
   `konkr-standby`, which turns the panel off, freezes the session, takes the
