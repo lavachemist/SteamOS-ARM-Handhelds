@@ -208,12 +208,14 @@ class MainWindow(Gtk.Window):
                 self.size_spin.set_range(mn, mx)
                 self.size_spin.set_value(rec)
                 existing = info.get("EXISTING_INSTALL", "0") == "1"
-                old_two = info.get("OLD_TWOPART_INSTALL", "0") == "1"
+                occupied = info.get("OCCUPIED", "0") == "1"
                 extra = ""
                 if existing:
                     extra = " (ROCKNIX+STORAGE+HOME already present — use --resume / repair tools)"
-                elif old_two:
-                    extra = " (old 2-partition ROCKNIX+STORAGE — Uninstall ROCKNIX before a fresh SteamOS install)"
+                elif occupied:
+                    extra = (f" (other partitions after userdata: {info.get('OCCUPIED_PARTITIONS')} — "
+                             "use ABL 'UNINSTALL CFW' before installing)")
+                self.install_btn.set_sensitive(info.get("MODE") == "fresh")
                 self.status.set_text(
                     f"UFS {info.get('DEVICE')} · total ~{info.get('DISK_TOTAL_GIB')} GB · "
                     f"userdata now ~{info.get('ORIG_ANDROID_GIB')} GB · "
@@ -231,6 +233,9 @@ class MainWindow(Gtk.Window):
             return
         if not self.ack.get_active():
             self._append("Tick the confirmation checkbox first.")
+            return
+        if self._info.get("MODE") != "fresh":
+            self._append("Internal storage is not ready for a fresh install. Click Refresh UFS info.")
             return
         script = INSTALL_SH if INSTALL_SH.is_file() else Path(__file__).resolve().parent / "install-masios-to-internal.sh"
         if not script.is_file():
@@ -261,16 +266,21 @@ class MainWindow(Gtk.Window):
         self.status.set_text(f"Installing with --android-gb {android_gb} (this takes a while)…")
 
         def worker() -> None:
-            proc = _pkexec(["bash", str(script), "--force", "--android-gb", str(android_gb)])
+            argv = ["bash", str(script), "--force", "--android-gb", str(android_gb)]
+            if self._info.get("TABLE_FINGERPRINT"):
+                # Refuse if the table changed between the probe and the install.
+                argv += ["--expect-table", self._info["TABLE_FINGERPRINT"]]
+            proc = _pkexec(argv)
             out = ((proc.stdout or "") + (proc.stderr or "")).strip()
 
             def done() -> None:
                 self._busy = False
-                self.install_btn.set_sensitive(True)
+                # The table may have changed either way: Refresh re-probes and re-enables.
+                self._info = {}
                 if out:
                     self._append(out[-8000:])
                 if proc.returncode == 0:
-                    self.status.set_text("Install finished. Reboot and select Linux in ABL.")
+                    self.status.set_text("Install finished. Power off, remove the microSD, then power on.")
                 else:
                     self.status.set_text(f"Install failed (exit {proc.returncode}). See log.")
 

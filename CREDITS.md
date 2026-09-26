@@ -13,6 +13,7 @@ credits below still applies.
 | **ROCKNIX ABL** | https://github.com/ROCKNIX/abl | Bootloader with device model selection |
 | **lsfg-vk** | https://github.com/PancakeTAS/lsfg-vk · https://github.com/xXJSONDeruloXx/lsfg-vk | Frame generation layer, rebuilt for aarch64 with our patches |
 | **decky-lsfg-vk** | https://github.com/xXJSONDeruloXx/decky-lsfg-vk | Frame generation Decky plugin |
+| **Armada** | https://github.com/armada-os/armada | UFS installer partition-table validation, single-write `sfdisk` plan and post-write checks (`external-and-mods/ufs-install/ufs-partition.py`), GPL-2.0-or-later |
 
 ---
 

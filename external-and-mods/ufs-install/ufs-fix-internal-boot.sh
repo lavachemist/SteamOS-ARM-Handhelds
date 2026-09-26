@@ -23,8 +23,8 @@ usage() {
 ufs-fix-internal-boot v${VERSION}
 
 Repair SteamOS / ROCKNIX internal boot (KERNEL + fstab).
-Writes ROCKNIX/KERNEL with root=PARTLABEL=STORAGE (UFS-safe, not SD UUID).
-Writes STORAGE /etc/fstab for ROCKNIX + STORAGE + HOME.
+Writes ROCKNIX/KERNEL with root=PARTLABEL=STORAGE (UFS-safe, not the microSD PARTUUID).
+Writes STORAGE /etc/fstab for ROCKNIX + STORAGE + HOME and masks systemd-repart.
 
 Options:
   --kernel-only   Fix KERNEL on ROCKNIX partition only
@@ -34,18 +34,6 @@ Options:
   -h, --help      Show help
 
 EOF
-}
-
-detect_ufs_device() {
-  local dev
-  for dev in /dev/sd? /dev/nvme0n1 /dev/mmcblk?; do
-    [[ -b "$dev" ]] || continue
-    if lsblk -rn -o PARTLABEL "$dev" 2>/dev/null | grep -qx userdata; then
-      echo "$dev"
-      return
-    fi
-  done
-  echo ""
 }
 
 part_by_label() {
@@ -85,7 +73,9 @@ patch_kernel() {
     log "[dry-run] pack /boot/KERNEL → ROCKNIX/KERNEL (root=PARTLABEL=STORAGE)"
     return
   fi
-  have_bootimg_tools || die "Need unpack_bootimg+mkbootimg or abootimg"
+  have_bootimg_tools || die "Need python3 and ufs-bootimg.py"
+  kernel_supports_partlabel_root /boot/KERNEL \
+    || die "SD /boot/KERNEL initramfs cannot mount root=PARTLABEL=STORAGE; update the SD image first"
   log "Writing UFS-safe KERNEL to ROCKNIX (root=PARTLABEL=STORAGE)..."
   install_kernel_for_ufs_rocknix /boot/KERNEL "${tmp}/KERNEL" \
     || die "Failed to pack ROCKNIX KERNEL"
@@ -101,8 +91,8 @@ fix_fstab_on_storage() {
     log "[dry-run] write SteamOS 3-partition fstab on ${st_dev}"
     return
   fi
-  log "Fixing /etc/fstab on ${st_dev}..."
-  write_ufs_fstab_tree "$tmp"
+  log "Fixing /etc/fstab and masking systemd-repart on ${st_dev}..."
+  write_ufs_system_tree "$tmp"
 }
 
 main() {
@@ -127,6 +117,10 @@ main() {
     die "You are booted from ${DEVICE}. Boot from microSD before running this fix."
   fi
 
+  local modular
+  modular="$(ufs_modular_drivers)"
+  [[ -z "$modular" ]] || warn "UFS drivers are loadable modules (${modular}); internal boot cannot work until the kernel has them built in."
+
   LAYOUT=$(detect_layout "$DEVICE")
   RK_DEV=$(part_by_label "$DEVICE" ROCKNIX || true)
   ST_DEV=$(part_by_label "$DEVICE" STORAGE || true)
@@ -138,12 +132,12 @@ main() {
   case "$LAYOUT" in
     old-2part)
       die "Old two-partition layout (ROCKNIX + STORAGE, no HOME).
-Reinstall with the SteamOS 3-partition installer after ABL 'Uninstall ROCKNIX'."
+Reinstall with the SteamOS 3-partition installer after ABL 'UNINSTALL CFW'."
       ;;
     incompatible-or-partial)
       die "Incompatible or partial UFS layout. Expected ROCKNIX + STORAGE + HOME.
 Re-run: sudo ./install-masios-to-internal.sh --deploy-only
-Or use ABL 'Uninstall ROCKNIX' before a fresh install."
+Or use ABL 'UNINSTALL CFW' before a fresh install."
       ;;
     none)
       die "No SteamOS / ROCKNIX internal partitions found."
@@ -163,7 +157,8 @@ Or use ABL 'Uninstall ROCKNIX' before a fresh install."
 
   TMP_BOOT=$(mktemp -d /tmp/ufs-fix-boot.XXXXXX)
   TMP_ROOT=$(mktemp -d /tmp/ufs-fix-root.XXXXXX)
-  trap 'umount "$TMP_BOOT" 2>/dev/null; umount "$TMP_ROOT" 2>/dev/null; rmdir "$TMP_BOOT" "$TMP_ROOT" 2>/dev/null' EXIT
+  # Mounts may already be gone; under set -e a failing umount here would become the exit code.
+  trap 'umount "$TMP_BOOT" 2>/dev/null || true; umount "$TMP_ROOT" 2>/dev/null || true; rmdir "$TMP_BOOT" "$TMP_ROOT" 2>/dev/null || true' EXIT
 
   if (( FIX_KERNEL )); then
     mount "$RK_DEV" "$TMP_BOOT"

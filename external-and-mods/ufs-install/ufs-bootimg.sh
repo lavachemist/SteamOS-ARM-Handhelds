@@ -1,190 +1,98 @@
 #!/usr/bin/env bash
-# SteamOS SM8550 helpers for UFS ROCKNIX install (this project only).
-# SD keeps dual-boot KERNEL (root=UUID=... + masi.ufsroot=PARTLABEL=STORAGE).
-# ROCKNIX always gets root=PARTLABEL=STORAGE so UFS boot does not depend on the SD.
+# SteamOS SM8650 helpers for the UFS ROCKNIX install (this project only).
+# SD KERNEL boots root=PARTUUID=<card>-02. ROCKNIX gets the same KERNEL with
+# root=PARTLABEL=STORAGE, which the initramfs resolves once UFS comes up, so
+# UFS boot does not depend on the SD.
 set -euo pipefail
 
-UFS_INTERNAL_CMDLINE='clk_ignore_unused pd_ignore_unused quiet rw rootwait root=PARTLABEL=STORAGE rootfstype=ext4 errors=remount-ro mem_sleep_default=deep ufshcd_core.uic_cmd_timeout=3000'
-
-have_android_mkbootimg() {
-    command -v unpack_bootimg >/dev/null 2>&1 && command -v mkbootimg >/dev/null 2>&1
-}
-
-have_abootimg() {
-    command -v abootimg >/dev/null 2>&1
-}
+UFS_INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+UFS_BOOTIMG_PY="${UFS_INSTALL_DIR}/ufs-bootimg.py"
 
 have_bootimg_tools() {
-    have_android_mkbootimg || have_abootimg
+    command -v python3 >/dev/null 2>&1 && [[ -f "$UFS_BOOTIMG_PY" ]]
 }
 
 read_bootimg_cmdline() {
-    local kernel="$1" line
+    local kernel="$1"
     [[ -f "$kernel" ]] || return 1
-    if have_android_mkbootimg; then
-        line="$(unpack_bootimg --boot_img "$kernel" --format=info 2>/dev/null \
-            | sed -n 's/^command line args: //p' | head -1)"
-        if [[ -n "$line" ]]; then
-            printf '%s' "$line"
-            return 0
-        fi
-    fi
-    if have_abootimg; then
-        abootimg -i "$kernel" 2>/dev/null | sed -n 's/^\* cmdline = //p' | head -1
-        return 0
-    fi
-    strings "$kernel" 2>/dev/null | grep -m1 '^clk_ignore_unused' || return 1
+    python3 "$UFS_BOOTIMG_PY" cmdline "$kernel" 2>/dev/null
 }
 
-# Build ROCKNIX cmdline from an existing KERNEL (keeps suspend/debug extras, forces PARTLABEL root).
+# The initramfs must understand root=PARTLABEL= (external-and-mods/kernel-sm8650/initramfs/init).
+kernel_supports_partlabel_root() {
+    python3 "$UFS_BOOTIMG_PY" initramfs-has-partlabel "$1" 2>/dev/null
+}
+
+# The initramfs has no modules: UFS host, PHY and SCSI disk must be built in.
+# Built-in drivers have no /sys/module/<name>/initstate.
+ufs_modular_drivers() {
+    local m found=""
+    for m in ufshcd_core ufshcd_pltfrm ufs_qcom phy_qcom_qmp_ufs sd_mod; do
+        [[ -e "/sys/module/${m}/initstate" ]] && found="${found:+${found} }${m}"
+    done
+    printf '%s' "$found"
+}
+
+# Internal UFS disk, found the same way the installer finds it (UFS_DEVICE
+# overrides). Falls back to a plain scan when the GPT does not validate.
+detect_ufs_device() {
+    local dev
+    dev="$(python3 "${UFS_INSTALL_DIR}/ufs-partition.py" detect 2>/dev/null | sed -n 's/^DEVICE=//p')"
+    if [[ -z "$dev" ]]; then
+        for dev in ${UFS_DEVICE:-} /dev/sd? /dev/nvme0n1; do
+            [[ -b "$dev" ]] && lsblk -rn -o PARTLABEL "$dev" 2>/dev/null | grep -qx userdata && break
+            dev=""
+        done
+    fi
+    printf '%s' "$dev"
+}
+
+# ROCKNIX cmdline from the SD KERNEL: keep everything, force the UFS root.
 build_ufs_rocknix_cmdline() {
-    local src="${1:-}"
-    local cmdline token
+    local src="$1" cmdline token
     local -a out=()
 
-    if [[ -n "$src" && -f "$src" ]]; then
-        cmdline="$(read_bootimg_cmdline "$src" || true)"
-    fi
-
-    if [[ -z "${cmdline:-}" ]]; then
-        printf '%s' "$UFS_INTERNAL_CMDLINE"
-        return 0
-    fi
-
+    cmdline="$(read_bootimg_cmdline "$src")" || return 1
+    [[ -n "$cmdline" ]] || return 1
     for token in $cmdline; do
         case "$token" in
-            root=*|rootfstype=*|errors=*|masi.ufsroot=*|masi.sdroot=*|masi.root=*)
-                continue
-                ;;
-            *)
-                out+=("$token")
-                ;;
+            root=*|rootfstype=*|errors=*|masi.ufsroot=*|masi.sdroot=*|masi.root=*) continue ;;
+            *) out+=("$token") ;;
         esac
     done
-
     out+=("root=PARTLABEL=STORAGE" "rootfstype=ext4" "errors=remount-ro")
     printf '%s' "${out[*]}"
 }
 
-_install_kernel_mkbootimg() {
-    local src="$1" dst="$2" cmdline="$3"
-    local work args_file
-    local -a mk_args=()
-    local skip=0 arg
-
-    work="$(mktemp -d)"
-    args_file="${work}/mkbootimg_args"
-    if ! unpack_bootimg --boot_img "$src" --out "$work" --format=mkbootimg -0 \
-            >"$args_file" 2>/dev/null; then
-        rm -rf "$work"
-        return 1
-    fi
-
-    while IFS= read -r -d '' arg; do
-        if (( skip )); then
-            skip=0
-            continue
-        fi
-        if [[ "$arg" == "--cmdline" ]]; then
-            mk_args+=(--cmdline "$cmdline")
-            skip=1
-            continue
-        fi
-        mk_args+=("$arg")
-    done <"$args_file"
-
-    mkdir -p "$(dirname "$dst")"
-    if ! mkbootimg "${mk_args[@]}" -o "$dst" >/dev/null 2>&1; then
-        rm -rf "$work"
-        return 1
-    fi
-    rm -rf "$work"
-    [[ -s "$dst" ]]
-}
-
-_install_kernel_abootimg() {
-    local src="$1" dst="$2" cmdline="$3"
-    local work zimage initrd cfg
-
-    work="$(mktemp -d)"
-    if ! (
-        cd "${work}"
-        cp "${src}" bootimg.in
-        abootimg -x bootimg.in >/dev/null 2>&1
-    ); then
-        rm -rf "${work}"
-        return 1
-    fi
-
-    zimage="${work}/zImage"
-    initrd="${work}/initrd.img"
-    cfg="${work}/bootimg.cfg"
-    if [[ ! -f "${zimage}" || ! -f "${initrd}" || ! -f "${cfg}" ]]; then
-        rm -rf "${work}"
-        return 1
-    fi
-
-    {
-        grep -E '^(bootsize|pagesize|kerneladdr|ramdiskaddr|secondaddr|tagsaddr|name) ' "${cfg}"
-        printf 'cmdline = %s\n' "${cmdline}"
-    } > "${cfg}.new"
-    mv -f "${cfg}.new" "${cfg}"
-
-    mkdir -p "$(dirname "${dst}")"
-    if ! abootimg --create "${dst}" -f "${cfg}" -k "${zimage}" -r "${initrd}" >/dev/null 2>&1; then
-        rm -rf "${work}"
-        return 1
-    fi
-    rm -rf "${work}"
-    [[ -s "${dst}" ]]
-}
-
-# Pack KERNEL for ROCKNIX: same zImage/initrd as src, UFS-only cmdline.
-# Prefer SteamOS unpack_bootimg/mkbootimg; fall back to abootimg.
 install_kernel_for_ufs_rocknix() {
-    local src="$1" dst="$2"
-    local cmdline
+    local src="$1" dst="$2" cmdline tmp
 
     [[ -f "$src" ]] || return 1
-    cmdline="$(build_ufs_rocknix_cmdline "$src")"
-
-    if have_android_mkbootimg; then
-        _install_kernel_mkbootimg "$src" "$dst" "$cmdline" && return 0
-    fi
-    if have_abootimg; then
-        _install_kernel_abootimg "$src" "$dst" "$cmdline" && return 0
-    fi
-    return 1
+    cmdline="$(build_ufs_rocknix_cmdline "$src")" || return 1
+    mkdir -p "$(dirname "$dst")"
+    # FAT: write beside, then rename, so a failure never leaves a half KERNEL.
+    tmp="$(dirname "$dst")/.KERNEL.new"
+    python3 "$UFS_BOOTIMG_PY" set-cmdline "$src" "$tmp" "$cmdline" || { rm -f "$tmp"; return 1; }
+    sync "$tmp" 2>/dev/null || sync
+    mv -f "$tmp" "$dst"
 }
 
-# Legacy alias
-patch_kernel_for_internal_boot() {
-    local src="$1" dst="$2"
-    install_kernel_for_ufs_rocknix "$src" "$dst"
-}
-
-# ROCKNIX KERNEL after install: must be PARTLABEL only (not SD UUID).
+# ROCKNIX KERNEL after install: PARTLABEL root only, nothing pointing at the SD.
 verify_ufs_rocknix_kernel_cmdline() {
     local kernel="$1" cmdline
 
     cmdline="$(read_bootimg_cmdline "${kernel}" || true)"
     [[ -n "${cmdline}" ]] || return 1
-    [[ "${cmdline}" == *'root=PARTLABEL=STORAGE'* ]] || return 1
-    [[ "${cmdline}" != *'root=UUID='* ]] || return 1
+    [[ " ${cmdline} " == *' root=PARTLABEL=STORAGE '* ]] || return 1
+    [[ "${cmdline}" != *'root=UUID='* && "${cmdline}" != *'root=PARTUUID='* ]] || return 1
     [[ "${cmdline}" != *'masi.ufsroot='* ]] || return 1
 }
 
-# Accept dual-boot SD KERNEL or UFS ROCKNIX KERNEL.
-verify_internal_kernel_cmdline() {
-    local kernel="$1" cmdline
-
-    cmdline="$(read_bootimg_cmdline "${kernel}" || true)"
-    [[ -n "${cmdline}" ]] || return 1
-    if [[ "${cmdline}" == *'masi.ufsroot=PARTLABEL=STORAGE'* ]]; then
-        [[ "${cmdline}" == *'root=UUID='* ]] || return 1
-        return 0
-    fi
-    [[ "${cmdline}" == *'root=PARTLABEL=STORAGE'* ]] || return 1
+# ROCKNIX KERNEL that still boots the microSD root.
+kernel_targets_sd_root() {
+    local cmdline
+    cmdline="$(read_bootimg_cmdline "$1" || true)"
+    [[ "${cmdline}" == *'root=PARTUUID='* || "${cmdline}" == *'root=UUID='* ]]
 }
 
 describe_kernel_root() {
@@ -192,13 +100,11 @@ describe_kernel_root() {
 
     cmdline="$(read_bootimg_cmdline "${kernel}" || true)"
     if [[ -z "${cmdline}" ]]; then
-        echo "unknown (could not read bootimg cmdline)"
-    elif [[ "${cmdline}" == *'root=PARTLABEL=STORAGE'* && "${cmdline}" != *'root=UUID='* ]]; then
-        echo "UFS ROCKNIX (root=PARTLABEL=STORAGE)"
-    elif [[ "${cmdline}" == *'masi.ufsroot=PARTLABEL=STORAGE'* && "${cmdline}" == *'root=UUID='* ]]; then
-        echo "microSD dual-boot (root=UUID + masi.ufsroot)"
-    elif [[ "${cmdline}" == *'root=UUID='* ]]; then
-        echo "microSD only (legacy — not safe for UFS ROCKNIX)"
+        echo "unknown (not a readable boot image)"
+    elif verify_ufs_rocknix_kernel_cmdline "${kernel}"; then
+        echo "internal UFS (root=PARTLABEL=STORAGE)"
+    elif [[ "${cmdline}" == *'root=PARTUUID='* ]]; then
+        echo "microSD ($(grep -o 'root=PARTUUID=[^ ]*' <<<"${cmdline}"))"
     else
         echo "other: ${cmdline}"
     fi
@@ -206,7 +112,7 @@ describe_kernel_root() {
 
 ufs_fstab_text() {
     cat <<'EOF'
-# SteamOS SM8550 — internal UFS (ROCKNIX ABL 3-partition)
+# SteamOS SM8650 — internal UFS (ROCKNIX ABL 3-partition)
 PARTLABEL=STORAGE  /      ext4  defaults,noatime,commit=120,errors=remount-ro  0 1
 PARTLABEL=ROCKNIX  /boot  vfat  defaults,umask=0077                           0 2
 PARTLABEL=HOME     /home  ext4  defaults,noatime,x-systemd.growfs             0 2
@@ -222,4 +128,21 @@ write_ufs_fstab_tree() {
     if [[ -d "${root}/var/lib/overlays/etc/upper" ]]; then
         ufs_fstab_text > "${root}/var/lib/overlays/etc/upper/fstab"
     fi
+}
+
+# SteamOS's /usr/lib/repart.d/90-home.conf makes systemd-repart add a "home"
+# partition to a GPT root disk at every boot. On the microSD (MBR) it never
+# acts; on UFS it would create partitions in any free space on the internal
+# disk, whose layout this installer owns. Mask it in the lower /etc: the /etc
+# overlay is mounted after systemd has loaded its units.
+mask_ufs_systemd_repart() {
+    local root="$1"
+    mkdir -p "${root}/etc/systemd/system"
+    ln -sfn /dev/null "${root}/etc/systemd/system/systemd-repart.service"
+}
+
+# Everything the copied root needs to boot from UFS.
+write_ufs_system_tree() {
+    write_ufs_fstab_tree "$1"
+    mask_ufs_systemd_repart "$1"
 }
