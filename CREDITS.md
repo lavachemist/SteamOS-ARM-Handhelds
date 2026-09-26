@@ -14,6 +14,15 @@ credits below still applies.
 | **lsfg-vk** | https://github.com/PancakeTAS/lsfg-vk · https://github.com/xXJSONDeruloXx/lsfg-vk | Frame generation layer, rebuilt for aarch64 with our patches |
 | **decky-lsfg-vk** | https://github.com/xXJSONDeruloXx/decky-lsfg-vk | Frame generation Decky plugin |
 | **Armada** | https://github.com/armada-os/armada | UFS installer partition-table validation, single-write `sfdisk` plan and post-write checks (`external-and-mods/ufs-install/ufs-partition.py`), GPL-2.0-or-later |
+| **InputPlumber** (ShadowBlip) | https://github.com/ShadowBlip/InputPlumber | Controller daemon; 0.81.0 brings the KONKR Pocket FIT support and AYANEO rumble driver by danyi ([@mydanyi](https://github.com/mydanyi), PR #670) that the haptics use |
+
+## This fork
+
+| Who | What |
+|-----|------|
+| **hashtagbasit** (https://github.com/hashtagbasit) | The original SteamOS-ARM-SM8650 port this fork builds on (v1.1, git tag `upstream-v1_1`) |
+| **lavachemist** (https://github.com/lavachemist) | Fork maintainer: UFS install, audio, controller, haptics and boot changes; direction, decisions and all hardware testing |
+| **Claude Opus 5.5** (Anthropic, `claude-opus-5-5`), via Claude Code | AI assistance: investigation, code, documentation and test setups, working with lavachemist. Commits carry a `Co-Authored-By: Claude Opus 5.5` trailer. See "How AI was used" in the README |
 
 ---
 
