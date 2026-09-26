@@ -141,7 +141,7 @@ function Content() {
             row(jsx(DFL.ToggleField, {
                 label: "Remappable in Steam",
                 description: steamButtons
-                    ? "Above ABXY = Left Trackpad Click, large button below the right stick = Right Trackpad Click. Bind them in the game's controller settings."
+                    ? "Custom Function = Left Trackpad Click, K = Right Trackpad Click. Bind them in the game's controller settings."
                     : "Off: those two buttons run the actions below",
                 checked: steamButtons,
                 onChange: (v) => setButtonsMode(v ? "steam" : "system").then(() => {
@@ -150,20 +150,20 @@ function Content() {
                 }),
             })),
             row(jsx(DFL.DropdownItem, {
-                label: "Button above ABXY",
+                label: "Custom Function",
                 disabled: steamButtons,
                 rgOptions: ACTIONS,
                 selectedOption: buttons.F14 || "profile-next",
                 onChange: (o) => setButton("F14", o.data).then(refresh),
             })),
             row(jsx(DFL.DropdownItem, {
-                label: "Large button below right stick",
+                label: "K",
                 disabled: steamButtons,
                 rgOptions: ACTIONS,
                 selectedOption: buttons.F13 || "rgb-next",
                 onChange: (o) => setButton("F13", o.data).then(refresh),
             })),
-            note("Button above the left stick = Steam · small button below the right stick = Quick Access · Power: tap to sleep, hold for the power menu"),
+            note("Navigation → Steam · = → Quick Access · Power: tap to sleep, hold for the power menu"),
         ] }),
         jsxs(DFL.PanelSection, { title: "Hardware", children: [
             row(jsx(DFL.ToggleField, {
@@ -179,7 +179,7 @@ function Content() {
     ] });
 }
 
-// Toast whenever the profile or fan boost changes (KONKR button, konkrctl or
+// Toast whenever the profile or fan boost changes (K / Custom Function, konkrctl or
 // this panel), like Android's on-screen mode switch. Registered at plugin
 // load, so it works with Quick Access closed and over games.
 const MODE_TOAST = {

@@ -12,9 +12,9 @@
 #                 target sends North to the Deck's X and West to its Y (the
 #                 BTN_X/BTN_Y aliases), so these map straight through, as in
 #                 upstream's dinput_generic.
-#   back L / R    button 6 / 3 → BTN_Z / BTN_C
-#   KONKR / home  button 13 → BTN_MODE
-# The extra front and side buttons are not on this pad in HID mode; they
+#   LC1 / RC1     button 6 / 3 → BTN_Z / BTN_C (back, left / right)
+#   Navigation    button 13 → BTN_MODE (above the left stick)
+# Custom Function, K, = and LC / RC are not on this pad in HID mode; they
 # arrive through the MCU link (konkr_pocketfit_sysbtn).
 version: 2
 kind: CapabilityMap
@@ -22,7 +22,7 @@ name: KONKR Pocket FIT HID firmware (Steam Deck layout)
 id: konkr_pocketfit_hid
 
 mapping:
-  - name: Steam
+  - name: Navigation → Steam
     source_events:
       - evdev: {event_type: KEY, event_code: BTN_MODE, value_type: button}
     target_event:
@@ -82,12 +82,12 @@ mapping:
     target_event:
       gamepad: {trigger: {name: RightTrigger}}
 
-  - name: L4 (back left)
+  - name: LC1 → L4
     source_events:
       - evdev: {event_type: KEY, event_code: BTN_Z, value_type: button}
     target_event:
       gamepad: {button: LeftPaddle1}
-  - name: R4 (back right)
+  - name: RC1 → R4
     source_events:
       - evdev: {event_type: KEY, event_code: BTN_C, value_type: button}
     target_event:

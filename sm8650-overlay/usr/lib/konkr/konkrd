@@ -8,14 +8,15 @@ handheld and wires up the extra buttons:
            and the DT trips are not bound to it, so the SoC heat-soaks and
            LMh throttles CPU/GPU. konkrd runs a real temperature curve.
   profiles silent / balanced / turbo: fan curve, GPU floor/ceiling, how hard
-           game threads are boosted. Cycled by the Performance button.
+           game threads are boosted. Cycled by the Custom Function button
+           (system button mode).
   games    threads of Steam-launched games (descendants of `reaper
            SteamLaunch`) are kept off the Cortex-A520 little cores and get a
            uclamp.min boost so schedutil ramps the big cores immediately —
            what Android's game mode / WALT does for GameNative.
   gpu      devfreq polling 50 ms → 16 ms so the GPU clock follows frame load.
-  buttons  The button above ABXY and the larger one below the right stick
-           (MCU link) are either trackpad clicks that Steam can remap
+  buttons  The Custom Function and K buttons (MCU link) are either
+           trackpad clicks that Steam can remap
            (buttons_mode "steam", default) or F13/F14 that run configurable
            actions here ("system"). konkrd installs the matching InputPlumber
            capability map (see /usr/share/konkr/inputplumber/).
@@ -83,7 +84,7 @@ PROFILE_RGB = {"silent": (0, 90, 255), "balanced": (0, 255, 60), "turbo": (255, 
 EV_KEY = 1
 KEY_F13, KEY_F14, KEY_F15 = 183, 184, 185
 
-# Front button mode → capability map variant for the MCU buttons.
+# Custom Function / K button mode → capability map variant for the MCU buttons.
 BUTTON_MODES = ("steam", "system")
 SYSBTN_VARIANT = "/usr/share/konkr/inputplumber/sysbtn-{}.yaml"
 SYSBTN_ACTIVE = "/etc/inputplumber/capability_maps.d/konkr_pocketfit_sysbtn.yaml"

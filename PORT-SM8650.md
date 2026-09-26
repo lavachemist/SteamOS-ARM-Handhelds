@@ -19,19 +19,19 @@ AYANEO Pocket S2 shares the ROCKNIX dtsi and gets a DTB too (untested).
 
 ### Controls (Steam sees a real Steam Deck controller)
 
-| Pocket FIT (positions verified on a unit) | Steam | Source |
+| Pocket FIT (official name, position) | Steam | Source |
 |------------|-------|--------|
-| button above the left stick (`BTN_MODE`) | Steam button | USB pad |
-| small button below the right stick | Quick Access (…) | MCU link* |
-| back buttons (`BTN_Z` / `BTN_C`) | L4 / R4 | USB pad |
-| top buttons next to the bumpers | L5 / R5 | MCU link* |
-| button above ABXY | **Left Trackpad Click** (remappable in Steam) or F14 action | MCU link* |
-| larger button below the right stick | **Right Trackpad Click** (remappable in Steam) or F13 action | MCU link* |
-| Hall triggers (either trigger mode), sticks, D-pad, ABXY, View/Menu | as on a Deck | USB pad |
+| **Navigation** (above the left stick, `BTN_MODE`) | Steam button | USB pad |
+| **=** (smaller button below the right stick) | Quick Access (…) | MCU link* |
+| **LC1 / RC1** (back, `BTN_Z` / `BTN_C`) | L4 / R4 | USB pad |
+| **LC / RC** (top, next to the bumpers) | L5 / R5 | MCU link* |
+| **Custom Function** (above ABXY) | **Left Trackpad Click** (remappable in Steam) or F14 action | MCU link* |
+| **K** (larger button below the right stick) | **Right Trackpad Click** (remappable in Steam) or F13 action | MCU link* |
+| **View / Menu**, Hall triggers (either trigger mode), sticks, D-pad, ABXY | as on a Deck | USB pad |
 
 The Deck controller has no spare buttons (L4/R4/L5/R5 are in use), but the
-Pocket FIT has no trackpads, so their clicks are free: by default the two
-right-hand extra buttons send them and can be bound per game in Steam.
+Pocket FIT has no trackpads, so their clicks are free: by default the Custom
+Function and K buttons send them and can be bound per game in Steam.
 KONKR Control → Buttons → **Remappable in Steam** off (or `konkrctl buttons
 system`) makes them send F13/F14 instead, and `konkrd` runs the action picked
 there (default: F14 cycles **Silent / Balanced / Turbo**, F13 cycles the stick
@@ -92,7 +92,7 @@ konkr-game compat %command%    # strict TSO / split locks for crashing games
 - Power LED (PM8550 LPG, RGB): profile colour flash on change (blue/green/red),
   then amber while charging, green when full, red pulse below 15%.
 - Stick RGB rings (MCU link): static / breath / rainbow / off from KONKR
-  Control, `konkrctl rgb`, or the front-bottom-right button.
+  Control, `konkrctl rgb`, or the K button (system button mode).
 
 ### Quick Access panel: KONKR Control (Decky)
 

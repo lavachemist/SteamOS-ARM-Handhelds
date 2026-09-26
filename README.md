@@ -15,7 +15,7 @@ Pretty much everything you'd expect:
 - Game Mode, Desktop Mode, Steam store and downloads
 - x86 games through FEX, plus ARM64 Proton
 - the controller shows up as a Steam Deck controller, back buttons too
-- the extra front buttons (one cycles performance profiles, the other the stick RGB)
+- every button remappable in Steam, including Custom Function and K (or set them to cycle performance profiles and stick RGB)
 - performance overlay
 - 60/90/120/144Hz, Steam switches it based on the frame limit you pick
 - Lossless Scaling frame gen through the decky-lsfg-vk plugin
@@ -42,7 +42,7 @@ The Steam Frame image is built for a VR headset, and other ARM builds pretty muc
 - **Balanced**: the default
 - **Turbo**: big cores pinned high, fan kicks in early
 
-Switch with the Performance button, the KONKR Control plugin, or `konkrctl profile turbo` etc.
+Switch with the KONKR Control plugin, `konkrctl profile turbo` etc., or the Custom Function button in system button mode.
 
 ## Installing
 

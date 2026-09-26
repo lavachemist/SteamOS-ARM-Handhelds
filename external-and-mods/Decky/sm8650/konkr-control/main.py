@@ -88,7 +88,7 @@ class Plugin:
     async def _unload(self) -> None:
         self.watcher.cancel()
 
-    # The KONKR/Performance button goes straight to konkrd, so the frontend
+    # The K and Custom Function buttons go straight to konkrd, so the frontend
     # would only see a change once the panel is opened. Watch konkrd's state
     # and tell the frontend, which shows a toast over whatever is running.
     async def _watch_mode(self) -> None:
@@ -175,8 +175,8 @@ class Plugin:
         save(st)
         return st["buttons"]
 
-    # "steam": the button above ABXY and the larger button below the right
-    # stick are trackpad clicks Steam can remap. "system": they run the
+    # "steam": the Custom Function and K buttons are trackpad clicks Steam
+    # can remap. "system": they run the
     # actions above. konkrd swaps the InputPlumber map and restarts it.
     async def set_buttons_mode(self, mode: str = "steam", **_: Any) -> str:
         if mode not in BUTTON_MODES:

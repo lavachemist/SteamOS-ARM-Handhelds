@@ -2,9 +2,9 @@
 # KONKR Pocket FIT built-in pad (USB XInput from the controller MCU) →
 # virtual Steam Deck controller. Based on ROCKNIX ayaneo_mcu_xbox_standard;
 # changed for SteamOS:
-#   BTN_MODE  (KONKR / home)  → Steam button
-#   BTN5      (extra front)   → Quick Access (…)   [ROCKNIX: F1]
-#   BTN_Z/C   (LC1/RC1 back)  → L4 / R4
+#   BTN_MODE  (Navigation)    → Steam button
+#   BTN5      (extra button, Xbox firmware only) → Quick Access (…)   [ROCKNIX: F1]
+#   BTN_Z/C   (LC1 / RC1)     → L4 / R4
 version: 2
 kind: CapabilityMap
 name: KONKR Pocket FIT (Steam Deck layout)
@@ -88,12 +88,12 @@ mapping:
     target_event:
       gamepad: {trigger: {name: RightTrigger}}
 
-  - name: L4 (LC1, back left)
+  - name: LC1 → L4
     source_events:
       - evdev: {event_type: KEY, event_code: BTN_Z, value_type: button}
     target_event:
       gamepad: {button: LeftPaddle1}
-  - name: R4 (RC1, back right)
+  - name: RC1 → R4
     source_events:
       - evdev: {event_type: KEY, event_code: BTN_C, value_type: button}
     target_event:

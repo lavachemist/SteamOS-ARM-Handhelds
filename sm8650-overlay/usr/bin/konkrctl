@@ -6,9 +6,9 @@
   konkrctl rgb RRGGBB [brightness]     static stick colour
   konkrctl rgb breath RRGGBB | rainbow | off
   konkrctl mcu status|enable|disable   MCU UART driver (extra buttons + stick RGB; on by default)
-  konkrctl buttons steam|system|status button above ABXY + larger button below the
-                                       right stick: trackpad clicks Steam can remap
-                                       (steam, default) or konkrd actions (system)
+  konkrctl buttons steam|system|status Custom Function + K buttons: trackpad
+                                       clicks Steam can remap (steam, default)
+                                       or konkrd actions (system)
   konkrctl monitor                     print key/button events from the pads
                                        (find out what each extra button sends)
   konkrctl sleep standby|s2idle|status standby (default: panel off, session

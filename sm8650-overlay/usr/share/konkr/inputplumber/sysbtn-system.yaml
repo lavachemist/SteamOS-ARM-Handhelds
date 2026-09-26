@@ -3,20 +3,20 @@
 # MCU "system" buttons from konkr_sysbtn (the MCU link, on by default).
 # IDs follow the Elite driver (ROCKNIX 0069); positions verified on a
 # Pocket FIT:
-#   HAPPY5   button above ABXY                    → see below
-#   HAPPY1   larger button below the right stick  → see below
-#   HAPPY2   smaller button below the right stick → Quick Access
-#   HAPPY3/4 top, next to the left/right bumper   → L5 / R5
+#   HAPPY5   Custom Function (above ABXY)                  → see below
+#   HAPPY1   K (larger button below the right stick)       → see below
+#   HAPPY2   = (smaller button below the right stick)      → Quick Access
+#   HAPPY3/4 LC / RC (top, next to the left/right bumper)  → L5 / R5
 #
 # konkrd installs one of two variants as
 # /etc/inputplumber/capability_maps.d/konkr_pocketfit_sysbtn.yaml, following
 # KONKR Control → Buttons (state.json "buttons_mode"), and restarts
 # InputPlumber when it changes:
-#   sysbtn-steam.yaml   (default) HAPPY5/HAPPY1 → left/right trackpad click.
+#   sysbtn-steam.yaml   (default) Custom Function / K → left/right trackpad click.
 #                       The Deck controller has no spare buttons (L4/R4/L5/R5
 #                       are in use), but this device has no trackpads, so
 #                       their clicks are free and Steam can bind them per game.
-#   sysbtn-system.yaml  HAPPY5/HAPPY1 → F14/F13 for konkrd's actions
+#   sysbtn-system.yaml  Custom Function / K → F14/F13 for konkrd's actions
 #                       (performance profile, stick lighting, ...).
 # InputPlumber 0.78 profiles cannot translate to or from trackpad clicks, so
 # the switch has to be made in the capability map.
@@ -26,12 +26,12 @@ name: KONKR Pocket FIT MCU buttons (Steam Deck layout)
 id: konkr_pocketfit_sysbtn
 
 mapping:
-  - name: Larger button below the right stick → F13 (konkrd)
+  - name: K → F13 (konkrd)
     source_events:
       - evdev: {event_type: KEY, event_code: BTN_TRIGGER_HAPPY1, value_type: button}
     target_event:
       keyboard: KeyF13
-  - name: KONKR → Quick Access
+  - name: = → Quick Access
     source_events:
       - evdev: {event_type: KEY, event_code: BTN_TRIGGER_HAPPY2, value_type: button}
     target_event:
@@ -46,7 +46,7 @@ mapping:
       - evdev: {event_type: KEY, event_code: BTN_TRIGGER_HAPPY4, value_type: button}
     target_event:
       gamepad: {button: RightPaddle2}
-  - name: Button above ABXY → F14 (konkrd)
+  - name: Custom Function → F14 (konkrd)
     source_events:
       - evdev: {event_type: KEY, event_code: BTN_TRIGGER_HAPPY5, value_type: button}
     target_event:
