@@ -248,3 +248,22 @@ Details: [external-and-mods/ufs-install/SM8650-PORT.md](external-and-mods/ufs-in
   power-on instead of ~7.3 s: speaker setup no longer holds boot while the
   ADSP loads (WirePlumber waits for it instead), and the Deck's `atomupd` and
   `steamos-boot` are masked (no A/B slots here; `steamos-boot` never finished).
+
+## Building on top of a release image
+
+When a change only touches overlays, configs and scripts (as everything in
+this fork so far does), the kernel, gamescope, Box64 and the Plasma/KDE
+builds don't need rebuilding. `scripts/stage-from-release-image.sh` stages
+`/work` from a released `.img` (its rootfs, home, kernel and gamescope), and
+the normal builder applies this tree on top:
+
+```bash
+sudo bash scripts/stage-from-release-image.sh steamos-sm8650-konkr-pocketfit.img /work
+cd /work/src && sudo STEAMOS_WORK=/work \
+  bash make-steamos-sm8650.sh --skip-download --skip-box64
+```
+
+A full build (Part 1 → Build) needs no extra setup for the in-rootfs
+compiles: Valve's Frame rootfs already ships gcc, cmake, meson and ninja.
+The `install-build-deps-in-rootfs.sh` that `build-gamescope-in-rootfs.sh`
+used to name in its error message has never existed in any published repo.

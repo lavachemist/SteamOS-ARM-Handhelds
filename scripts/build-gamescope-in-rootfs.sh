@@ -25,7 +25,7 @@ die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
 command -v bwrap >/dev/null || die "bwrap required (apt install bubblewrap)"
 [[ -x "$R/usr/bin/meson" && -x "$R/usr/bin/gcc" ]] \
-  || die "rootfs needs meson+gcc (scripts/install-build-deps-in-rootfs.sh)"
+  || die "rootfs needs meson+gcc (Valve's Frame rootfs ships them; start from a fresh make-steamos-sm8650.sh download)"
 
 fetch_subprojects() {
   [[ -f "$SUBS/wlroots/meson.build" ]] && return 0
