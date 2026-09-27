@@ -243,6 +243,12 @@ Details: [external-and-mods/ufs-install/SM8650-PORT.md](external-and-mods/ufs-in
   (mainline caps the WSA884x gain, since Linux has no speaker protection), so
   a filter chain adds a 250 Hz high-pass and +12 dB into a look-ahead limiter
   that keeps peaks under full scale. See `external-and-mods/konkr-audio/`.
+- Speakers going silent after idle: after the WSA884x amps and their
+  SoundWire bus (`6ab0000.soundwire`) runtime-suspended, playback often left
+  the amps' PA state machine off (`PA_FSM_STA0` 0x00 instead of 0x2f): the
+  PCM ran, the amps reported active, the speakers stayed silent until a
+  reboot. `60-konkr-speaker-pm.rules` keeps those three devices out of
+  runtime PM (tested after reboot with 30 s idle gaps).
 - Boot: quiet (no kernel text or boot logo; `CMDLINE_QUIET=0` for debugging,
   the full log still lands in `bootlog.txt`). Game Mode starts ~4.3 s after
   power-on instead of ~7.3 s: speaker setup no longer holds boot while the

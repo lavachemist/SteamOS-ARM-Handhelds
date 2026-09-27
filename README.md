@@ -66,6 +66,11 @@ Android's user data. Detail in
   high-pass and +12 dB into a new look-ahead limiter
   (`external-and-mods/konkr-audio/`). Peaks stay below full scale, so the
   loudest possible output and the kernel's safety caps are unchanged.
+- **Speakers no longer go silent after being idle.** Once the speaker
+  amplifiers and their SoundWire bus powered down while idle, playback often
+  didn't bring them back (their power stage stayed off), so menu sounds and
+  in-game audio dropped out until a reboot. A udev rule now keeps that bus and
+  the two amplifiers awake, at a small idle-power cost.
 
 ### Controller
 

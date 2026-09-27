@@ -1,0 +1,12 @@
+# Keep the speaker path out of runtime PM (KONKR Pocket FIT / AYANEO Pocket S2).
+#
+# Once the WSA884x amplifiers and their SoundWire bus (6ab0000.soundwire)
+# runtime-suspend while idle, playback often doesn't bring them back: the
+# PCM runs, the amps report active, but their PA state machine stays off
+# (PA_FSM_STA0 0x00 instead of 0x2f) and the speakers are silent until a
+# reboot. Menu sounds went silent after the first idle and in-game audio
+# stopped after pauses. Keeping these three devices awake fixed it on the
+# Pocket FIT (tested with 30 s idle gaps). It costs a little idle power; it
+# doesn't block system sleep.
+ACTION=="add|bind", SUBSYSTEM=="soundwire", ENV{MODALIAS}=="sdw:m0217p0204*", ATTR{power/control}="on"
+ACTION=="add|bind", SUBSYSTEM=="platform", KERNEL=="6ab0000.soundwire", ATTR{power/control}="on"
