@@ -222,10 +222,13 @@ The pad itself comes in two firmware modes: Xbox (`045e:028e`, xpad) and HID
 (`4001:0428` "AYANEO Controller", hid-generic, right stick on `ABS_Z/ABS_RZ`).
 Each has its own capability map.
 
-Rumble works in both modes. In Xbox mode xpad drives the motors. In HID mode
-the pad takes an 8-byte output report (byte 4 left motor, byte 5 right),
-which InputPlumber >= 0.79 drives from a `hidraw` source; the image ships
-0.81.0. Steam's rumble goes through the virtual Deck controller to the motors.
+In Xbox mode xpad drives the rumble motors. In HID mode the pad takes an
+8-byte output report (byte 4 left motor, byte 5 right), which InputPlumber
+>= 0.79 drives from a `hidraw` source (the image ships 0.81.0). That source
+is blocked for now: 0.81.0 runs its AYANEO haptics driver with a 0 ms poll
+interval and a poll that never waits, so it keeps one CPU core at 100%
+(3-4% with it blocked). Remove `blocked: true` from the hidraw entry in
+`02-konkr-pocketfit.yaml` once InputPlumber fixes it.
 
 ## Install to internal storage (UFS)
 
@@ -248,7 +251,21 @@ Details: [external-and-mods/ufs-install/SM8650-PORT.md](external-and-mods/ufs-in
   the amps' PA state machine off (`PA_FSM_STA0` 0x00 instead of 0x2f): the
   PCM ran, the amps reported active, the speakers stayed silent until a
   reboot. `60-konkr-speaker-pm.rules` keeps those three devices out of
-  runtime PM (tested after reboot with 30 s idle gaps).
+  runtime PM (tested after reboot with 30 s idle gaps). With the kernel
+  patch below, idle playback also worked without the rule (40 of 40 beeps
+  from suspended amps); it stays until a longer trial confirms that.
+- Speakers going silent when a sound fails to start: both WSA884x amps
+  sometimes latch a PA-on error at stream start (`INTR_STATUS1` 0x2,
+  `PA_FSM_STA0` 0x20, `PA_FSM_ERR_COND0` 0x40), about once every one to two
+  minutes of use, at any gain. Mainline has no SoundWire interrupt support for
+  the codec, so nothing cleared it. `patches/0004-ASoC-wsa884x-recover-latched-PA-faults.patch`
+  checks 30 ms and 150 ms after unmute, then every second, and restarts the
+  PA the way Qualcomm's downstream driver does (PA off, pulse
+  `PA_FSM_CTL0` bit 4, PA on); faults are found and fixed about 35 ms in.
+  Why the PA fails to start is still open.
+- `konkr-volume`: its 3-second thread cleared the node id without the lock,
+  so `apply()` could pass `None` to `pw-cli`; the daemon crashed and
+  restarted every few minutes, force-writing the amp gains each time.
 - Boot: quiet (no kernel text or boot logo; `CMDLINE_QUIET=0` for debugging,
   the full log still lands in `bootlog.txt`). Game Mode starts ~4.3 s after
   power-on instead of ~7.3 s: speaker setup no longer holds boot while the

@@ -71,6 +71,17 @@ Android's user data. Detail in
   didn't bring them back (their power stage stayed off), so menu sounds and
   in-game audio dropped out until a reboot. A udev rule now keeps that bus and
   the two amplifiers awake, at a small idle-power cost.
+- **Speakers no longer go silent when a sound fails to start.** About once
+  every one to two minutes of use, both speaker amplifiers failed to switch
+  on at the start of a sound (a latched "PA on" error), and mainline Linux
+  never clears it, so the speakers stayed silent until a reboot. A kernel
+  patch (`external-and-mods/kernel-sm8650/patches/0004-*`) checks right after
+  each sound starts and restarts the amplifiers, as Qualcomm's own driver
+  does; recovery takes about 35 ms and each one is logged (`dmesg | grep
+  "PA fault"`).
+- **`konkr-volume` no longer crashes.** A thread race made the volume-curve
+  daemon crash and restart every few minutes, re-writing the amplifier gains
+  each time.
 
 ### Controller
 
@@ -82,9 +93,11 @@ Android's user data. Detail in
   actions, as does `konkrctl buttons system`.
 - **KONKR's official button names** everywhere: Navigation, Custom Function,
   View, Menu, K, =, LC, RC, LC1, RC1.
-- **Rumble.** InputPlumber goes from 0.78.1 to 0.81.0, which drives the pad's
+- **InputPlumber 0.81.0** (from 0.78.1), which can drive the pad's rumble
   motors through its HID output report. The download is now checked against
-  upstream's SHA-256.
+  upstream's SHA-256. Rumble in HID mode is **disabled for now**: 0.81.0's
+  rumble driver keeps one CPU core at 100% (see Still open). In Xbox mode,
+  rumble works through `xpad`.
 
 ### Boot and system
 
@@ -101,6 +114,10 @@ Android's user data. Detail in
 
 ### Still open
 
+- Rumble in HID-firmware mode: InputPlumber 0.81.0's AYANEO rumble driver
+  polls with a 0 ms interval and a non-blocking poll, so it spins one CPU
+  core at 100%. The source is blocked in the device config until that's fixed
+  (one line in InputPlumber's `src/input/source/hidraw.rs`).
 - Services enabled at runtime don't survive a reboot when booted from microSD
   (the `/etc` overlay is mounted after systemd reads its units).
 - Android-style speaker protection (DSP feedback + OEM tuning) isn't
