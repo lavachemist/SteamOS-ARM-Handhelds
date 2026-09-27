@@ -5,16 +5,20 @@
 # gamescope, Box64, KDE apps, Android payload and Steam client), its home and
 # its kernel are reused, and make-steamos-sm8650.sh applies this tree on top.
 #
-# Only valid while the kernel sources, gamescope and Box64 are unchanged since
-# that release; otherwise build them (see PORT-SM8650.md → Build).
+# Only valid while gamescope and Box64 are unchanged since that release;
+# otherwise build them (see PORT-SM8650.md → Build). If the kernel changed,
+# build it first (external-and-mods/kernel-sm8650/build.sh) and pass
+# --keep-kernel so that build is used instead of the release's kernel.
 #
 # Usage (as root, on aarch64 Linux, e.g. in Colima):
-#   stage-from-release-image.sh <release.img> [workdir]
+#   stage-from-release-image.sh [--keep-kernel] <release.img> [workdir]
 # Then:
 #   cd <workdir>/src && STEAMOS_WORK=<workdir> \
 #     bash make-steamos-sm8650.sh --skip-download --skip-box64
 set -euo pipefail
 
+KEEP_KERNEL=0
+if [[ "${1:-}" == --keep-kernel ]]; then KEEP_KERNEL=1; shift; fi
 IMG="$(readlink -f "${1:?release .img}")"
 W="${2:-${STEAMOS_WORK:-/work}}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -51,17 +55,24 @@ rsync -aHAX --numeric-ids --delete --exclude='/home/**' "$MNT/root/" "$W/rootfs/
 log "home → $W/rootfs/home"
 rsync -aHAX --numeric-ids --delete "$MNT/home/" "$W/rootfs/home/"
 
-KREL="$(ls "$MNT/root/usr/lib/modules" | head -1)"
-[[ -n "$KREL" ]] || die "no kernel modules in the release rootfs"
-K="$W/kernel-sm8650/output/$KREL"
-log "kernel $KREL → $K"
-rm -rf "$K"
-mkdir -p "$K/boot" "$K/modules" "$K/firmware"
-# The builder rewrites the cmdline (cmdline.sh + the new PARTUUID) at pack time.
-cp "$MNT/boot/KERNEL" "$K/boot/KERNEL"
-(cd "$K/boot" && md5sum KERNEL >KERNEL.md5)
-cp -a "$MNT/root/usr/lib/modules/$KREL" "$K/modules/$KREL"
-ln -sfn "$KREL" "$W/kernel-sm8650/output/current"
+if [[ "$KEEP_KERNEL" == 1 ]]; then
+  K="$(readlink -f "$W/kernel-sm8650/output/current" || true)"
+  [[ -n "$K" && -f "$K/boot/KERNEL" && -d "$K/modules" ]] \
+    || die "--keep-kernel: no kernel build at $W/kernel-sm8650/output/current"
+  log "kernel: keeping the local build $K"
+else
+  KREL="$(ls "$MNT/root/usr/lib/modules" | head -1)"
+  [[ -n "$KREL" ]] || die "no kernel modules in the release rootfs"
+  K="$W/kernel-sm8650/output/$KREL"
+  log "kernel $KREL → $K"
+  rm -rf "$K"
+  mkdir -p "$K/boot" "$K/modules" "$K/firmware"
+  # The builder rewrites the cmdline (cmdline.sh + the new PARTUUID) at pack time.
+  cp "$MNT/boot/KERNEL" "$K/boot/KERNEL"
+  (cd "$K/boot" && md5sum KERNEL >KERNEL.md5)
+  cp -a "$MNT/root/usr/lib/modules/$KREL" "$K/modules/$KREL"
+  ln -sfn "$KREL" "$W/kernel-sm8650/output/current"
+fi
 
 G="$W/gamescope-build"
 log "gamescope → $G"
