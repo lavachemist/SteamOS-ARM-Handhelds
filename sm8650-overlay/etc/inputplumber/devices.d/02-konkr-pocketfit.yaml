@@ -7,7 +7,8 @@
 #   - built-in pad: XInput on the internal USB bus (045e:028e; older MCU
 #     firmware enumerates as 1c4f:0002; HID firmware as 4001:0428), plus
 #     anything else on its internal port (usb-0001:01:00.0-2) whatever id it
-#     reports. On 4001:0428 its hidraw node also drives the rumble motors.
+#     reports. On 4001:0428 its hidraw node drives the rumble motors (blocked
+#     for now, see below).
 #   - "KONKR System Buttons": konkr_sysbtn MCU driver (opt-in, konkr-mcu).
 version: 1
 kind: CompositeDevice
@@ -50,10 +51,15 @@ source_devices:
       handler: event*
     capability_map_id: konkr_pocketfit_hid
   # Rumble motors: the pad takes an 8-byte HID output report (byte 4 left,
-  # byte 5 right). InputPlumber >= 0.79 drives it (ayaneo_haptics). Listing it
-  # here also keeps InputPlumber's own 50-konkr_pocket_fit.yaml from claiming
-  # the node and creating a second, empty controller.
+  # byte 5 right), which InputPlumber >= 0.79 drives (ayaneo_haptics).
+  # Blocked for now: in 0.81.0 that driver polls every 0 ms with a
+  # non-blocking poll, so it keeps one CPU core at 100%. Blocked uses the
+  # idle 500 ms driver instead (no rumble in HID mode). Remove "blocked"
+  # once InputPlumber fixes it. Listing the node here still keeps
+  # InputPlumber's own 50-konkr_pocket_fit.yaml from claiming it and creating
+  # a second, empty controller.
   - group: gamepad
+    blocked: true
     hidraw:
       vendor_id: 0x4001
       product_id: 0x0428
