@@ -307,6 +307,9 @@ restore_image_suid() {
 
 wait_loop_parts() {
   local dev="$1" i
+  # udev re-reads the new partition table and briefly removes the pN nodes;
+  # without settling, they can vanish between this check and mkfs.
+  command -v udevadm >/dev/null && sudo_run udevadm settle --timeout=10 || true
   for i in $(seq 1 50); do
     [[ -b "${dev}p1" && -b "${dev}p2" && -b "${dev}p3" ]] && return 0
     sleep 0.1
