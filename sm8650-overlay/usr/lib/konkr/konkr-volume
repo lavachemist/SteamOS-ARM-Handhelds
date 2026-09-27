@@ -133,7 +133,11 @@ def main() -> None:
         # changes; re-check every few seconds (writes only on drift).
         while True:
             time.sleep(3)
-            vol.nid = None
+            # Under the lock: clearing it while apply() runs on the main
+            # thread made apply() pass None to pw-cli and the daemon crashed
+            # (and restarted, re-forcing the amp gains) every few minutes.
+            with vol.lock:
+                vol.nid = None
             vol.apply()
             if "values=17,17" not in run("amixer", "-c", CARD, "cget", f"name={PA}"):
                 vol.apply(force=True)
