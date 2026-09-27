@@ -49,13 +49,14 @@ die() { log "ERROR: $*"; exit 1; }
 
 check_deps() {
   local missing=() c
-  for c in make gcc bc bison flex python3 curl tar xz gzip cpio kmod patch perl rsync; do
+  for c in make gcc bc bison flex python3 curl tar xz gzip cpio kmod patch perl rsync file; do
     command -v "$c" >/dev/null || missing+=("$c")
   done
+  file /bin/busybox 2>/dev/null | grep -q "statically linked" || missing+=(busybox-static)
   [[ -f /usr/include/openssl/ssl.h ]] || missing+=(libssl-dev)
   [[ -f /usr/include/gelf.h ]] || missing+=(libelf-dev)
   if ((${#missing[@]})); then
-    die "missing: ${missing[*]}  (sudo apt-get install -y build-essential bc bison flex libssl-dev libelf-dev python3 curl xz-utils cpio kmod patch rsync dwarves)"
+    die "missing: ${missing[*]}  (sudo apt-get install -y build-essential bc bison flex libssl-dev libelf-dev python3 curl xz-utils cpio kmod patch rsync dwarves file busybox-static)"
   fi
 }
 
