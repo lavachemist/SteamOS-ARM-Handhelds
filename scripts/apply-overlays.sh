@@ -61,7 +61,9 @@ cp -a "$KOUT/boot/KERNEL.md5" "$R/boot/KERNEL.md5"
 chmod 0644 "$R/boot/KERNEL" "$R/boot/KERNEL.md5"
 
 # Frame kernel modules are useless with this kernel; keep only ours.
-find "$R/usr/lib/modules" -mindepth 1 -maxdepth 1 ! -name "$KREL" -exec rm -rf {} +
+# Replace $KREL too: a rootfs staged from a release already has it, and
+# cp -a into an existing directory nests the new tree inside the old one.
+find "$R/usr/lib/modules" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 cp -a "$KOUT/modules/$KREL" "$R/usr/lib/modules/$KREL"
 # Merge firmware without wiping Frame blobs (Frame ships SM8650 GPU fw too;
 # the AYANEO-signed ADSP/CDSP/zap live under qcom/sm8650/ayaneo/ps2).
