@@ -54,6 +54,16 @@ For usage, see [README.md](README.md). Before running anything, read
   - Enables Install only when the layout is fresh.
   - Passes the probe's table fingerprint to the installer.
   - Requires a fresh probe after each install attempt.
+  - Shows the install as it happens: live log, "Step n of 6" with a progress
+    bar (rsync percentages during the copies) and elapsed time. The whole
+    log is saved to `~/easy-ufs-install-<date>.log`.
+  - Won't close while installing, and ends with a pop-up: next steps on
+    success; on failure the error, whether internal storage was already
+    changed, and a copy of the log on the desktop.
+  - Fits small screens (sized to the display, scrolls, maximised below
+    800 px height).
+  - Tested on the device with a mock installer (success and failure), not
+    with a real install yet.
 - **`ufs-diagnose.sh`**
   - Reports the driver and initramfs checks.
   - Flags a ROCKNIX KERNEL that still boots the microSD root.
