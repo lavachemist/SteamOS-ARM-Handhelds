@@ -1,5 +1,5 @@
 [Unit]
-Description=AYN Thor: follow the bottom panel's brightness on the top panel
+Description=AYN Thor: one brightness for both panels, bottom-screen switch
 ConditionPathExists=/sys/class/backlight/ae96000.dsi.0
 
 [Service]

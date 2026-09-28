@@ -17,59 +17,44 @@ const definePlugin = (fn) => (...args) => fn(...args);
 const DFL = window.DFL;
 const SP_REACT = window.SP_REACT;
 const SP_JSX = window.SP_JSX;
-const { useEffect, useState, useCallback, useRef } = SP_REACT;
+const { useEffect, useState, useCallback } = SP_REACT;
 const jsx = SP_JSX.jsx;
 const jsxs = SP_JSX.jsxs;
 
 // Decky callable(): arguments are passed positionally to the Python method.
 const getState = callable("get_state");
-const setTop = callable("set_top");
-const setBottom = callable("set_bottom");
-const match = callable("match");
+const setBottomScreen = callable("set_bottom_screen");
 
 const row = (child) => jsx(DFL.PanelSectionRow, { children: child });
 const note = (text) => row(jsx("div", { style: { fontSize: "12px", opacity: 0.75 }, children: text }));
 
 function Content() {
     const [st, setSt] = useState(null);
-    // Don't let the periodic refresh jump a slider the user is dragging.
-    const lastMove = useRef(0);
     const refresh = useCallback(() => {
-        if (Date.now() - lastMove.current < 1500) return;
         getState().then(setSt).catch(() => {});
     }, []);
     useEffect(() => {
         refresh();
-        const t = setInterval(refresh, 2000);
+        const t = setInterval(refresh, 3000);
         return () => clearInterval(t);
     }, [refresh]);
 
     if (!st) return jsx(DFL.PanelSection, { children: note("Loading…") });
     if (!st.supported) return jsx(DFL.PanelSection, { children: note("This plugin is for the AYN Thor (two screens).") });
 
-    const move = (key, fn) => (v) => {
-        lastMove.current = Date.now();
-        setSt((s) => ({ ...s, [key]: v }));
-        fn(v).catch(() => {});
-    };
-
-    return jsxs(DFL.PanelSection, { title: "Brightness", children: [
-        row(jsx(DFL.SliderField, {
-            label: "Top screen",
-            value: st.top, min: 1, max: 100, step: 1, showValue: true, valueSuffix: "%",
-            onChange: move("top", setTop),
-        })),
-        row(jsx(DFL.SliderField, {
+    return jsxs(DFL.PanelSection, { children: [
+        row(jsx(DFL.ToggleField, {
             label: "Bottom screen",
-            value: st.bottom, min: 1, max: 100, step: 1, showValue: true, valueSuffix: "%",
-            onChange: move("bottom", setBottom),
+            description: st.on
+                ? "On, at the same brightness as the top screen."
+                : "Off: dark and ignoring touch until you turn it back on.",
+            checked: !!st.on,
+            onChange: (v) => {
+                setSt((s) => ({ ...s, on: v }));
+                setBottomScreen(v).then(refresh).catch(refresh);
+            },
         })),
-        row(jsx(DFL.ButtonItem, {
-            layout: "below",
-            onClick: () => match().then(() => { lastMove.current = 0; refresh(); }),
-            children: "Match bottom to top",
-        })),
-        note("Steam's brightness slider sets both screens to the same level. These sliders change one screen until you use Steam's slider again."),
+        note("Steam's brightness slider sets both screens."),
     ] });
 }
 

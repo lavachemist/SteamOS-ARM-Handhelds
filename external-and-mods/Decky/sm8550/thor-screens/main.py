@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Decky backend: Thor Screens (AYN Thor, SteamOS-ARM).
 
-Separate brightness for the top (ae96000.dsi.0) and bottom (ae94000.dsi.0)
-panels. Steam's own brightness slider sets both to the same level
-(sm8550-thor-backlightd copies the bottom panel to the top); a slider here
-sets one panel until Steam's slider is moved again. Before writing the bottom
-panel it leaves the value in SKIP so the daemon does not copy that change.
+One switch for the bottom screen. Steam's brightness slider already sets both
+panels to the same level (sm8550-thor-backlightd copies the bottom panel to
+the top). Turning the bottom screen off powers its backlight down and
+disables its touchscreen until it is turned back on, when it comes back at
+the top panel's brightness. The daemon applies and enforces the state in
+STATE; this only records it.
 """
 from __future__ import annotations
 
@@ -14,44 +15,17 @@ from typing import Any
 
 import decky
 
-# Steam's brightness slider is perceptual: it writes (slider ** 2.2) of the
-# range (50% -> ~22% raw). Show and set on the same curve so the numbers match.
-GAMMA = 2.2
-
 TOP = "/sys/class/backlight/ae96000.dsi.0"
 BOTTOM = "/sys/class/backlight/ae94000.dsi.0"
-SKIP = "/run/sm8550-thor-backlight/skip"
+STATE = "/var/lib/steamos-sm8550/thor-bottom-screen"
 
 
-def _read_int(path: str, default: int = 0) -> int:
+def _is_on() -> bool:
     try:
-        with open(path, encoding="utf-8") as fh:
-            return int(fh.read().strip())
-    except (OSError, ValueError):
-        return default
-
-
-def _pct(dev: str) -> int:
-    mx = _read_int(f"{dev}/max_brightness", 0)
-    if mx <= 0:
-        return 0
-    raw = max(0, min(mx, _read_int(f"{dev}/brightness", 0)))
-    return round(100 * (raw / mx) ** (1 / GAMMA))
-
-
-def _set_pct(dev: str, pct: int) -> None:
-    mx = _read_int(f"{dev}/max_brightness", 0)
-    if mx <= 0:
-        raise OSError(f"{dev}: no max_brightness")
-    frac = max(0, min(100, int(pct))) / 100
-    val = max(1, min(mx, round(mx * frac ** GAMMA)))
-    if dev == BOTTOM and val != _read_int(f"{dev}/brightness", -1):
-        os.makedirs(os.path.dirname(SKIP), exist_ok=True)
-        with open(SKIP, "w", encoding="utf-8") as fh:
-            fh.write(str(val))
-    with open(f"{dev}/brightness", "w", encoding="utf-8") as fh:
-        fh.write(str(val))
-
+        with open(STATE, encoding="utf-8") as fh:
+            return fh.read().strip() != "off"
+    except OSError:
+        return True
 
 
 class Plugin:
@@ -63,20 +37,13 @@ class Plugin:
 
     async def get_state(self, **_: Any) -> dict[str, Any]:
         ok = os.path.exists(f"{TOP}/brightness") and os.path.exists(f"{BOTTOM}/brightness")
-        return {
-            "supported": ok,
-            "top": _pct(TOP) if ok else 0,
-            "bottom": _pct(BOTTOM) if ok else 0,
-        }
+        return {"supported": ok, "on": _is_on()}
 
-    async def set_top(self, pct: int = 100, **_: Any) -> int:
-        _set_pct(TOP, pct)
-        return _pct(TOP)
-
-    async def set_bottom(self, pct: int = 100, **_: Any) -> int:
-        _set_pct(BOTTOM, pct)
-        return _pct(BOTTOM)
-
-    async def match(self, **_: Any) -> int:
-        _set_pct(BOTTOM, _pct(TOP))
-        return _pct(BOTTOM)
+    async def set_bottom_screen(self, on: bool = True, **_: Any) -> bool:
+        os.makedirs(os.path.dirname(STATE), exist_ok=True)
+        tmp = STATE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write("on" if on else "off")
+        os.replace(tmp, STATE)
+        decky.logger.info(f"bottom screen {'on' if on else 'off'}")
+        return _is_on()

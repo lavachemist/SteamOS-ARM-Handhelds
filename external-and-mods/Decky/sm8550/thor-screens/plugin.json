@@ -2,11 +2,19 @@
   "name": "Thor Screens",
   "author": "lavachemist",
   "api_version": 1,
-  "flags": ["root"],
-  "version": "1.0.0",
+  "flags": [
+    "root"
+  ],
+  "version": "1.1.0",
   "publish": {
-    "tags": ["ayn", "thor", "sm8550", "brightness", "dual-screen"],
-    "description": "Separate brightness for the AYN Thor's top and bottom screens.",
+    "tags": [
+      "ayn",
+      "thor",
+      "sm8550",
+      "dual-screen",
+      "bottom-screen"
+    ],
+    "description": "Turn the AYN Thor's bottom screen and its touch off and on.",
     "image": "https://opengraph.githubassets.com/1/SteamDeckHomebrew/decky-loader"
   }
 }
