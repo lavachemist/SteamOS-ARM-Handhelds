@@ -50,7 +50,7 @@ function Content() {
     const move = (key, fn) => (v) => {
         lastMove.current = Date.now();
         setSt((s) => ({ ...s, [key]: v }));
-        fn(v).then((ratio) => setSt((s) => ({ ...s, ratio }))).catch(() => {});
+        fn(v).catch(() => {});
     };
 
     return jsxs(DFL.PanelSection, { title: "Brightness", children: [
@@ -69,7 +69,7 @@ function Content() {
             onClick: () => match().then(() => { lastMove.current = 0; refresh(); }),
             children: "Match bottom to top",
         })),
-        note("Steam's brightness slider changes both screens and keeps the balance you set here."),
+        note("Steam's brightness slider sets both screens to the same level. These sliders change one screen until you use Steam's slider again."),
     ] });
 }
 
