@@ -1,0 +1,4 @@
+# AYN Thor: let the session (input group) inhibit the bottom touchscreen while
+# Game Mode shows only the top panel. See sm8550-touch-inhibit.
+ACTION=="add", SUBSYSTEM=="input", KERNEL=="input*", ATTR{name}=="bottom_touchscreen", \
+  RUN+="/bin/sh -c 'chgrp input /sys%p/inhibited && chmod g+w /sys%p/inhibited'"

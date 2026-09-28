@@ -1,0 +1,30 @@
+Touch orientation hunks from Armada (armada-os/armada@939fb84,
+packages/kernel/dts/qcs8550-ayn-thor.dts.patch), regenerated for this tree.
+Both touchscreens report in panel-native (portrait) coordinates, like the RP6's;
+gamescope and KWin rotate them with the panel. With the kernel swapping and
+inverting as well, taps were rotated twice. Armada's hall-wake and DPU dither
+hunks are not taken (dither needs Armada's DPU patch).
+
+From: Armada <noreply@armada.local>
+Subject: [PATCH] arm64: dts: qcom: thor: touch orientation
+
+--- a/arch/arm64/boot/dts/qcom/qcs8550-ayn-thor.dts
++++ b/arch/arm64/boot/dts/qcom/qcs8550-ayn-thor.dts
+@@ -275,8 +275,6 @@
+ 
+ 		touchscreen-size-x = <1080>;
+ 		touchscreen-size-y = <1920>;
+-		touchscreen-swapped-x-y;
+-		touchscreen-inverted-x;
+ 
+ 		label = "top_touchscreen";
+ 	};
+@@ -393,8 +391,6 @@
+ 
+ 		touchscreen-size-x = <1080>;
+ 		touchscreen-size-y = <1240>;
+-		touchscreen-swapped-x-y;
+-		touchscreen-inverted-x;
+ 
+ 		label = "bottom_touchscreen";
+ 

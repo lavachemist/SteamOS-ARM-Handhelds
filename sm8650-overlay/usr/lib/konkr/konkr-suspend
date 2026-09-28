@@ -5,7 +5,11 @@
 # screen-off-only standby). Kernel s2idle is opt-in (`konkrctl sleep s2idle`)
 # until it stops hanging on the 7.1.2 kernel (2026-09-24: first entry bounced
 # straight back, the second never resumed).
-if [ -e /var/lib/konkrd/sleep-s2idle ]; then
+# konkr-standby drives the Pocket FIT / Pocket S2 hardware (same AYANEO
+# platform); every other device (Retroid Pocket 6, …) gets the stock kernel
+# suspend.
+if ! grep -qaE "KONKR Pocket FIT|AYANEO Pocket S2" /sys/firmware/devicetree/base/model 2>/dev/null \
+   || [ -e /var/lib/konkrd/sleep-s2idle ]; then
   exec /usr/lib/systemd/systemd-sleep suspend
 fi
 exec /usr/lib/konkr/konkr-standby

@@ -251,6 +251,7 @@ install -m 0644 "$OVL/etc/xdg/kwinoutputconfig.json" \
   "$HOME_DST/.config/kwinoutputconfig.json"
 install -m 0644 "$OVL/etc/xdg/kwinoutputconfig.json" \
   "$R/etc/xdg/kwinoutputconfig.json"
+# Per-device rotation: sm8550-prepare-plasma sets it on first Desktop start.
 # Merge scale into existing kwinrc / kdeglobals (do not replace Vapor).
 if [[ -f "$R/etc/xdg/kwinrc" ]]; then
   if grep -q '^\[Xwayland\]' "$R/etc/xdg/kwinrc"; then

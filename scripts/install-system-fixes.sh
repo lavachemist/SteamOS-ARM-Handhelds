@@ -10,6 +10,7 @@ R="$(cd "$R" && pwd)"
 MOD="${ROOT}/external-and-mods"
 OVL="${ROOT}/steamos-overlay"
 HOME_DST="${STEAMOS_HOME:-$R/home/steamos}"
+SOC="${SOC:-sm8650}"
 
 log() { echo "== system-fixes: $*"; }
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -169,19 +170,26 @@ else
 fi
 
 # ── Bundled Decky plugins (built dist, no node_modules) ──
-log "Stage SM8550 Decky plugins"
+log "Stage Decky plugins (SOC=${SOC})"
 BUNDLE="$R/usr/share/steamos-odin/decky-plugins"
-mkdir -p "$BUNDLE"
-# SM8650 port: KONKR Control only. SM8550-Power would fight konkrd over the
-# fan/governors and SM8550-LED drives the AYN MCU LEDs, which this device
-# does not have. DECKY_PLUGINS (colon-separated paths) overrides the list.
+# KONKR Control only on SM8650 (KONKR Pocket FIT / AYANEO Pocket S2): it
+# drives konkrd, which does not run anywhere else. SM8550-Power would fight
+# konkrd over the fan/governors and SM8550-LED drives the AYN MCU LEDs, so
+# neither ships on SM8650. DECKY_PLUGINS (colon-separated paths) overrides.
+decky_plugins=()
 if [[ -n "${DECKY_PLUGINS:-}" ]]; then
   IFS=: read -ra decky_plugins <<<"${DECKY_PLUGINS}"
-else
+elif [[ "$SOC" == sm8650 ]]; then
   decky_plugins=("${MOD}/Decky/sm8650/konkr-control")
 fi
-rm -rf "${BUNDLE}/power-managment" "${BUNDLE}/color-leds"
-for src in "${decky_plugins[@]}"; do
+# The bundle is owned by this script: start clean so a rootfs reused from
+# another target keeps no stale plugins.
+rm -rf "$BUNDLE"
+mkdir -p "$BUNDLE"
+if [[ "$SOC" != sm8650 ]]; then
+  rm -rf "${HOME_DST}/homebrew/plugins/konkr-control"
+fi
+for src in ${decky_plugins[@]+"${decky_plugins[@]}"}; do
   [[ -f "${src}/plugin.json" && -f "${src}/dist/index.js" ]] || {
     log "WARN: skip $(basename "$src") (not built)"
     continue

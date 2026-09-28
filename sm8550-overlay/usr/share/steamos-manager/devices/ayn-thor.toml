@@ -1,0 +1,11 @@
+[[device]]
+dt.compatible = "ayn,thor"
+device = "ayn_thor"
+variant = "Thor"
+friendly_name = "AYN Thor"
+
+[inputplumber]
+# Without a device file steamos-manager leaves InputPlumber's own default
+# (xbox-elite), and Steam sees an Xbox 360 pad. Volume keys stay on gpio-keys,
+# which InputPlumber does not grab, so no keyboard target is needed.
+target_devices = ["deck-uhid"]

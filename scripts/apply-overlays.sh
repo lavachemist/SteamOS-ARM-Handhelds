@@ -12,6 +12,15 @@ MOD="${ROOT}/external-and-mods"
 OVL="${ROOT}/steamos-overlay"
 KOUT="$(readlink -f "${KERNEL_OUT:-${WORKDIR}/kernel-release/current}")"
 KREL="$(basename "$KOUT")"
+# Target SoC follows the kernel being installed (build.sh LOCALVERSION
+# -<soc>-steamos) unless SOC is set. Device-specific extras key off it.
+if [[ -z "${SOC:-}" ]]; then
+  case "$KREL" in
+    *-sm8550-*) SOC=sm8550 ;;
+    *) SOC=sm8650 ;;
+  esac
+fi
+export SOC
 SM8650_OVL="${ROOT}/sm8650-overlay"
 STOCK="${R}/opt/stock-steamos"
 GSBUILD="${GAMESCOPE_BUILD:-${WORKDIR}/gamescope-build}"
@@ -29,7 +38,7 @@ log() { echo "$*" | tee -a "$LOG"; }
 [[ -d "$KOUT/modules/$KREL" ]] || die "missing modules $KOUT/modules/$KREL"
 
 : >"$LOG"
-log "== $(date -Iseconds) apply Odin mods into $R"
+log "== $(date -Iseconds) apply Odin mods into $R (SOC=${SOC})"
 
 backup() {
   local src="$1" dest="$2"
@@ -62,6 +71,9 @@ chmod 0644 "$R/boot/KERNEL" "$R/boot/KERNEL.md5"
 
 # Frame kernel modules are useless with this kernel; keep only ours.
 find "$R/usr/lib/modules" -mindepth 1 -maxdepth 1 ! -name "$KREL" -exec rm -rf {} +
+# Replace, not merge: with the same $KREL already present (a reused rootfs),
+# cp -a nests the new tree at $KREL/$KREL and the old modules stay in use.
+rm -rf "$R/usr/lib/modules/$KREL"
 cp -a "$KOUT/modules/$KREL" "$R/usr/lib/modules/$KREL"
 # Merge firmware without wiping Frame blobs (Frame ships SM8650 GPU fw too;
 # the AYANEO-signed ADSP/CDSP/zap live under qcom/sm8650/ayaneo/ps2).
@@ -228,7 +240,8 @@ for u in steamvr-program-ble.service steamvr-v4l2loopback.service \
          deckard-boot-images.service \
          adbd.service adbd-post.service usb-gadget.service usb-gadget.target \
          usb-ncm-gadget@.service usb-ncm-dnsmasq@.service \
-         steamos-boot.service efi.mount esp.mount systemd-repart.service; do
+         steamos-boot.service efi.mount esp.mount systemd-repart.service \
+         firewalld.service; do
   # Frame USB-gadget/ADB/power-monitor: no such hardware here. They crash-loop
   # (1000+ restarts/night) and adbd-post polls ffs.adb/ready at 10 Hz forever,
   # which keeps the SoC out of deep idle and burned battery in standby.
@@ -239,6 +252,9 @@ for u in steamvr-program-ble.service steamvr-v4l2loopback.service \
   # the root disk's free space at boot. Our layouts already have /home and
   # steamos-sm8550-expand-home grows it; on internal UFS repart must never
   # touch the partition table.
+  # firewalld: the Frame's zone only blocks ports below 1024 (it allows ssh and
+  # 1024-65535), and NetworkManager waits for it, so the login screen waited
+  # ~18 s on microSD for almost no protection. SSH is off by default here.
   ln -sfn /dev/null "$R/etc/systemd/system/${u}"
 done
 
@@ -471,6 +487,13 @@ if [[ ! -f "$R/usr/lib/lv2/dpl.lv2/dpl.so" ]]; then
   "${SCRIPT_DIR}/build-dpl-lv2-in-rootfs.sh" "$R"
 fi
 cp -r --no-preserve=mode,ownership "$SM8650_OVL/." "$R/"
+if [[ "$SOC" != sm8650 ]]; then
+  # SM8550 keeps the Odin 2 audio policy (sm8550-audio-pipewire: pro-audio +
+  # MI2S speaker routes). 53 forces the SM8650-APS2 UCM profile and software
+  # volume on the whole card; 55 is the Pocket FIT speaker tuning.
+  rm -f "$R/etc/wireplumber/wireplumber.conf.d/53-konkr-audio.conf" \
+    "$R/etc/wireplumber/wireplumber.conf.d/55-konkr-speaker.conf"
+fi
 chmod 0755 "$R/usr/lib/konkr/pocket-s2-controller"
 chmod 0644 "$R/usr/lib/liblsfg-vk-layer-arm64.so" "$R/usr/lib/liblsfg-vk-layer-arm64.so.README"
 # Audio: the Frame (also SM8650) hides the raw speaker node from every client
@@ -579,6 +602,54 @@ if [[ -d "$R/var/lib/overlays/etc/upper" ]]; then
     "$R/var/lib/overlays/etc/upper/systemd/coredump.conf.d/10-konkr-sd.conf"
   find "$R/var/lib/overlays/etc/upper/inputplumber" \
     \( -type d -exec chmod 0755 {} + \) -o \( -type f -exec chmod 0644 {} + \)
+fi
+
+# ---------------------------------------------------------------------------
+# SM8550 device overlay (Retroid Pocket 6, AYN Thor): fan curve (Armada's, see
+# sm8550-fand). ROCKNIX leaves the RP6 fan at full speed. A rootfs reused from
+# another target may carry a stale copy, so remove it on other SoCs.
+# ---------------------------------------------------------------------------
+SM8550_OVL="${ROOT}/sm8550-overlay"
+if [[ "$SOC" == sm8550 ]]; then
+  log "== SM8550 overlay (fan curve, power button, steamos-manager devices, Thor touch)"
+  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-fand" \
+    "$R/usr/lib/steamos-sm8550/sm8550-fand" 0755
+  install_file "$SM8550_OVL/usr/share/sm8550-fand/fan.conf" \
+    "$R/usr/share/sm8550-fand/fan.conf" 0644
+  install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-fand.service" \
+    "$R/usr/lib/systemd/system/sm8550-fand.service" 0644
+  for t in retroid-pocket6.toml ayn-thor.toml; do
+    install_file "$SM8550_OVL/usr/share/steamos-manager/devices/$t" \
+      "$R/usr/share/steamos-manager/devices/$t" 0644
+  done
+  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-powerbuttond" \
+    "$R/usr/lib/steamos-sm8550/sm8550-powerbuttond" 0755
+  install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-powerbuttond.service" \
+    "$R/usr/lib/systemd/system/sm8550-powerbuttond.service" 0644
+  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-touch-inhibit" \
+    "$R/usr/lib/steamos-sm8550/sm8550-touch-inhibit" 0755
+  install_file "$SM8550_OVL/usr/lib/udev/rules.d/72-sm8550-touch-inhibit.rules" \
+    "$R/usr/lib/udev/rules.d/72-sm8550-touch-inhibit.rules" 0644
+  mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
+  for u in sm8550-fand.service sm8550-powerbuttond.service; do
+    ln -sfn ../$u "$R/usr/lib/systemd/system/multi-user.target.wants/$u"
+  done
+else
+  rm -rf "$R/usr/lib/steamos-sm8550" "$R/usr/share/sm8550-fand"
+  rm -f "$R/usr/share/steamos-manager/devices/retroid-pocket6.toml" \
+    "$R/usr/share/steamos-manager/devices/ayn-thor.toml" \
+    "$R/usr/lib/udev/rules.d/72-sm8550-touch-inhibit.rules" \
+    "$R/usr/lib/systemd/system/sm8550-powerbuttond.service" \
+    "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-powerbuttond.service" \
+    "$R/usr/lib/systemd/system/sm8550-fand.service" \
+    "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-fand.service"
+fi
+
+# Temporary remote-test aid (BUNDLE_TAILSCALE=1); every other build removes it.
+if [[ "${BUNDLE_TAILSCALE:-0}" == 1 ]]; then
+  "${SCRIPT_DIR}/install-tailscale.sh" "$R" install
+else
+  "${SCRIPT_DIR}/install-tailscale.sh" "$R" remove
 fi
 
 # ---------------------------------------------------------------------------

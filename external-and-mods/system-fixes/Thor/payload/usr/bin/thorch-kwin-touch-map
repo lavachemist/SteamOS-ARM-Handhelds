@@ -35,12 +35,11 @@ set_output_name() {
 
 	qdbus6 org.kde.KWin "/org/kde/KWin/InputDevice/${event}" \
 		org.freedesktop.DBus.Properties.Set org.kde.KWin.InputDevice outputName "${output}" || true
+	# The kernel now reports panel-native (portrait) coordinates and KWin
+	# rotates them with the output, like Armada's setup-dual-screen. Reset the
+	# per-device orientation (older images persisted Portrait, a second turn).
 	qdbus6 org.kde.KWin "/org/kde/KWin/InputDevice/${event}" \
-		org.freedesktop.DBus.Properties.Set org.kde.KWin.InputDevice calibrationMatrix "1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1" || true
-	qdbus6 org.kde.KWin "/org/kde/KWin/InputDevice/${event}" \
-		org.freedesktop.DBus.Properties.Set org.kde.KWin.InputDevice rotation 0 || true
-	qdbus6 org.kde.KWin "/org/kde/KWin/InputDevice/${event}" \
-		org.freedesktop.DBus.Properties.Set org.kde.KWin.InputDevice orientationDBus 1 || true
+		org.freedesktop.DBus.Properties.Set org.kde.KWin.InputDevice orientationDBus 0 || true
 }
 
 kwin_ready() {

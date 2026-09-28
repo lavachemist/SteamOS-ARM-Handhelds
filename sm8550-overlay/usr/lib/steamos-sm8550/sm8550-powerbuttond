@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""sm8550-powerbuttond — power button for SM8550 handhelds (Retroid Pocket 6).
+
+The Frame image sets logind HandlePowerKey=ignore because its
+steamos-powerbuttond handles the key, but that daemon is
+Requisite=steamvr.service (VR only, masked here). On the Pocket FIT konkrd
+takes over; nothing did on SM8550, so the button did nothing.
+
+Steam Deck behaviour (same as konkrd's power_press):
+  Game Mode     short press -> Steam's sleep, long press -> Steam's power menu
+  Desktop Mode  short press -> suspend, long press -> Plasma's shut down prompt
+Presses right after a wake are ignored (the wake press was followed by a
+second one that put the device straight back to sleep).
+"""
+from __future__ import annotations
+
+import glob
+import os
+import pwd
+import select
+import struct
+import subprocess
+import sys
+import time
+
+EVENT_FMT = "llHHi"
+EVENT_SIZE = struct.calcsize(EVENT_FMT)
+EV_KEY = 0x01
+KEY_POWER = 116
+LONG_PRESS_S = 1.0
+WAKE_GRACE_S = 2.5
+USER = "steamos"
+
+
+def log(msg: str) -> None:
+    print(f"sm8550-powerbuttond: {msg}", flush=True)
+
+
+def find_pwrkey() -> str | None:
+    for ev in sorted(glob.glob("/sys/class/input/event*")):
+        try:
+            with open(f"{ev}/device/name") as f:
+                if f.read().strip() == "pmic_pwrkey":
+                    return f"/dev/input/{os.path.basename(ev)}"
+        except OSError:
+            continue
+    return None
+
+
+def user_env() -> tuple[str, dict] | None:
+    try:
+        uid = pwd.getpwnam(USER).pw_uid
+    except KeyError:
+        return None
+    return str(uid), {
+        "HOME": f"/home/{USER}", "USER": USER, "PATH": "/usr/bin:/bin",
+        "DISPLAY": ":0", "XDG_RUNTIME_DIR": f"/run/user/{uid}",
+        "DBUS_SESSION_BUS_ADDRESS": f"unix:path=/run/user/{uid}/bus",
+    }
+
+
+def run_as_user(*cmd: str) -> None:
+    ue = user_env()
+    if not ue:
+        return
+    subprocess.Popen(["runuser", "-u", USER, "--", *cmd], env=ue[1],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def desktop_running() -> bool:
+    return subprocess.run(["pgrep", "-x", "plasmashell"],
+                          stdout=subprocess.DEVNULL).returncode == 0
+
+
+def power_press(long: bool) -> None:
+    if not desktop_running():
+        log("Game Mode: " + ("long" if long else "short") + " press")
+        run_as_user("/usr/bin/steam", "-ifrunning",
+                    "steam://longpowerpress" if long else "steam://shortpowerpress")
+        return
+    if not long:
+        log("Desktop: suspend")
+        subprocess.Popen(["systemctl", "suspend"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return
+    log("Desktop: shut down prompt")
+    run_as_user("qdbus6", "org.kde.LogoutPrompt", "/LogoutPrompt",
+                "org.kde.LogoutPrompt.promptShutDown")
+
+
+def slept_total() -> float:
+    """Seconds spent suspended since boot (BOOTTIME counts suspend,
+    MONOTONIC does not), so a jump means we just resumed."""
+    return time.clock_gettime(time.CLOCK_BOOTTIME) - time.clock_gettime(time.CLOCK_MONOTONIC)
+
+
+def main() -> int:
+    path = None
+    while path is None:
+        path = find_pwrkey()
+        if path is None:
+            time.sleep(2)
+    fd = os.open(path, os.O_RDONLY)
+    log(f"watch {path}")
+    down_at = None
+    long_sent = False
+    slept = slept_total()
+    grace_until = 0.0
+    while True:
+        r, _, _ = select.select([fd], [], [], 0.1 if down_at is not None else None)
+        now = time.monotonic()
+        if r:
+            if slept_total() - slept > 1.0:
+                # Resumed since the last event: this press is the wake-up.
+                slept = slept_total()
+                grace_until = now + WAKE_GRACE_S
+                down_at = None
+            data = os.read(fd, EVENT_SIZE * 16)
+            for off in range(0, len(data) - EVENT_SIZE + 1, EVENT_SIZE):
+                _s, _us, etype, code, value = struct.unpack_from(EVENT_FMT, data, off)
+                if etype != EV_KEY or code != KEY_POWER or value not in (0, 1):
+                    continue
+                if now < grace_until:
+                    down_at = None
+                elif value == 1:
+                    down_at, long_sent = now, False
+                elif down_at is not None:
+                    if not long_sent:
+                        power_press(long=False)
+                    down_at = None
+        if down_at is not None and not long_sent and now - down_at >= LONG_PRESS_S:
+            power_press(long=True)
+            long_sent = True
+
+
+if __name__ == "__main__":
+    sys.exit(main())

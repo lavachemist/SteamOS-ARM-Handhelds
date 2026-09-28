@@ -144,6 +144,12 @@ if [[ -x /usr/lib/steamos/sm8550-fixpad ]]; then
   /usr/lib/steamos/sm8550-fixpad apply 740 >/dev/null 2>&1 || true
 fi
 
+# AYN Thor: gamescope shows only the top panel (the largest, picked below) but
+# reads every touchscreen; silence the bottom one while Game Mode runs.
+if [[ -x /usr/lib/steamos-sm8550/sm8550-touch-inhibit ]]; then
+  /usr/lib/steamos-sm8550/sm8550-touch-inhibit bottom_touchscreen 1
+fi
+
 PANEL_W=1080
 PANEL_H=1920
 OUTPUT="${GAMESCOPE_OUTPUT:-}"

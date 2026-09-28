@@ -1,0 +1,12 @@
+[[device]]
+dt.compatible = "retroidpocket,rp6"
+device = "retroid_pocket6"
+variant = "RP6"
+friendly_name = "Retroid Pocket 6"
+
+[inputplumber]
+# Volume up shares gpio-keys with the back paddles, so InputPlumber owns it
+# and only passes it on through the keyboard target. steamos-manager applies
+# this list at session start; without a device file for the RP6 it left only
+# deck-uhid and volume up did nothing.
+target_devices = ["deck-uhid", "keyboard"]

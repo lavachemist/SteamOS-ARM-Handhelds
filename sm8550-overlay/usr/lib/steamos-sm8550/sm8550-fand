@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+"""sm8550-fand — fan curve for SM8550 handhelds (Retroid Pocket 6).
+
+ROCKNIX's 0500-set-boot-fanspeed leaves the pwm-fan at a fixed duty (full
+speed on the RP6) and nothing adjusts it. This runs a temperature curve.
+
+Port of the fan loop in Armada's armada-powerd (armada-os/armada,
+GPL-2.0-or-later), with Armada's factory curves and fan settings:
+average of the three hottest cpu/gpu/video/mem zones, exponential
+smoothing, linear curve interpolation quantised to pwm_quantum, ramp
+limits per 3 s tick, and a safe duty on any error.
+
+Config: /usr/share/sm8550-fand/fan.conf, overridden by /etc/sm8550-fand.conf
+(same keys). SIGHUP reloads. `sm8550-fand --dry-run` prints what it would do
+without touching the fan (works unprivileged).
+"""
+from __future__ import annotations
+
+import configparser
+import glob
+import signal
+import sys
+import time
+
+FACTORY_CONF = "/usr/share/sm8550-fand/fan.conf"
+USER_CONF = "/etc/sm8550-fand.conf"
+TICK_S = 3
+FAN_SAFE_PWM = 128
+ZONE_KINDS = ("cpu", "gpu", "gpuss", "video", "mem")
+
+
+def log(msg: str) -> None:
+    print(f"sm8550-fand: {msg}", flush=True)
+
+
+def rd(path: str, default: str = "") -> str:
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return default
+
+
+def wr(path: str, value) -> bool:
+    try:
+        with open(path, "w") as f:
+            f.write(str(value))
+        return True
+    except OSError as exc:
+        log(f"write {path}: {exc}")
+        return False
+
+
+def clamp(value, low, high):
+    return max(low, min(high, value))
+
+
+def find_fan() -> str | None:
+    for d in sorted(glob.glob("/sys/class/hwmon/hwmon*")):
+        if rd(f"{d}/name") == "pwmfan" and rd(f"{d}/pwm1") != "":
+            return d
+    return None
+
+
+def temp_paths() -> list[str]:
+    paths = []
+    for zone in sorted(glob.glob("/sys/class/thermal/thermal_zone*")):
+        if rd(f"{zone}/type").lower().startswith(ZONE_KINDS):
+            paths.append(f"{zone}/temp")
+    return paths
+
+
+def read_temp(paths: list[str]) -> int:
+    """Average of the three hottest zones, °C (0 if none readable)."""
+    values = []
+    for p in paths:
+        v = rd(p)
+        if v.isdigit():
+            values.append(int(v) // 1000)
+    values = sorted(values, reverse=True)[:3]
+    return sum(values) // len(values) if values else 0
+
+
+def parse_curve(value: str) -> list[tuple[int, int]]:
+    curve = []
+    for item in value.split(","):
+        if ":" not in item:
+            continue
+        t, p = item.split(":", 1)
+        try:
+            curve.append((int(t.strip()), clamp(int(p.strip()), 0, 255)))
+        except ValueError:
+            continue
+    return sorted(curve)
+
+
+def load_conf() -> dict:
+    parser = configparser.ConfigParser()
+    parser.read([FACTORY_CONF, USER_CONF])
+    profile = parser.get("general", "profile", fallback="balanced").strip().lower()
+    curve_name = parser.get(f"profile.{profile}", "fan_curve", fallback="").strip().lower()
+    curve = parse_curve(parser.get(f"fan_curve.{curve_name}", "curve", fallback=""))
+    if not curve:
+        raise ValueError(f"profile {profile!r}: no usable fan curve {curve_name!r}")
+    fan = {k: parser.getint("fan", k) for k in ("min_pwm", "max_pwm", "ramp_up", "ramp_down")}
+    fan["min_pwm"] = clamp(fan["min_pwm"], 0, 255)
+    fan["max_pwm"] = clamp(fan["max_pwm"], fan["min_pwm"], 255)
+    fan["smoothing"] = clamp(parser.getfloat("fan", "smoothing"), 0.0, 0.99)
+    fan["pwm_quantum"] = clamp(parser.getint("fan", "pwm_quantum", fallback=1), 1, 255)
+    return {"profile": profile, "curve_name": curve_name, "curve": curve, "fan": fan}
+
+
+def target_pwm(conf: dict, temp: int) -> int:
+    curve, fan = conf["curve"], conf["fan"]
+
+    def quantize(pwm):
+        q = fan["pwm_quantum"]
+        if q > 1:
+            pwm = round(pwm / q) * q
+        return clamp(int(pwm), fan["min_pwm"], fan["max_pwm"])
+
+    if temp <= curve[0][0]:
+        return quantize(curve[0][1])
+    if temp >= curve[-1][0]:
+        return quantize(curve[-1][1])
+    for (t0, p0), (t1, p1) in zip(curve, curve[1:]):
+        if t0 <= temp <= t1:
+            if t1 == t0:
+                return quantize(p1)
+            return quantize(p0 + (p1 - p0) * (temp - t0) / (t1 - t0))
+    return fan["min_pwm"]
+
+
+class FanDaemon:
+    def __init__(self, dry_run: bool = False):
+        self.dry_run = dry_run
+        self.conf = load_conf()
+        self.dir = find_fan()
+        self.temps = temp_paths()
+        self.smoothed = 0.0
+        self.reload = False
+        cur = rd(f"{self.dir}/pwm1") if self.dir else ""
+        self.last_pwm = int(cur) if cur.isdigit() else self.conf["fan"]["min_pwm"]
+        log(f"fan {self.dir or 'not found'}, {len(self.temps)} zones, "
+            f"profile {self.conf['profile']} (curve {self.conf['curve_name']})")
+
+    def set_pwm(self, pwm: int) -> None:
+        if self.dry_run or not self.dir:
+            return
+        # pwm-fan mode 3 also cuts the fan supply at duty 0 and in suspend.
+        wr(f"{self.dir}/pwm1_enable", 3)
+        wr(f"{self.dir}/pwm1", pwm)
+
+    def safe(self) -> None:
+        self.last_pwm = FAN_SAFE_PWM
+        self.set_pwm(FAN_SAFE_PWM)
+
+    def tick(self) -> None:
+        if self.reload:
+            self.reload = False
+            try:
+                self.conf = load_conf()
+                log(f"reloaded: profile {self.conf['profile']} (curve {self.conf['curve_name']})")
+            except (ValueError, configparser.Error) as exc:
+                log(f"reload failed, keeping previous config: {exc}")
+        fan = self.conf["fan"]
+        temp = read_temp(self.temps)
+        if temp:
+            w = fan["smoothing"]
+            self.smoothed = temp if not self.smoothed else self.smoothed * w + temp * (1.0 - w)
+            target = target_pwm(self.conf, int(self.smoothed))
+        else:
+            target = FAN_SAFE_PWM
+        if target > self.last_pwm:
+            nxt = min(target, self.last_pwm + fan["ramp_up"])
+        else:
+            nxt = max(target, self.last_pwm - fan["ramp_down"])
+        self.last_pwm = clamp(nxt, fan["min_pwm"], fan["max_pwm"])
+        self.set_pwm(self.last_pwm)
+        if self.dry_run:
+            log(f"temp {temp} C (smoothed {self.smoothed:.1f}) target {target} -> pwm {self.last_pwm}")
+
+    def run(self, ticks: int = 0) -> None:
+        n = 0
+        while True:
+            try:
+                self.tick()
+            except Exception as exc:  # never leave the fan low on a bad tick
+                log(f"tick failed: {exc!r}")
+                self.safe()
+            n += 1
+            if ticks and n >= ticks:
+                return
+            time.sleep(TICK_S)
+
+
+def main() -> int:
+    dry = "--dry-run" in sys.argv
+    daemon = FanDaemon(dry_run=dry)
+    if dry:
+        daemon.run(ticks=5)
+        return 0
+    if not daemon.dir:
+        log("no pwmfan hwmon; nothing to do")
+        return 0
+    signal.signal(signal.SIGHUP, lambda *_: setattr(daemon, "reload", True))
+
+    def stop(*_):
+        daemon.safe()
+        log(f"stopped (fan at {FAN_SAFE_PWM})")
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, stop)
+    daemon.run()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

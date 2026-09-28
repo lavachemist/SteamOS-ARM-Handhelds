@@ -82,6 +82,17 @@ if [ -n "$rootdev" ] && mount -t ext4 -o rw "$rootdev" /newroot; then
       exec sh
     fi
   fi
+  # SteamOS keeps /etc as an overlay (etc.mount). Mounted by systemd it comes
+  # up after systemd has read its units, so anything enabled at runtime (the
+  # links in the upper layer, e.g. `systemctl enable sshd`) was ignored on the
+  # next boot. Mount it here; systemd then treats etc.mount as already active.
+  e=/newroot/var/lib/overlays/etc
+  if [ -d "$e/upper" ]; then
+    mkdir -p "$e/work"
+    mount -t overlay overlay \
+      -o "lowerdir=/newroot/etc,upperdir=$e/upper,workdir=$e/work" /newroot/etc \
+      || echo "etc overlay mount failed; systemd will retry" >/dev/kmsg
+  fi
   snap "root mounted from $rootdev, switch_root"
   umount /boot 2>/dev/null
   exec switch_root /newroot /sbin/init

@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
-"""Odin2 volume rocker: gpio-keys = VOLUP, pmic_resin = VOLDOWN → wpctl.
+"""Odin2 volume rocker: gpio-keys = VOLUP, pmic_resin = VOLDOWN → pactl.
 
 Do not grab USB/Bluetooth keyboards, mice, or the gamepad.
+
+On SM8550 the key can also reach us only through InputPlumber: on the
+Retroid Pocket 6 gpio-keys carries the back paddles too, so InputPlumber owns
+it and passes volume up on through its virtual keyboard. Steam shows its
+volume indicator for that key but does not change the volume, so this
+helper also reads "InputPlumber Keyboard" — only for keys no physical device
+above already gives us, so nothing is applied twice.
 """
 from __future__ import annotations
 
@@ -13,6 +20,7 @@ import select
 import struct
 import subprocess
 import sys
+import time
 
 EVENT_FMT = "llHHi"
 EVENT_SIZE = struct.calcsize(EVENT_FMT)
@@ -23,6 +31,8 @@ KEY_VOLUMEUP = 115
 STEP = os.environ.get("SM8550_VOLUME_STEP", "5%")
 LIMIT = os.environ.get("SM8550_VOLUME_LIMIT", "1.0")
 ALLOW = ("gpio-keys", "pmic_resin")
+IP_KEYBOARD = "inputplumber keyboard"
+RESCAN_S = 3.0
 
 
 def log(msg: str) -> None:
@@ -54,37 +64,84 @@ def device_name(path: str) -> str:
         return ""
 
 
-def has_volume_keys(fd: int) -> bool:
+def volume_keys(fd: int) -> set[int]:
     buf = array.array("B", [0] * 96)
     nr = 0x20 + EV_KEY
     ioc = (2 << 30) | (ord("E") << 8) | nr | (len(buf) << 16)
     try:
         fcntl.ioctl(fd, ioc, buf, True)
     except OSError:
+        return set()
+    return {c for c in (KEY_VOLUMEUP, KEY_VOLUMEDOWN, KEY_MUTE)
+            if buf[c // 8] & (1 << (c % 8))}
+
+
+def is_sm8550() -> bool:
+    try:
+        with open("/sys/firmware/devicetree/base/compatible", "rb") as f:
+            return b"qcom,sm8550" in f.read()
+    except OSError:
         return False
 
-    def bit(code: int) -> bool:
-        return bool(buf[code // 8] & (1 << (code % 8)))
 
-    return bit(KEY_VOLUMEUP) or bit(KEY_VOLUMEDOWN) or bit(KEY_MUTE)
+class Devices:
+    """Physical volume devices, plus InputPlumber's keyboard for the keys
+    they do not cover (SM8550 only). fd -> (path, keys to act on)."""
 
+    def __init__(self, use_ip: bool):
+        self.use_ip = use_ip
+        self.fds: dict[int, tuple[str, set[int]]] = {}
+        self.physical: set[int] = set()
+        for path in sorted(glob.glob("/dev/input/event*")):
+            dname = device_name(path).lower()
+            if not any(a in dname for a in ALLOW):
+                continue
+            fd = self._open(path)
+            if fd is None:
+                continue
+            keys = volume_keys(fd)
+            if not keys:
+                os.close(fd)
+                continue
+            log(f"watch {path} ({dname}) {sorted(keys)}")
+            self.fds[fd] = (path, keys)
+            self.physical |= keys
+        self.ip_fd = None
+        self.next_scan = 0.0
 
-def open_devices() -> list[tuple[str, int]]:
-    opened: list[tuple[str, int]] = []
-    for path in sorted(glob.glob("/dev/input/event*")):
-        dname = device_name(path).lower()
-        if not any(a in dname for a in ALLOW):
-            continue
+    @staticmethod
+    def _open(path: str) -> int | None:
         try:
-            fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+            return os.open(path, os.O_RDONLY | os.O_NONBLOCK)
         except OSError:
-            continue
-        if not has_volume_keys(fd):
-            os.close(fd)
-            continue
-        log(f"watch {path} ({dname})")
-        opened.append((path, fd))
-    return opened
+            return None
+
+    def drop(self, fd: int) -> None:
+        path, _ = self.fds.pop(fd, ("?", set()))
+        os.close(fd)
+        if fd == self.ip_fd:
+            self.ip_fd = None
+            log(f"lost {path}")
+
+    def rescan_ip(self, now: float) -> None:
+        """(Re)attach InputPlumber's keyboard; it comes and goes with its targets."""
+        if not self.use_ip or self.ip_fd is not None or now < self.next_scan:
+            return
+        self.next_scan = now + RESCAN_S
+        for path in sorted(glob.glob("/dev/input/event*")):
+            if device_name(path).lower() != IP_KEYBOARD:
+                continue
+            fd = self._open(path)
+            if fd is None:
+                continue
+            keys = volume_keys(fd) - self.physical
+            if not keys:
+                os.close(fd)
+                return
+            log(f"watch {path} (inputplumber keyboard) {sorted(keys)}")
+            self.fds[fd] = (path, keys)
+            self.ip_fd = fd
+            return
 
 
 def pactl(*args: str) -> str:
@@ -114,24 +171,29 @@ def apply(code: int) -> None:
 
 
 def main() -> int:
-    devs = open_devices()
-    if not devs:
+    devs = Devices(use_ip=is_sm8550())
+    if not devs.fds and not devs.use_ip:
         log("no gpio-keys/pmic_resin volume devices")
         return 0
-    fds = {fd: path for path, fd in devs}
     while True:
+        devs.rescan_ip(time.monotonic())
         try:
-            ready, _, _ = select.select(list(fds), [], [], 2.0)
+            ready, _, _ = select.select(list(devs.fds), [], [], 2.0)
         except InterruptedError:
             continue
         for fd in ready:
             try:
                 data = os.read(fd, EVENT_SIZE * 8)
             except OSError:
+                devs.drop(fd)
                 continue
+            if not data:
+                devs.drop(fd)
+                continue
+            keys = devs.fds[fd][1]
             for off in range(0, len(data) - EVENT_SIZE + 1, EVENT_SIZE):
                 _s, _us, etype, code, value = struct.unpack_from(EVENT_FMT, data, off)
-                if etype == EV_KEY and value == 1:
+                if etype == EV_KEY and value == 1 and code in keys:
                     apply(code)
     return 0
 

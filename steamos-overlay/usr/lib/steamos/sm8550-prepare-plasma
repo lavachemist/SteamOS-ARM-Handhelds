@@ -10,6 +10,43 @@ fi
 # gamescope creates this dir without the sticky bit; kwin then refuses Xwayland.
 chmod 1777 /tmp/.X11-unix 2>/dev/null || true
 
+# Desktop rotation per device. The shipped kwinoutputconfig (Rotated270) suits
+# panels with DT rotation 90 (Pocket FIT, AYN Thor); the Retroid Pocket 6
+# panel is rotation 270 and needs Rotated90 or the desktop is upside down
+# (Game Mode is fine: gamescope reads the DRM panel orientation itself).
+# Done once, before KWin starts, so a rotation chosen later in Display
+# Settings is kept.
+seed_rotation() {
+  local model want cfg marker
+  model="$(tr -d '\0' </sys/firmware/devicetree/base/model 2>/dev/null)"
+  case "$model" in
+    "Retroid Pocket 6"*) want=Rotated90 ;;
+    *) return 0 ;;
+  esac
+  cfg="$HOME/.config/kwinoutputconfig.json"
+  marker="${XDG_STATE_HOME:-$HOME/.local/state}/sm8550-kwin-rotation-seeded"
+  [[ -f "$marker" || ! -f "$cfg" ]] && return 0
+  python3 - "$cfg" "$want" <<'PY2' && { mkdir -p "$(dirname "$marker")"; : >"$marker"; }
+import json, sys
+path, want = sys.argv[1], sys.argv[2]
+with open(path) as f:
+    data = json.load(f)
+for section in data:
+    if section.get("name") == "outputs":
+        for out in section.get("data", []):
+            if out.get("connectorName") == "DSI-1":
+                out["transform"] = want
+with open(path, "w") as f:
+    json.dump(data, f, indent=4)
+PY2
+}
+seed_rotation
+
+# AYN Thor: Game Mode silenced the bottom touchscreen; the desktop uses both.
+if [[ -x /usr/lib/steamos-sm8550/sm8550-touch-inhibit ]]; then
+  /usr/lib/steamos-sm8550/sm8550-touch-inhibit bottom_touchscreen 0
+fi
+
 unset QT_QPA_PLATFORM
 unset GAMESCOPE_WAYLAND_DISPLAY
 unset GAMESCOPE_SESSION_TARGET

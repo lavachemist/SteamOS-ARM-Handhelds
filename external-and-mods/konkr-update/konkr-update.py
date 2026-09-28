@@ -21,6 +21,10 @@ FORMAT = 1
 ROOT_DIRS = ('usr', 'opt', 'etc')
 UPPER = 'var/lib/overlays/etc/upper'
 HOME_DIRS = ('homebrew/plugins/konkr-control', 'homebrew/plugins/decky-lsfg-vk')
+# One package per SoC; `devices` must be exactly one of these (DTB models).
+KONKR_DEVICES = ['KONKR Pocket FIT', 'AYANEO Pocket S2']
+DEVICE_SETS = (KONKR_DEVICES, ['Retroid Pocket 6', 'Retroid Pocket 6 TOP-DPAD'])
+KONKR_ONLY = ('homebrew/plugins/konkr-control',)
 PRESERVE = ('passwd', 'shadow', 'group', 'gshadow', 'machine-id', 'hostname', 'hosts',
             'fstab', 'crypttab', 'localtime', 'adjtime', 'resolv.conf', 'ssh',
             'NetworkManager/system-connections', 'sudoers.d')
@@ -102,7 +106,7 @@ def validate_archive(package):
         raise ValueError('required payload directories must be real directories')
     if not manifest or manifest.get('format') != FORMAT or manifest.get('architecture') != 'aarch64':
         raise ValueError('unsupported update format or architecture')
-    if manifest.get('devices') != ['KONKR Pocket FIT', 'AYANEO Pocket S2']:
+    if manifest.get('devices') not in DEVICE_SETS:
         raise ValueError('unsupported device list')
     files = manifest.get('files', {})
     if not isinstance(files, dict): raise ValueError('invalid file manifest')
@@ -182,7 +186,7 @@ def retarget_kernel(src, dst, rootarg, helper=BOOTIMG):
 def stage(args):
     if os.geteuid() != 0: raise ValueError('staging needs administrator access')
     model = Path('/sys/firmware/devicetree/base/model').read_text().rstrip('\0\n')
-    if model not in ('KONKR Pocket FIT', 'AYANEO Pocket S2'): raise ValueError('unsupported device')
+    if not any(model in s for s in DEVICE_SETS): raise ValueError('unsupported device')
     if os.uname().machine != 'aarch64': raise ValueError('requires ARM64 SteamOS')
     import pwd
     if pwd.getpwnam('steamos').pw_uid != 1000: raise ValueError('unsupported SteamOS account layout')
@@ -207,6 +211,7 @@ def stage(args):
         shutil.copyfile(source_package, package); os.chmod(package, 0o600)
         if digest(package) != expected: raise ValueError('package SHA256 mismatch')
         manifest, size = validate_archive(package)
+        if model not in manifest['devices']: raise ValueError(f'package is not for this device ({model})')
         used = shutil.disk_usage('/').total - shutil.disk_usage('/').free
         if shutil.disk_usage('/home').free < size + used + (512 << 20):
             raise ValueError('not enough HOME space for payload and rollback backup')
@@ -296,6 +301,10 @@ def apply(root, boot, home, work, manifest):
     if upper.exists(): copy_tree(upper, root / UPPER, excludes=PRESERVE)
     for rel in HOME_DIRS:
         src = payload / 'home/steamos' / rel
+        if rel in KONKR_ONLY and manifest['devices'] != KONKR_DEVICES:
+            # Not for this device; drop any stale copy (the snapshot restores it on rollback).
+            if (home / 'steamos' / rel).exists(): shutil.rmtree(home / 'steamos' / rel)
+            continue
         if not src.is_dir(): raise ValueError(f'missing home migration: {rel}')
         copy_tree(src, home / 'steamos' / rel, delete=True)
         # Images stage users with numeric ownership; do not inherit root ownership.

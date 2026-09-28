@@ -1,0 +1,16 @@
+[Unit]
+Description=SM8550 fan curve (Retroid Pocket 6)
+ConditionPathExists=/sys/firmware/devicetree/base/compatible
+
+[Service]
+Type=simple
+ExecCondition=/bin/sh -c 'grep -qa "qcom,sm8550" /sys/firmware/devicetree/base/compatible'
+ExecStart=/usr/lib/steamos-sm8550/sm8550-fand
+ExecReload=/bin/kill -HUP $MAINPID
+# Never leave the fan low if the daemon goes away (Armada's safe duty).
+ExecStopPost=/bin/sh -c 'for d in /sys/class/hwmon/hwmon*; do [ "$(cat $d/name 2>/dev/null)" = pwmfan ] && echo 128 > $d/pwm1; done; true'
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

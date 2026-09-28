@@ -1,0 +1,13 @@
+[Unit]
+Description=SM8550 power button (sleep / power menu, like the Steam Deck)
+ConditionPathExists=/sys/firmware/devicetree/base/compatible
+
+[Service]
+Type=simple
+ExecCondition=/bin/sh -c 'grep -qa "qcom,sm8550" /sys/firmware/devicetree/base/compatible'
+ExecStart=/usr/lib/steamos-sm8550/sm8550-powerbuttond
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

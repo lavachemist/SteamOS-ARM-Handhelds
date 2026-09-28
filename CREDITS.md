@@ -10,6 +10,11 @@ from MaSi's **SteamOS-ARM-SM8550**, so everything MaSi credits below still appli
 |--------|-----|-------------|
 | **MaSi / SteamOS-ARM-SM8550** | https://github.com/MaSieS4Fun/SteamOS-ARM-SM8550 | The whole base: image builder, SteamOS ARM overlay, Box64/Decky setup, scripts |
 | **ROCKNIX SM8650** | https://github.com/ROCKNIX/distribution | Kernel recipe (20260801, Linux 7.1.2), Pocket FIT panel/touch/MCU patches, device tree, firmware, audio UCM |
+| **ROCKNIX SM8550** | https://github.com/ROCKNIX/distribution | Retroid Pocket 6 kernel (same 20260801 recipe): RP6 device trees and panel, RSInput pad, HTR3212 LED and haptics drivers, AYN-signed firmware |
+| **linux-firmware** | https://gitlab.com/kernel-firmware/linux-firmware | Adreno 740 microcode and zap shader (SM8550), pinned by tag and SHA-256 |
+| **MaSi haptics trace fix** | `external-and-mods/kernel/patches/masi/1001-qcom-haptics-trace-7.0.patch` | Basis of the SM8550 port patch that builds the haptics driver with tracing on |
+| **Armada** | https://github.com/armada-os/armada | SM8550 fan curves and fan loop (`sm8550-fand`, ported from `armada-powerd`); SM8550 GPU power-rail and s2idle kernel patches and the common AYN/Retroid DT fixes (`external-and-mods/kernel-sm8650/sm8550/`). GPL-2.0-or-later |
+| **Luke Johnson (thorch)** | https://github.com/thorch-os/thorch | Root-cause work behind the SM8550 PCIe suspend-OPP and RSInput suspend fixes (via Armada) |
 | **ROCKNIX ABL** | https://github.com/ROCKNIX/abl | Bootloader with device model selection |
 | **lsfg-vk** | https://github.com/PancakeTAS/lsfg-vk · https://github.com/xXJSONDeruloXx/lsfg-vk | Frame generation layer, rebuilt for aarch64 with our patches |
 | **decky-lsfg-vk** | https://github.com/xXJSONDeruloXx/decky-lsfg-vk | Frame generation Decky plugin |

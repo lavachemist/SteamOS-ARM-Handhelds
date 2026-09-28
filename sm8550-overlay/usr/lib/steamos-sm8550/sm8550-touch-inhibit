@@ -1,0 +1,18 @@
+#!/bin/bash
+# sm8550-touch-inhibit <device-name> <1|0> — silence (1) or re-enable (0) an
+# input device by name (after Armada's touchscreen-inhibit).
+#
+# AYN Thor: gamescope drives only the top panel but takes touch from every
+# touchscreen, so taps on the dark bottom panel would land on the top one.
+# gamescope-session silences bottom_touchscreen; sm8550-prepare-plasma turns it
+# back on for the desktop, which uses both panels. 72-sm8550-touch-inhibit.rules
+# lets the input group write the attribute. Unknown names are a no-op.
+set -u
+name="${1:?device name}"
+state="${2:?1 or 0}"
+for dev in /sys/class/input/input*; do
+  [[ "$(cat "$dev/name" 2>/dev/null)" == "$name" ]] || continue
+  echo "$state" >"$dev/inhibited" 2>/dev/null \
+    || echo "sm8550-touch-inhibit: cannot set $name inhibited=$state" >&2
+done
+exit 0

@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
-# SM8650 (Snapdragon 8 Gen 3 / G3 Gen 3) kernel for SteamOS ARM on the
-# KONKR Pocket FIT (and AYANEO Pocket S2, same ROCKNIX dtsi).
+# Kernel for SteamOS ARM on Snapdragon handhelds, one SoC per build:
+#   SOC=sm8650 (default)  Snapdragon 8 Gen 3 / G3 Gen 3: KONKR Pocket FIT,
+#                         AYANEO Pocket S2 (same ROCKNIX dtsi)
+#   SOC=sm8550            Snapdragon 8 Gen 2: Retroid Pocket 6, AYN Thor
 #
 # Sources (pinned):
 #   linux-${KVER}             kernel.org
-#   ROCKNIX distribution      SM8650 patches, DTS, kernel config
-#   ROCKNIX extra-firmware    AYANEO-signed ADSP/CDSP/zap, WCN7850, APS2 tplg
-#   ROCKNIX chipone_tddi      out-of-tree touchscreen driver
+#   ROCKNIX distribution      per-SoC patches, DTS, kernel config
+#   ROCKNIX extra-firmware    vendor-signed ADSP/CDSP(/zap), audio tplg
+#   ROCKNIX chipone_tddi      out-of-tree touchscreen driver (SM8650)
+#   linux-firmware            Adreno 740 microcode + zap (SM8550)
 #
 # Output: output/<release>/{boot/KERNEL, modules/<release>, firmware/}
 #
 # KERNEL is a ROCKNIX-ABL bootimg (header v0): gzip(Image) + appended DTBs
 # + a busybox initramfs (initramfs/init). ABL v1.1.8+ reads `model` from each
-# DTB and boots the one matching "Set device model" — "KONKR Pocket FIT".
+# DTB and boots the one matching "Set device model" (e.g. "KONKR Pocket FIT").
 # The image builder patches the real root=PARTUUID= into the cmdline.
 #
 # Must run on aarch64 Linux (native build). Tested host: Ubuntu 24.04 in Colima.
@@ -26,7 +29,8 @@ PORT_ROOT="$(cd "${HERE}/../.." && pwd)"
 # boot on the Pocket FIT — black screen before the console, verified on
 # hardware 2026-09-23 — so builds pin the release.
 KVER="${KVER:-7.1.2}"
-LOCALVERSION="${LOCALVERSION:--sm8650-steamos}"
+SOC="${SOC:-sm8650}"
+LOCALVERSION="${LOCALVERSION:--${SOC}-steamos}"
 ROCKNIX_DIR="${ROCKNIX_DIR:-${PORT_ROOT}/../rocknix-20260801}"
 ROCKNIX_REF="${ROCKNIX_REF:-20260801}"
 EXTRA_FW_REF="${EXTRA_FW_REF:-88b363e67d4f730feb2c3124724d26dfaa88ce76}"
@@ -34,15 +38,34 @@ TDDI_REF="${TDDI_REF:-af27029fa2b27c4a77d16809298ed5d03c9da5a6}"
 # DTBs to append to KERNEL (ABL shows one menu entry per DTB model).
 # Same order ROCKNIX appends them (alphabetical glob); ABL maps the chosen
 # model back into this list.
-DTBS="${DTBS:-sm8650-ayaneo-ps2 sm8650-konkr-pf}"
+# Port patches, DTS appends and the extra config fragment are per SoC: the
+# SM8650 ones are Pocket FIT drivers (KONKR MCU, AR14 panel modes).
+case "$SOC" in
+  sm8650)
+    DTBS="${DTBS:-sm8650-ayaneo-ps2 sm8650-konkr-pf}"
+    PORT_DIR="${HERE}"
+    ;;
+  sm8550)
+    # ABL boots the DTB whose model matches "Set device model": "AYN Thor",
+    # "Retroid Pocket 6" and "Retroid Pocket 6 TOP-DPAD".
+    DTBS="${DTBS:-qcs8550-ayn-thor qcs8550-retroidpocket-rp6 qcs8550-retroidpocket-rp6-top-dpad}"
+    PORT_DIR="${HERE}/sm8550"
+    ;;
+  *) echo "unsupported SOC=${SOC} (sm8650, sm8550)" >&2; exit 1 ;;
+esac
+SOC_UC="${SOC^^}"
+# Adreno 740 microcode + zap for SM8550 (the Frame rootfs only has A750's).
+# a740_sqe.fw here is the one MaSi's SM8550 build verified (md5 0211fdf6…);
+# Armbian's copy glitches RPCS3.
+LINUX_FW_REF="${LINUX_FW_REF:-20260916}"
 
-WORK="${WORK:-/work/kernel-sm8650}"
+WORK="${WORK:-/work/kernel-${SOC}}"
 CACHE="${WORK}/cache"
 SRC="${WORK}/linux-${KVER}"
 OUT_BASE="${OUT_BASE:-${WORK}/output}"
 JOBS="${JOBS:-$(nproc)}"
 
-log() { printf '[kernel-sm8650] %s\n' "$*" >&2; }
+log() { printf '[kernel-%s] %s\n' "$SOC" "$*" >&2; }
 die() { log "ERROR: $*"; exit 1; }
 
 [[ "$(uname -m)" == aarch64 ]] || die "build on aarch64 Linux (Colima VM), not $(uname -m)"
@@ -79,8 +102,14 @@ prepare_source() {
   local tarball="${CACHE}/linux-${KVER}.tar.xz"
   fetch "https://cdn.kernel.org/pub/linux/kernel/v${KVER%%.*}.x/linux-${KVER}.tar.xz" "$tarball"
   local patch_digest
-  patch_digest="$(find "${HERE}/patches" "${HERE}/dts" -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d" " -f1)"
-  if [[ -f "${SRC}/.sm8650-patched" && "$(cat "${SRC}/.sm8650-patched")" == "$patch_digest" ]]; then
+  local -a digest_src=() x
+  for x in "${PORT_DIR}/patches" "${PORT_DIR}/dts" "${PORT_DIR}/rocknix-skip"; do
+    [[ -e "$x" ]] && digest_src+=("$x")
+  done
+  # The DTB list is part of it: DTBs are registered in the Makefile only while
+  # the source is (re)patched below.
+  patch_digest="$({ find "${digest_src[@]}" -type f -print0 | sort -z | xargs -0 -r sha256sum; echo "DTBS=$DTBS"; } | sha256sum | cut -d" " -f1)"
+  if [[ -f "${SRC}/.${SOC}-patched" && "$(cat "${SRC}/.${SOC}-patched")" == "$patch_digest" ]]; then
     log "source already patched: ${SRC}"
     return 0
   fi
@@ -91,34 +120,55 @@ prepare_source() {
 
   # Same order ROCKNIX uses: PKG_PATCH_DIRS="${LINUX} mainline ${DEVICE} default"
   # (${LINUX}=7.2 is the version dir).
+  # ROCKNIX patches this port leaves out (rocknix-skip: one basename per line).
+  local -A skip=()
+  local line
+  if [[ -f "${PORT_DIR}/rocknix-skip" ]]; then
+    while IFS= read -r line; do
+      line="${line%%#*}"; line="${line//[[:space:]]/}"
+      [[ -n "$line" ]] && skip["$line"]=1
+    done <"${PORT_DIR}/rocknix-skip"
+  fi
   local d p
   local -a dirs=(
     "projects/ROCKNIX/packages/linux/patches/${KVER}"
     "projects/ROCKNIX/packages/linux/patches/mainline"
-    "projects/ROCKNIX/devices/SM8650/patches/linux"
+    "projects/ROCKNIX/devices/${SOC_UC}/patches/linux"
     "packages/linux/patches/default"
     "@port"
   )
   for d in "${dirs[@]}"; do
     local pdir
-    if [[ "$d" == "@port" ]]; then pdir="${HERE}/patches"; else pdir="$(rocknix_path "$d")"; fi
+    if [[ "$d" == "@port" ]]; then pdir="${PORT_DIR}/patches"; else pdir="$(rocknix_path "$d")"; fi
     [[ -d "$pdir" ]] || { log "skip missing patch dir $d"; continue; }
     for p in "$pdir"/*.patch; do
       [[ -e "$p" ]] || continue
       case "$(basename "$p")" in
         9900-i915-10bit-hack.patch) continue ;;  # x86 only
       esac
+      if [[ "$d" != "@port" && -n "${skip[$(basename "$p")]:-}" ]]; then
+        log "skip $(basename "$d")/$(basename "$p") (rocknix-skip)"
+        continue
+      fi
       log "patch $(basename "$d")/$(basename "$p")"
       patch -d "$SRC" -p1 -N --no-backup-if-mismatch -s <"$p" \
         || die "patch failed: $p"
     done
   done
 
-  log "install ROCKNIX SM8650 DTS"
-  cp -v "$(rocknix_path projects/ROCKNIX/devices/SM8650/linux/dts/qcom)"/*.dts* \
+  log "install ROCKNIX ${SOC_UC} DTS"
+  cp -v "$(rocknix_path "projects/ROCKNIX/devices/${SOC_UC}/linux/dts/qcom")"/*.dts* \
     "${SRC}/arch/arm64/boot/dts/qcom/" >&2
+  # DT patches go after the copy: the ROCKNIX .dts/.dtsi files are not in the
+  # kernel tree while the code patches above are applied.
+  for p in "${PORT_DIR}"/dts/*.patch; do
+    [[ -e "$p" ]] || continue
+    log "patch dts/$(basename "$p")"
+    patch -d "$SRC" -p1 -N --no-backup-if-mismatch -s <"$p" \
+      || die "patch failed: $p"
+  done
   local app
-  for app in "${HERE}"/dts/*.append; do
+  for app in "${PORT_DIR}"/dts/*.append; do
     [[ -e "$app" ]] || continue
     log "append $(basename "$app")"
     cat "$app" >>"${SRC}/arch/arm64/boot/dts/qcom/$(basename "$app" .append).dts"
@@ -127,7 +177,7 @@ prepare_source() {
   for dtb in $DTBS; do
     grep -q "${dtb}.dtb" "$mk" || echo "dtb-\$(CONFIG_ARCH_QCOM) += ${dtb}.dtb" >>"$mk"
   done
-  printf "%s\n" "$patch_digest" > "${SRC}/.sm8650-patched"
+  printf "%s\n" "$patch_digest" > "${SRC}/.${SOC}-patched"
 }
 
 stage_builtin_firmware() {
@@ -136,7 +186,7 @@ stage_builtin_firmware() {
   local fwtar="${CACHE}/extra-firmware-${EXTRA_FW_REF}.tar.gz"
   fetch "https://github.com/ROCKNIX/extra-firmware/archive/${EXTRA_FW_REF}.tar.gz" "$fwtar"
   EXTRA_FW_SRC="${WORK}/extra-firmware"
-  if [[ ! -d "${EXTRA_FW_SRC}/SM8650" ]]; then
+  if [[ ! -d "${EXTRA_FW_SRC}/${SOC_UC}" ]]; then
     rm -rf "$EXTRA_FW_SRC"; mkdir -p "$EXTRA_FW_SRC"
     tar -C "$EXTRA_FW_SRC" --strip-components=1 -xzf "$fwtar"
   fi
@@ -147,16 +197,34 @@ stage_builtin_firmware() {
   fi
   local ext="${SRC}/external-firmware"
   rm -rf "$ext"
-  mkdir -p "${ext}/qcom/sm8650/ayaneo/ps2"
-  cp -L "${EXTRA_FW_SRC}/SM8650/qcom/"{gen70900_aqe.fw,gen70900_sqe.fw,gmu_gen70900.bin} "${ext}/qcom/"
-  cp -L "${EXTRA_FW_SRC}/SM8650/qcom/sm8650/ayaneo/ps2/gen70900_zap.mbn" "${ext}/qcom/sm8650/ayaneo/ps2/"
+  case "$SOC" in
+    sm8650)
+      mkdir -p "${ext}/qcom/sm8650/ayaneo/ps2"
+      cp -L "${EXTRA_FW_SRC}/SM8650/qcom/"{gen70900_aqe.fw,gen70900_sqe.fw,gmu_gen70900.bin} "${ext}/qcom/"
+      cp -L "${EXTRA_FW_SRC}/SM8650/qcom/sm8650/ayaneo/ps2/gen70900_zap.mbn" "${ext}/qcom/sm8650/ayaneo/ps2/"
+      ;;
+    sm8550)
+      local lfw="${CACHE}/linux-firmware-${LINUX_FW_REF}" f sum
+      local -A want=(
+        [qcom/a740_sqe.fw]=96fee336424b139100fc60b5b45a907360e4b3936d7e1d00406b9bd80ca48473
+        [qcom/gmu_gen70200.bin]=1a2a419c39046d3141fc5fed5aa7f971de2db40cc7a1d89693c3e26fad64dd98
+        [qcom/sm8550/a740_zap.mbn]=386bbdc25ae94a9398e33e7580eecfdcef6c472682a1e3123e1374bcffe7cde3
+      )
+      for f in "${!want[@]}"; do
+        fetch "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/${LINUX_FW_REF}/${f}" "${lfw}/${f}"
+        sum="$(sha256sum "${lfw}/${f}" | cut -d" " -f1)"
+        [[ "$sum" == "${want[$f]}" ]] || die "${f}: sha256 ${sum} != pinned ${want[$f]}"
+        install -D -m0644 "${lfw}/${f}" "${ext}/${f}"
+      done
+      ;;
+  esac
   cp -L "${regdb}/regulatory.db" "${regdb}/regulatory.db.p7s" "$ext/"
   (cd "$ext" && find . -type f | sed 's|^\./||' | sort | xargs) >"${WORK}/extra-firmware.list"
 }
 
 configure() {
   local cfg
-  cfg="$(rocknix_path projects/ROCKNIX/devices/SM8650/linux/linux.aarch64.conf)"
+  cfg="$(rocknix_path "projects/ROCKNIX/devices/${SOC_UC}/linux/linux.aarch64.conf")"
   [[ -f "$cfg" ]] || die "missing ROCKNIX config $cfg"
   cp "$cfg" "${SRC}/.config"
   local sc="${SRC}/scripts/config --file ${SRC}/.config"
@@ -166,7 +234,12 @@ configure() {
   $sc --disable LOCALVERSION_AUTO
   $sc --set-str EXTRA_FIRMWARE "$(cat "${WORK}/extra-firmware.list")"
   $sc --set-str EXTRA_FIRMWARE_DIR "external-firmware"
-  # Merge the SteamOS fragment (see steamos.config for why each is needed).
+  # Merge the SteamOS fragment (see steamos.config for why each is needed)
+  # plus the per-SoC one (steamos-${SOC}.config).
+  local frag
+  frag="$(mktemp)"
+  cat "${HERE}/steamos.config" >"$frag"
+  [[ -f "${HERE}/steamos-${SOC}.config" ]] && cat "${HERE}/steamos-${SOC}.config" >>"$frag"
   local line opt val
   while IFS= read -r line; do
     [[ -z "$line" || "$line" == \#* ]] && continue
@@ -178,7 +251,7 @@ configure() {
       \"*) $sc --set-str "$opt" "$(eval echo "$val")" ;;
       *) $sc --set-val "$opt" "$val" ;;
     esac
-  done <"${HERE}/steamos.config"
+  done <"$frag"
   make -C "$SRC" olddefconfig >/dev/null
   # Report anything from the fragment that Kconfig refused.
   local bad=0
@@ -190,7 +263,8 @@ configure() {
     elif ! grep -qx "${opt}=${val}" "${SRC}/.config"; then
       log "WARN ${opt}=${val} not applied (got: $(grep -E "^(# )?${opt}[= ]" "${SRC}/.config" || echo unset))"; bad=1
     fi
-  done <"${HERE}/steamos.config"
+  done <"$frag"
+  rm -f "$frag"
   ((bad)) && log "some fragment options did not stick (see WARN lines)"
   return 0
 }
@@ -203,6 +277,8 @@ build_kernel() {
 }
 
 build_tddi() {
+  # ChipOne TDDI touch is the Pocket FIT's; the RP6 uses in-tree edt-ft5x06.
+  [[ "$SOC" == sm8650 ]] || return 0
   local tar="${CACHE}/chipone_tddi-${TDDI_REF}.tar.gz" d="${WORK}/chipone_tddi"
   fetch "https://github.com/ROCKNIX/chipone_tddi/archive/${TDDI_REF}.tar.gz" "$tar"
   rm -rf "$d"; mkdir -p "$d"
@@ -249,15 +325,17 @@ install_output() {
   mkdir -p "$o/boot" "$o/modules" "$o/firmware" "$o/dtbs"
   log "modules_install"
   make -C "$SRC" INSTALL_MOD_PATH="$o/staging" INSTALL_MOD_STRIP=1 modules_install >/dev/null
-  make -C "$SRC" M="${WORK}/chipone_tddi" INSTALL_MOD_PATH="$o/staging" INSTALL_MOD_STRIP=1 \
-    INSTALL_MOD_DIR=extra modules_install >/dev/null
+  if [[ "$SOC" == sm8650 ]]; then
+    make -C "$SRC" M="${WORK}/chipone_tddi" INSTALL_MOD_PATH="$o/staging" INSTALL_MOD_STRIP=1 \
+      INSTALL_MOD_DIR=extra modules_install >/dev/null
+  fi
   depmod -b "$o/staging" "$KREL"
   mv "$o/staging/lib/modules/${KREL}" "$o/modules/${KREL}"
   rm -rf "$o/staging"
   rm -f "$o/modules/${KREL}/build" "$o/modules/${KREL}/source"
 
   log "firmware (rootfs part: remoteprocs, audio topology, Wi-Fi/BT)"
-  cp -a "${EXTRA_FW_SRC}/SM8650/." "$o/firmware/"
+  cp -a "${EXTRA_FW_SRC}/${SOC_UC}/." "$o/firmware/"
   # Built-in copies are enough for the GPU; keep rootfs copies too for tooling.
   cp -a "${SRC}/external-firmware/." "$o/firmware/"
 
@@ -282,7 +360,7 @@ main() {
     return
   fi
   check_deps
-  [[ -d "$ROCKNIX_DIR/projects/ROCKNIX/devices/SM8650" ]] \
+  [[ -d "$ROCKNIX_DIR/projects/ROCKNIX/devices/${SOC_UC}" ]] \
     || die "ROCKNIX tree not found at ${ROCKNIX_DIR} (sparse clone of ROCKNIX/distribution@${ROCKNIX_REF})"
   mkdir -p "$CACHE"
   prepare_source
