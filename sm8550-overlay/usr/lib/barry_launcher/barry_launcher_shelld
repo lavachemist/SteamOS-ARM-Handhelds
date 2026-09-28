@@ -28,10 +28,11 @@ dashboard is up, since overlays are drawn above it.
 
 Apps are Firefox instances, each with its own profile under
 ~/.local/share/barry_launcher: the browser, and Discord's web app in kiosk
-mode (no address bar or tabs). gamescope shows the top of the stacking
-order, so switching is raising a window (_NET_ACTIVE_WINDOW, xdotool
-windowactivate); holding the AYN button (sm8550-thor-backlightd) writes
-HOME_REQUEST, and any change to it brings the home screen forward.
+mode (no address bar or tabs). Without Steam, gamescope treats every window
+as its own app and shows the most recently mapped one (stacking order does
+not count), so switching is unmapping and mapping the wanted window again.
+Holding the AYN button (sm8550-thor-backlightd) writes HOME_REQUEST, and any
+change to it brings the home screen forward.
 """
 from __future__ import annotations
 
@@ -161,8 +162,13 @@ def running(app: str) -> subprocess.Popen | None:
 
 
 def activate(args: list[str]) -> bool:
-    """xdotool search ARGS, then raise the first match (gamescope shows it)."""
-    r = subprocess.run(["xdotool", "search", "--onlyvisible", *args, "windowactivate"],
+    """Bring the first window matching xdotool search ARGS forward: map it
+    again, so it is gamescope's most recently mapped window."""
+    r = subprocess.run(["xdotool", "search", "--onlyvisible", *args], capture_output=True, text=True)
+    wins = r.stdout.split()
+    if not wins:
+        return False
+    r = subprocess.run(["xdotool", "windowunmap", "--sync", wins[0], "windowmap", "--sync", wins[0]],
                        capture_output=True, text=True)
     return r.returncode == 0
 
