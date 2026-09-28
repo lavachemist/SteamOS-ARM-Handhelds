@@ -61,10 +61,17 @@ DATA = os.path.join(os.environ.get("XDG_DATA_HOME", f"{HOME}/.local/share"), "ba
 # which needs about 1000 CSS pixels across.
 APPS = {
     "browser": {"profile": "browser", "args": [], "zoom": "2.5"},
-    # Kiosk mode may not show permission prompts; this profile only runs
-    # Discord, so allow the microphone (voice chat) up front.
+    # Voice chat: this profile only runs Discord, so the microphone needs no
+    # prompt (kiosk mode may not show one), and incoming voice may play
+    # without a tap (Firefox's autoplay block would otherwise hold it back).
+    # Media and audio logging goes to the journal, to diagnose calls.
     "discord": {"profile": "discord", "args": ["--kiosk", "https://discord.com/app"], "zoom": "1.25",
-                "prefs": {"permissions.default.microphone": 1}},
+                "prefs": {"permissions.default.microphone": 1,
+                          "media.navigator.permission.disabled": True,
+                          "media.autoplay.default": 0,
+                          "media.autoplay.blocking_policy": 0},
+                "env": {"MOZ_LOG": "MediaManager:4,cubeb:4"},
+                "log": True},
 }
 FIREFOX_PREFS = {
     "browser.shell.checkDefaultBrowser": False,
@@ -201,11 +208,13 @@ def launch(app: str) -> tuple[int, dict]:
             shutil.rmtree(path, ignore_errors=True)
         elif os.path.exists(path):
             os.remove(path)
-    env = dict(os.environ, MOZ_USE_XINPUT2="1", MOZ_ENABLE_WAYLAND="0", GNOME_ACCESSIBILITY="1")
+    env = dict(os.environ, MOZ_USE_XINPUT2="1", MOZ_ENABLE_WAYLAND="0", GNOME_ACCESSIBILITY="1",
+               **spec.get("env", {}))
     env.pop("WAYLAND_DISPLAY", None)
+    out = None if spec.get("log") else subprocess.DEVNULL  # None: our journal
     STATE.apps[app] = subprocess.Popen(
         ["firefox", "--no-remote", "--profile", profile, *spec["args"]],
-        env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        env=env, stdin=subprocess.DEVNULL, stdout=out, stderr=out,
     )
     log(f"started {app} (pid {STATE.apps[app].pid})")
     return 200, {"ok": True, "running": False}
