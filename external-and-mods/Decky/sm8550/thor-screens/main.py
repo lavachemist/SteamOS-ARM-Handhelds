@@ -13,6 +13,10 @@ from typing import Any
 
 import decky
 
+# Steam's brightness slider is perceptual: it writes (slider ** 2.2) of the
+# range (50% -> ~22% raw). Show and set on the same curve so the numbers match.
+GAMMA = 2.2
+
 TOP = "/sys/class/backlight/ae96000.dsi.0"
 BOTTOM = "/sys/class/backlight/ae94000.dsi.0"
 
@@ -27,14 +31,18 @@ def _read_int(path: str, default: int = 0) -> int:
 
 def _pct(dev: str) -> int:
     mx = _read_int(f"{dev}/max_brightness", 0)
-    return round(100 * _read_int(f"{dev}/brightness", 0) / mx) if mx > 0 else 0
+    if mx <= 0:
+        return 0
+    raw = max(0, min(mx, _read_int(f"{dev}/brightness", 0)))
+    return round(100 * (raw / mx) ** (1 / GAMMA))
 
 
 def _set_pct(dev: str, pct: int) -> None:
     mx = _read_int(f"{dev}/max_brightness", 0)
     if mx <= 0:
         raise OSError(f"{dev}: no max_brightness")
-    val = max(1, min(mx, round(mx * max(0, min(100, int(pct))) / 100)))
+    frac = max(0, min(100, int(pct))) / 100
+    val = max(1, min(mx, round(mx * frac ** GAMMA)))
     with open(f"{dev}/brightness", "w", encoding="utf-8") as fh:
         fh.write(str(val))
 
