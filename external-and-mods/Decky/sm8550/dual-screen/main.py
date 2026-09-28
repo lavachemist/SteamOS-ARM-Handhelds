@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Decky backend: Thor Screens (AYN Thor, SteamOS-ARM).
+"""Decky backend: Dual Screen (AYN Thor, SteamOS-ARM).
 
 One switch for the bottom screen. Steam's brightness slider already sets both
 panels to the same level (sm8550-thor-backlightd copies the bottom panel to
@@ -30,7 +30,7 @@ def _is_on() -> bool:
 
 class Plugin:
     async def _main(self) -> None:
-        decky.logger.info("Thor Screens ready")
+        decky.logger.info("Dual Screen ready")
 
     async def _unload(self) -> None:
         pass

@@ -182,9 +182,9 @@ if [[ -n "${DECKY_PLUGINS:-}" ]]; then
 elif [[ "$SOC" == sm8650 ]]; then
   decky_plugins=("${MOD}/Decky/sm8650/konkr-control")
 elif [[ "$SOC" == sm8550 ]]; then
-  # Thor Screens: per-screen brightness on the AYN Thor (says so and does
-  # nothing on single-screen SM8550 devices).
-  decky_plugins=("${MOD}/Decky/sm8550/thor-screens")
+  # Dual Screen: AYN Thor bottom screen on/off (says so and does nothing on
+  # single-screen SM8550 devices).
+  decky_plugins=("${MOD}/Decky/sm8550/dual-screen")
 fi
 # The bundle is owned by this script: start clean so a rootfs reused from
 # another target keeps no stale plugins.
@@ -193,6 +193,8 @@ mkdir -p "$BUNDLE"
 if [[ "$SOC" != sm8650 ]]; then
   rm -rf "${HOME_DST}/homebrew/plugins/konkr-control"
 fi
+# Renamed to dual-screen.
+rm -rf "${BUNDLE}/thor-screens" "${HOME_DST}/homebrew/plugins/thor-screens"
 for src in ${decky_plugins[@]+"${decky_plugins[@]}"}; do
   [[ -f "${src}/plugin.json" && -f "${src}/dist/index.js" ]] || {
     log "WARN: skip $(basename "$src") (not built)"

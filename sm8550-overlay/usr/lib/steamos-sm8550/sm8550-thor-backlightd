@@ -9,7 +9,7 @@ the bottom backlight and sets the top one to the same fraction of its range
 straight away. (A steamos-priv-write redirect alone ran pkexec for every
 slider step and lagged; it stays as a fallback.)
 
-The Thor Screens Decky plugin writes "off" or "on" to STATE. While it is
+The Dual Screen Decky plugin writes "off" or "on" to STATE. While it is
 "off" the bottom panel's backlight is powered down (bl_power; the brightness
 Steam sets is kept underneath, so the top panel still follows) and its
 touchscreen is inhibited. Both are enforced on every pass, because the panel

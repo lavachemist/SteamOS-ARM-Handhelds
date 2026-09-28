@@ -1,4 +1,4 @@
-const manifest = {"name":"Thor Screens"};
+const manifest = {"name":"Dual Screen"};
 const API_VERSION = 2;
 const internalAPIConnection = window.__DECKY_SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED_deckyLoaderAPIInit;
 if (!internalAPIConnection) {
@@ -60,7 +60,7 @@ function Content() {
 
 var index = definePlugin(() => {
     return {
-        name: "Thor Screens",
+        name: "Dual Screen",
         content: jsx(Content, {}),
         icon: jsx("div", { style: { fontWeight: 800 }, children: "☀" }),
         alwaysRender: false,

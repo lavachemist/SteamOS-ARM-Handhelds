@@ -2,9 +2,10 @@
 # panel's (ae94000.dsi.0), while Game Mode shows the top one (ae96000.dsi.0).
 # Set both panels to the level Steam asked for: the bottom one directly, the
 # top one by steering the write there, rescaled between the two ranges
-# (after Armada's steamos-priv-write). The Thor Screens Decky plugin can set
-# either panel on its own until the slider is moved again. Inserted by
-# apply-overlays.sh.
+# (after Armada's steamos-priv-write). Normally Steam writes the bottom
+# panel directly and sm8550-thor-backlightd copies it to the top; this is the
+# fallback. The Dual Screen plugin's "off" is bl_power, unaffected by this.
+# Inserted by apply-overlays.sh.
 if [[ "$WRITE_PATH" == /sys/class/backlight/ae94000.dsi.0/brightness \
       && -e /sys/class/backlight/ae96000.dsi.0/brightness \
       && "$WRITE_VALUE" =~ ^[0-9]+$ ]] \
