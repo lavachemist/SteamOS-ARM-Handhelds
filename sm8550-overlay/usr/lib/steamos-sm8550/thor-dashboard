@@ -1,0 +1,331 @@
+#!/usr/bin/env python3
+"""thor-dashboard: performance monitor for the AYN Thor's bottom screen.
+
+Runs inside the bottom-screen session (sm8550-run-bottom -- thor-dashboard)
+while Game Mode drives the top panel. Laid out like AYN's Android dashboard:
+status bar, current FPS, temperature, fan, and gauges for CPU, GPU, power and
+memory. Read-only for now; the quick controls come later.
+
+Sources: gamescope's stats pipe (fps=/focus= lines; nothing else reads it),
+cpufreq, the GPU devfreq node, thermal zones, the pwm fan, the battery and
+/proc. Everything is readable without root.
+"""
+from __future__ import annotations
+
+import glob
+import math
+import os
+import threading
+import time
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Gdk", "4.0")
+from gi.repository import Gdk, GLib, Gtk  # noqa: E402
+
+GPU = "/sys/class/devfreq/3d00000.gpu"
+BATTERY = "/sys/class/power_supply/battery"
+WIFI = "wlan0"
+REFRESH_MS = 1000
+ACCENT = (0.73, 0.40, 0.98)  # violet, like AYN's
+TRACK = (1, 1, 1, 0.12)
+
+CSS = b"""
+window { background: #0d0e12; color: #eef0f4; font-family: "Noto Sans", Cantarell, sans-serif; }
+.bar { font-size: 26px; font-weight: 600; padding: 6px 12px; }
+.bar .dim { opacity: 0.7; }
+.card { background: #1b1d24; border-radius: 28px; padding: 18px 22px; }
+.fps-card { background: linear-gradient(160deg, #5a5f6b, #3a3d45); }
+.pill { background: #6b2fb3; color: white; border-radius: 999px; padding: 6px 18px; font-size: 22px; font-weight: 700; }
+.fps-num { font-size: 220px; font-weight: 800; }
+.fps-unit { font-size: 40px; font-weight: 700; opacity: 0.85; }
+.fps-label { font-size: 28px; font-weight: 600; opacity: 0.8; letter-spacing: 1px; }
+.tile-label { font-size: 22px; font-weight: 600; opacity: 0.8; }
+.tile-value { font-size: 84px; font-weight: 700; }
+.note { font-size: 20px; opacity: 0.55; }
+"""
+
+
+def read(path: str, default: str = "") -> str:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return default
+
+
+def read_int(path: str, default: int = 0) -> int:
+    try:
+        return int(read(path) or default)
+    except ValueError:
+        return default
+
+
+class Stats:
+    """Samples the device once per refresh; FPS comes from a reader thread."""
+
+    def __init__(self) -> None:
+        self.fps: float | None = None
+        self.fps_time = 0.0
+        self._cpu_prev: tuple[int, int] | None = None
+        self._net_prev: tuple[float, int] | None = None
+        self.zones = [
+            z for z in glob.glob("/sys/class/thermal/thermal_zone*")
+            if read(f"{z}/type").startswith(("cpu", "gpu", "mem", "video"))
+        ]
+        self.fan = next(
+            (h for h in glob.glob("/sys/class/hwmon/hwmon*") if read(f"{h}/name") == "pwmfan"),
+            None,
+        )
+        threading.Thread(target=self._fps_reader, daemon=True).start()
+
+    # gamescope writes "fps=<float>" to its stats FIFO; hold it open and parse.
+    def _fps_reader(self) -> None:
+        link = f"/run/user/{os.getuid()}/gamescope-stats"
+        while True:
+            pipe = os.path.join(os.path.realpath(link), "stats.pipe")
+            try:
+                with open(pipe, encoding="utf-8", errors="replace") as fh:
+                    for line in fh:
+                        if line.startswith("fps="):
+                            try:
+                                self.fps = float(line[4:])
+                                self.fps_time = time.monotonic()
+                            except ValueError:
+                                pass
+            except OSError:
+                pass
+            time.sleep(2)
+
+    def cpu(self) -> tuple[float, int]:
+        """Fastest cluster clock in GHz and overall load in percent."""
+        ghz = max(
+            (read_int(f"{p}/scaling_cur_freq") for p in glob.glob("/sys/devices/system/cpu/cpufreq/policy*")),
+            default=0,
+        ) / 1e6
+        fields = [int(x) for x in read("/proc/stat").splitlines()[0].split()[1:]]
+        idle, total = fields[3] + fields[4], sum(fields)
+        load = 0
+        if self._cpu_prev:
+            di, dt = idle - self._cpu_prev[0], total - self._cpu_prev[1]
+            load = round(100 * (1 - di / dt)) if dt > 0 else 0
+        self._cpu_prev = (idle, total)
+        return ghz, load
+
+    def gpu(self) -> tuple[int, int]:
+        return read_int(f"{GPU}/cur_freq") // 1_000_000, read_int(f"{GPU}/max_freq") // 1_000_000
+
+    def temp(self) -> int:
+        return max((read_int(f"{z}/temp") for z in self.zones), default=0) // 1000
+
+    def fan_pct(self) -> int:
+        return round(100 * read_int(f"{self.fan}/pwm1") / 255) if self.fan else 0
+
+    def power(self) -> float:
+        """Battery power in watts; negative while discharging."""
+        uv = read_int(f"{BATTERY}/voltage_now")
+        ua = read_int(f"{BATTERY}/current_now")
+        return uv * ua / 1e12
+
+    def memory(self) -> tuple[float, float]:
+        info = {}
+        for line in read("/proc/meminfo").splitlines():
+            key, _, rest = line.partition(":")
+            info[key] = int(rest.split()[0]) if rest.split() else 0
+        total = info.get("MemTotal", 0) / 1024**2
+        used = total - info.get("MemAvailable", 0) / 1024**2
+        return used, total
+
+    def battery(self) -> tuple[int, str]:
+        return read_int(f"{BATTERY}/capacity"), read(f"{BATTERY}/status")
+
+    def net_speed(self) -> float:
+        """Wi-Fi throughput (rx + tx) in bytes per second."""
+        now = time.monotonic()
+        b = sum(read_int(f"/sys/class/net/{WIFI}/statistics/{d}_bytes") for d in ("rx", "tx"))
+        rate = 0.0
+        if self._net_prev and now > self._net_prev[0]:
+            rate = (b - self._net_prev[1]) / (now - self._net_prev[0])
+        self._net_prev = (now, b)
+        return rate
+
+
+def human_rate(bps: float) -> str:
+    for unit in ("B/s", "KB/s", "MB/s", "GB/s"):
+        if bps < 1000 or unit == "GB/s":
+            return f"{bps:.0f}{unit}" if unit == "B/s" else f"{bps:.1f}{unit}"
+        bps /= 1000
+    return ""
+
+
+class Gauge(Gtk.DrawingArea):
+    """AYN-style ring: label, value and unit inside a partial arc."""
+
+    def __init__(self, label: str, unit: str, color: tuple[float, float, float]) -> None:
+        super().__init__()
+        self.label, self.unit, self.color = label, unit, color
+        self.value, self.fraction = "--", 0.0
+        self.set_content_width(170)
+        self.set_content_height(170)
+        self.set_draw_func(self._draw)
+
+    def update(self, value: str, fraction: float) -> None:
+        self.value, self.fraction = value, max(0.0, min(1.0, fraction))
+        self.queue_draw()
+
+    def _draw(self, _area, cr, w: int, h: int) -> None:
+        r = min(w, h) / 2 - 10
+        cx, cy = w / 2, h / 2
+        start, span = math.radians(135), math.radians(270)
+        cr.set_line_width(12)
+        cr.set_line_cap(1)  # round
+        cr.set_source_rgba(*TRACK)
+        cr.arc(cx, cy, r, start, start + span)
+        cr.stroke()
+        if self.fraction > 0:
+            cr.set_source_rgb(*self.color)
+            cr.arc(cx, cy, r, start, start + span * self.fraction)
+            cr.stroke()
+        cr.set_source_rgb(0.93, 0.94, 0.96)
+        for text, size, dy, bold in (
+            (self.label, 20, -34, True),
+            (self.value, 40, 12, True),
+            (self.unit, 18, 44, False),
+        ):
+            cr.select_font_face("Noto Sans", 0, 1 if bold else 0)
+            cr.set_font_size(size)
+            ext = cr.text_extents(text)
+            cr.move_to(cx - ext.width / 2 - ext.x_bearing, cy + dy)
+            cr.show_text(text)
+
+
+def label(text: str, *classes: str, xalign: float = 0.0) -> Gtk.Label:
+    lab = Gtk.Label(label=text, xalign=xalign)
+    for c in classes:
+        lab.add_css_class(c)
+    return lab
+
+
+class Dashboard(Gtk.ApplicationWindow):
+    def __init__(self, app: Gtk.Application) -> None:
+        super().__init__(application=app, title="Thor Dashboard")
+        self.set_default_size(1240, 1080)
+        self.stats = Stats()
+
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=22)
+        for side in ("top", "bottom", "start", "end"):
+            getattr(root, f"set_margin_{side}")(26)
+        self.set_child(root)
+
+        # Status bar: time | network speed, battery
+        bar = Gtk.Box(spacing=24)
+        bar.add_css_class("bar")
+        self.clock = label("", "bar")
+        self.net = label("", "bar", "dim", xalign=1.0)
+        self.net.set_hexpand(True)
+        self.batt = label("", "bar")
+        for w in (self.clock, self.net, self.batt):
+            bar.append(w)
+        root.append(bar)
+
+        # FPS card
+        top = Gtk.Box(spacing=22)
+        fps = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        fps.add_css_class("card")
+        fps.add_css_class("fps-card")
+        fps.set_hexpand(True)
+        self.mode = label("GAME MODE", "pill", xalign=0.5)
+        self.mode.set_halign(Gtk.Align.CENTER)
+        num_row = Gtk.Box(spacing=8, halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER, vexpand=True)
+        self.fps_num = label("–", "fps-num")
+        num_row.append(self.fps_num)
+        unit = label("FPS", "fps-unit")
+        unit.set_valign(Gtk.Align.END)
+        unit.set_margin_bottom(52)
+        num_row.append(unit)
+        fps.append(self.mode)
+        fps.append(num_row)
+        cur = label("CURRENT FPS", "fps-label", xalign=0.5)
+        cur.set_margin_bottom(24)
+        fps.append(cur)
+        top.append(fps)
+
+        # Temperature and fan tiles
+        tiles = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=22)
+        self.temp = self._tile(tiles, "🌡  TEMP")
+        self.fanv = self._tile(tiles, "FAN")
+        top.append(tiles)
+        root.append(top)
+
+        # Gauges
+        gauges = Gtk.Box(spacing=10, homogeneous=True)
+        gauges.add_css_class("card")
+        self.g_cpu = Gauge("CPU", "GHz", (0.93, 0.33, 0.68))
+        self.g_gpu = Gauge("GPU", "MHz", (0.33, 0.66, 0.98))
+        self.g_pwr = Gauge("PWR", "W", (0.98, 0.60, 0.25))
+        self.g_ram = Gauge("RAM", "GB", (0.40, 0.85, 0.50))
+        for g in (self.g_cpu, self.g_gpu, self.g_pwr, self.g_ram):
+            gauges.append(g)
+        root.append(gauges)
+        root.append(label("Quick controls are coming in the next version.", "note", xalign=0.5))
+
+        self._tick()
+        GLib.timeout_add(REFRESH_MS, self._tick)
+
+    def _tile(self, parent: Gtk.Box, title: str) -> Gtk.Label:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.add_css_class("card")
+        box.set_size_request(300, -1)
+        box.set_vexpand(True)
+        box.append(label(title, "tile-label"))
+        value = label("–", "tile-value", xalign=0.5)
+        value.set_vexpand(True)
+        value.set_valign(Gtk.Align.CENTER)
+        box.append(value)
+        parent.append(box)
+        return value
+
+    def _tick(self) -> bool:
+        s = self.stats
+        self.clock.set_text(time.strftime("%-I:%M %p"))
+        self.net.set_text(human_rate(s.net_speed()))
+        pct, status = s.battery()
+        self.batt.set_text(f"{'⚡' if status == 'Charging' else '🔋'} {pct}%")
+
+        fresh = s.fps is not None and time.monotonic() - s.fps_time < 3
+        self.fps_num.set_text(f"{s.fps:.0f}" if fresh else "–")
+
+        self.temp.set_text(f"{s.temp()}℃")
+        self.fanv.set_text(f"{s.fan_pct()}%")
+
+        ghz, load = s.cpu()
+        self.g_cpu.update(f"{ghz:.2f}", load / 100)
+        mhz, mhz_max = s.gpu()
+        self.g_gpu.update(str(mhz), mhz / mhz_max if mhz_max else 0)
+        watts = s.power()
+        self.g_pwr.update(f"{watts:.2f}", abs(watts) / 15)
+        used, total = s.memory()
+        self.g_ram.update(f"{used:.2f}", used / total if total else 0)
+        return True
+
+
+def main() -> None:
+    app = Gtk.Application(application_id="org.steamosarm.ThorDashboard")
+
+    def activate(a: Gtk.Application) -> None:
+        provider = Gtk.CssProvider()
+        provider.load_from_data(CSS)
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        win = Dashboard(a)
+        win.fullscreen()
+        win.present()
+
+    app.connect("activate", activate)
+    app.run(None)
+
+
+if __name__ == "__main__":
+    main()

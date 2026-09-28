@@ -3460,9 +3460,13 @@ paint_all( global_focus_t *pFocus, bool async )
 	// Decide the fit target once so the window planes and the cursor plane agree.
 	fit = override;
 
-	if (++frameCounter == 300)
+	// Report once a second (was every 300 frames: 5 s at 60 FPS, far longer
+	// when idle), so the AYN Thor bottom-screen dashboard can show live FPS.
+	// Only the stats pipe reads this.
+	++frameCounter;
+	if ( currentTime - lastSampledFrameTime >= 1000 )
 	{
-		currentFrameRate = 300 * 1000.0f / (currentTime - lastSampledFrameTime);
+		currentFrameRate = frameCounter * 1000.0f / (currentTime - lastSampledFrameTime);
 		lastSampledFrameTime = currentTime;
 		frameCounter = 0;
 
