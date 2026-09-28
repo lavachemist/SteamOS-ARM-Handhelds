@@ -1,0 +1,297 @@
+#!/usr/bin/env python3
+"""thor-statsd: device stats for the AYN Thor's bottom-screen dashboard.
+
+Serves JSON on 127.0.0.1:PORT for the QML dashboard (thor-dashboard) and its
+skins, so a skin is plain QML with no Python of its own:
+
+  GET  /stats     one sample (schema below); sampled on request, at most
+                  once per MIN_SAMPLE_S, so nothing runs while nobody asks
+  GET  /overlay   {"shown": bool}: the AYN button's flag (OVERLAY)
+  POST /overlay   {"shown": false} hides the dashboard (idle timeout)
+  GET  /skins     {"skins": [{name, title, author, dir}]}; dir is the
+                  current skin's folder under "current"
+  GET  /settings  {"skin": name, "idleSeconds": n}
+  POST /settings  any of those keys; skin applies from the next opening,
+                  idleSeconds 0 keeps the dashboard up until the next press
+
+/stats, api 1 (fields may be added; skins should ignore unknown ones):
+  api, time {text, hour, minute, utcOffset}, fps (null when no game frames
+  for 3 s), cpu {ghz, load}, gpu {mhz, maxMhz}, tempC, fanPct, powerW
+  (negative while discharging), memory {usedGb, totalGb}, battery {percent,
+  status}, net {bytesPerSec}
+
+Sources: gamescope's stats pipe (fps= lines; nothing else reads it),
+cpufreq, the GPU devfreq node, thermal zones, the pwm fan, the battery and
+/proc. Everything is readable without root. Skins live in SKIN_DIRS, first
+match wins, so a user skin can replace a built-in one of the same name.
+"""
+from __future__ import annotations
+
+import glob
+import json
+import os
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+PORT = 47823
+API = 1
+GPU = "/sys/class/devfreq/3d00000.gpu"
+BATTERY = "/sys/class/power_supply/battery"
+WIFI = "wlan0"
+OVERLAY = "/run/sm8550-thor/overlay"
+MIN_SAMPLE_S = 0.8
+HOME = os.path.expanduser("~")
+SKIN_DIRS = [
+    os.path.join(os.environ.get("XDG_DATA_HOME", f"{HOME}/.local/share"), "thor-dashboard/skins"),
+    "/usr/share/steamos-sm8550/thor-dashboard/skins",
+]
+SETTINGS = os.path.join(os.environ.get("XDG_CONFIG_HOME", f"{HOME}/.config"), "thor-dashboard/settings.json")
+DEFAULTS = {"skin": "ayn", "idleSeconds": 0}
+
+
+def read(path: str, default: str = "") -> str:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return default
+
+
+def read_int(path: str, default: int = 0) -> int:
+    try:
+        return int(read(path) or default)
+    except ValueError:
+        return default
+
+
+class Stats:
+    """Device sampler; FPS comes from a reader thread on gamescope's pipe."""
+
+    def __init__(self) -> None:
+        self.fps: float | None = None
+        self.fps_time = 0.0
+        self._cpu_prev: tuple[int, int] | None = None
+        self._net_prev: tuple[float, int] | None = None
+        self._last: dict | None = None
+        self._last_time = 0.0
+        self._lock = threading.Lock()
+        self.zones = [
+            z for z in glob.glob("/sys/class/thermal/thermal_zone*")
+            if read(f"{z}/type").startswith(("cpu", "gpu", "mem", "video"))
+        ]
+        self.fan = next(
+            (h for h in glob.glob("/sys/class/hwmon/hwmon*") if read(f"{h}/name") == "pwmfan"),
+            None,
+        )
+        threading.Thread(target=self._fps_reader, daemon=True).start()
+
+    # gamescope writes "fps=<float>" to its stats FIFO; hold it open and parse.
+    def _fps_reader(self) -> None:
+        link = f"/run/user/{os.getuid()}/gamescope-stats"
+        while True:
+            pipe = os.path.join(os.path.realpath(link), "stats.pipe")
+            try:
+                with open(pipe, encoding="utf-8", errors="replace") as fh:
+                    for line in fh:
+                        if line.startswith("fps="):
+                            try:
+                                self.fps = float(line[4:])
+                                self.fps_time = time.monotonic()
+                            except ValueError:
+                                pass
+            except OSError:
+                pass
+            time.sleep(2)
+
+    def _cpu(self) -> dict:
+        """Fastest cluster clock in GHz and overall load in percent."""
+        ghz = max(
+            (read_int(f"{p}/scaling_cur_freq") for p in glob.glob("/sys/devices/system/cpu/cpufreq/policy*")),
+            default=0,
+        ) / 1e6
+        fields = [int(x) for x in read("/proc/stat").splitlines()[0].split()[1:]]
+        idle, total = fields[3] + fields[4], sum(fields)
+        load = 0
+        if self._cpu_prev:
+            di, dt = idle - self._cpu_prev[0], total - self._cpu_prev[1]
+            load = round(100 * (1 - di / dt)) if dt > 0 else 0
+        self._cpu_prev = (idle, total)
+        return {"ghz": round(ghz, 2), "load": load}
+
+    def _memory(self) -> dict:
+        info = {}
+        for line in read("/proc/meminfo").splitlines():
+            key, _, rest = line.partition(":")
+            info[key] = int(rest.split()[0]) if rest.split() else 0
+        total = info.get("MemTotal", 0) / 1024**2
+        used = total - info.get("MemAvailable", 0) / 1024**2
+        return {"usedGb": round(used, 2), "totalGb": round(total, 2)}
+
+    def _net(self) -> dict:
+        """Wi-Fi throughput (rx + tx) in bytes per second."""
+        now = time.monotonic()
+        b = sum(read_int(f"/sys/class/net/{WIFI}/statistics/{d}_bytes") for d in ("rx", "tx"))
+        rate = 0.0
+        if self._net_prev and now > self._net_prev[0]:
+            rate = (b - self._net_prev[1]) / (now - self._net_prev[0])
+        self._net_prev = (now, b)
+        return {"bytesPerSec": round(rate)}
+
+    def _sample(self) -> dict:
+        time.tzset()  # Steam can change the time zone after we started
+        now = time.localtime()
+        fresh = self.fps is not None and time.monotonic() - self.fps_time < 3
+        # Battery power in watts; negative while discharging.
+        watts = read_int(f"{BATTERY}/voltage_now") * read_int(f"{BATTERY}/current_now") / 1e12
+        return {
+            "api": API,
+            "time": {
+                "text": time.strftime("%-I:%M %p", now),
+                "hour": now.tm_hour,
+                "minute": now.tm_min,
+                "utcOffset": now.tm_gmtoff,
+            },
+            "fps": round(self.fps, 1) if fresh else None,
+            "cpu": self._cpu(),
+            "gpu": {
+                "mhz": read_int(f"{GPU}/cur_freq") // 1_000_000,
+                "maxMhz": read_int(f"{GPU}/max_freq") // 1_000_000,
+            },
+            "tempC": max((read_int(f"{z}/temp") for z in self.zones), default=0) // 1000,
+            "fanPct": round(100 * read_int(f"{self.fan}/pwm1") / 255) if self.fan else 0,
+            "powerW": round(watts, 2),
+            "memory": self._memory(),
+            "battery": {"percent": read_int(f"{BATTERY}/capacity"), "status": read(f"{BATTERY}/status")},
+            "net": self._net(),
+        }
+
+    def get(self) -> dict:
+        with self._lock:
+            if self._last is None or time.monotonic() - self._last_time >= MIN_SAMPLE_S:
+                self._last = self._sample()
+                self._last_time = time.monotonic()
+            return self._last
+
+
+def skins() -> list[dict]:
+    found: dict[str, dict] = {}
+    for base in SKIN_DIRS:
+        for qml in sorted(glob.glob(f"{base}/*/Skin.qml")):
+            d = os.path.dirname(qml)
+            name = os.path.basename(d)
+            if name in found:
+                continue
+            try:
+                with open(f"{d}/skin.json", encoding="utf-8") as fh:
+                    meta = json.load(fh)
+            except (OSError, ValueError):
+                meta = {}
+            found[name] = {
+                "name": name,
+                "title": str(meta.get("title", name)),
+                "author": str(meta.get("author", "")),
+                "dir": d,
+            }
+    return list(found.values())
+
+
+def settings() -> dict:
+    try:
+        with open(SETTINGS, encoding="utf-8") as fh:
+            saved = json.load(fh)
+    except (OSError, ValueError):
+        saved = {}
+    out = dict(DEFAULTS)
+    if isinstance(saved, dict):
+        out.update(clean(saved))
+    if not any(s["name"] == out["skin"] for s in skins()):
+        out["skin"] = DEFAULTS["skin"]
+    return out
+
+
+def clean(new: dict) -> dict:
+    """Keep only known settings with sane values."""
+    out = {}
+    if isinstance(new.get("skin"), str) and any(s["name"] == new["skin"] for s in skins()):
+        out["skin"] = new["skin"]
+    idle = new.get("idleSeconds")
+    if isinstance(idle, (int, float)) and not isinstance(idle, bool) and 0 <= idle <= 3600:
+        out["idleSeconds"] = int(idle)
+    return out
+
+
+class Handler(BaseHTTPRequestHandler):
+    stats: Stats
+
+    def _json(self, code: int, obj) -> None:
+        body = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _body(self) -> dict:
+        try:
+            n = int(self.headers.get("Content-Length", "0"))
+            data = json.loads(self.rfile.read(n) if 0 < n <= 4096 else b"{}")
+            return data if isinstance(data, dict) else {}
+        except ValueError:
+            return {}
+
+    def do_GET(self) -> None:
+        path = self.path.split("?", 1)[0]
+        if path == "/stats":
+            self._json(200, self.stats.get())
+        elif path == "/overlay":
+            self._json(200, {"shown": read(OVERLAY, "0") == "1"})
+        elif path == "/skins":
+            found = skins()
+            name = settings()["skin"]
+            self._json(200, {"current": next((s for s in found if s["name"] == name), None), "skins": found})
+        elif path == "/settings":
+            self._json(200, settings())
+        else:
+            self._json(404, {"error": "not found"})
+
+    def do_POST(self) -> None:
+        path = self.path.split("?", 1)[0]
+        body = self._body()
+        if path == "/overlay":
+            try:
+                with open(OVERLAY, "w", encoding="utf-8") as fh:
+                    fh.write("1" if body.get("shown") else "0")
+            except OSError as err:
+                self._json(500, {"error": str(err)})
+                return
+            self._json(200, {"ok": True})
+        elif path == "/settings":
+            new = clean(body)
+            if set(body) - set(new):
+                self._json(400, {"error": f"bad settings: {sorted(set(body) - set(new))}"})
+                return
+            merged = {**settings(), **new}
+            os.makedirs(os.path.dirname(SETTINGS), exist_ok=True)
+            tmp = SETTINGS + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(merged, fh, indent=2)
+            os.replace(tmp, SETTINGS)
+            self._json(200, merged)
+        else:
+            self._json(404, {"error": "not found"})
+
+    def log_message(self, *_args) -> None:
+        pass
+
+
+def main() -> None:
+    Handler.stats = Stats()
+    srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    srv.daemon_threads = True
+    srv.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

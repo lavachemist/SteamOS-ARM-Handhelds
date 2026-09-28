@@ -630,8 +630,17 @@ if [[ "$SOC" == sm8550 ]]; then
     "$R/usr/lib/steamos-sm8550/sm8550-touch-inhibit" 0755
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-run-bottom" \
     "$R/usr/lib/steamos-sm8550/sm8550-run-bottom" 0755
-  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/thor-dashboard" \
-    "$R/usr/lib/steamos-sm8550/thor-dashboard" 0755
+  for f in thor-dashboard thor-statsd; do
+    install_file "$SM8550_OVL/usr/lib/steamos-sm8550/$f" "$R/usr/lib/steamos-sm8550/$f" 0755
+  done
+  # The dashboard's QML host and built-in skins, and the bottom screen's
+  # base window. Replaced whole, so a removed skin does not linger.
+  rm -rf "$R/usr/share/steamos-sm8550/thor-dashboard"
+  mkdir -p "$R/usr/share/steamos-sm8550"
+  cp -r "$SM8550_OVL/usr/share/steamos-sm8550/thor-dashboard" "$R/usr/share/steamos-sm8550/"
+  chmod -R u=rwX,go=rX "$R/usr/share/steamos-sm8550/thor-dashboard"
+  install_file "$SM8550_OVL/usr/share/steamos-sm8550/bottom-home.qml" \
+    "$R/usr/share/steamos-sm8550/bottom-home.qml" 0644
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-bottom-session" \
     "$R/usr/lib/steamos-sm8550/sm8550-bottom-session" 0755
   install_file "$SM8550_OVL/usr/lib/systemd/user/sm8550-bottom-session.service" \
@@ -673,7 +682,8 @@ if [[ "$SOC" == sm8550 ]]; then
     ln -sfn ../$u "$R/usr/lib/systemd/system/multi-user.target.wants/$u"
   done
 else
-  rm -rf "$R/usr/lib/steamos-sm8550" "$R/usr/share/sm8550-fand"
+  rm -rf "$R/usr/lib/steamos-sm8550" "$R/usr/share/sm8550-fand" \
+    "$R/usr/share/steamos-sm8550/thor-dashboard" "$R/usr/share/steamos-sm8550/bottom-home.qml"
   rm -f "$R/usr/share/steamos-manager/devices/retroid-pocket6.toml" \
     "$R/usr/share/steamos-manager/devices/ayn-thor.toml" \
     "$R/usr/lib/udev/rules.d/72-sm8550-touch-inhibit.rules" \
