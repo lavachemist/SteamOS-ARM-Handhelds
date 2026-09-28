@@ -1,0 +1,13 @@
+[Unit]
+Description=AYN Thor: follow the bottom panel's brightness on the top panel
+ConditionPathExists=/sys/class/backlight/ae96000.dsi.0
+
+[Service]
+Type=simple
+ExecCondition=/bin/sh -c 'grep -qa "ayn,thor" /sys/firmware/devicetree/base/compatible'
+ExecStart=/usr/lib/steamos-sm8550/sm8550-thor-backlightd
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

@@ -2,9 +2,10 @@
 """Decky backend: Thor Screens (AYN Thor, SteamOS-ARM).
 
 Separate brightness for the top (ae96000.dsi.0) and bottom (ae94000.dsi.0)
-panels. Steam's own brightness slider sets both to the same level (see
-sm8550-overlay/usr/share/steamos-sm8550/priv-write-backlight.inc); a slider
-here sets one panel until Steam's slider is moved again.
+panels. Steam's own brightness slider sets both to the same level
+(sm8550-thor-backlightd copies the bottom panel to the top); a slider here
+sets one panel until Steam's slider is moved again. Before writing the bottom
+panel it leaves the value in SKIP so the daemon does not copy that change.
 """
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ GAMMA = 2.2
 
 TOP = "/sys/class/backlight/ae96000.dsi.0"
 BOTTOM = "/sys/class/backlight/ae94000.dsi.0"
+SKIP = "/run/sm8550-thor-backlight/skip"
 
 
 def _read_int(path: str, default: int = 0) -> int:
@@ -43,6 +45,10 @@ def _set_pct(dev: str, pct: int) -> None:
         raise OSError(f"{dev}: no max_brightness")
     frac = max(0, min(100, int(pct))) / 100
     val = max(1, min(mx, round(mx * frac ** GAMMA)))
+    if dev == BOTTOM and val != _read_int(f"{dev}/brightness", -1):
+        os.makedirs(os.path.dirname(SKIP), exist_ok=True)
+        with open(SKIP, "w", encoding="utf-8") as fh:
+            fh.write(str(val))
     with open(f"{dev}/brightness", "w", encoding="utf-8") as fh:
         fh.write(str(val))
 

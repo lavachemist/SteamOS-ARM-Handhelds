@@ -638,13 +638,18 @@ if [[ "$SOC" == sm8550 ]]; then
   fi
   install_file "$SM8550_OVL/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules" \
     "$R/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules" 0644
-  install_file "$SM8550_OVL/usr/lib/udev/rules.d/99-sm8550-thor-backlight.rules" \
-    "$R/usr/lib/udev/rules.d/99-sm8550-thor-backlight.rules" 0644
-  rm -f "$R/usr/lib/udev/rules.d/74-sm8550-thor-backlight.rules"
+  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-thor-backlightd" \
+    "$R/usr/lib/steamos-sm8550/sm8550-thor-backlightd" 0755
+  install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-thor-backlightd.service" \
+    "$R/usr/lib/systemd/system/sm8550-thor-backlightd.service" 0644
+  # Earlier Thor builds kept the bottom backlight root-only; the backlight
+  # daemon needs Steam to write it directly again.
+  rm -f "$R/usr/lib/udev/rules.d/74-sm8550-thor-backlight.rules" \
+    "$R/usr/lib/udev/rules.d/99-sm8550-thor-backlight.rules"
   install_file "$SM8550_OVL/usr/lib/udev/rules.d/72-sm8550-touch-inhibit.rules" \
     "$R/usr/lib/udev/rules.d/72-sm8550-touch-inhibit.rules" 0644
   mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
-  for u in sm8550-fand.service sm8550-powerbuttond.service; do
+  for u in sm8550-fand.service sm8550-powerbuttond.service sm8550-thor-backlightd.service; do
     ln -sfn ../$u "$R/usr/lib/systemd/system/multi-user.target.wants/$u"
   done
 else
@@ -657,7 +662,8 @@ else
     "$R/usr/lib/systemd/system/sm8550-fand.service" \
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-fand.service" \
     "$R/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules" \
-    "$R/usr/lib/udev/rules.d/99-sm8550-thor-backlight.rules"
+    "$R/usr/lib/systemd/system/sm8550-thor-backlightd.service" \
+    "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-thor-backlightd.service"
 fi
 
 # Temporary remote-test aid (BUNDLE_TAILSCALE=1); every other build removes it.
