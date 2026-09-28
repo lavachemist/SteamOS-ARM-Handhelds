@@ -5,7 +5,11 @@ the AYN Thor's bottom screen.
 Runs in barry_launcher_session next to the shell (shell/Shell.qml) and the
 keyboard (shell/Keyboard.qml), which call it on 127.0.0.1:PORT:
 
-  POST /launch    {"app": "browser"}: start Firefox, or leave the running one
+  GET  /apps      {"browser": {"running": bool}, "discord": {...}}
+  POST /launch    {"app": name}: start the app, or bring the running one
+                  forward
+  POST /close     {"app": name}: quit it
+  POST /home      bring the home screen forward
   GET  /keyboard  {"visible": bool, "top": bool}: top when the text field is
                   in the lower half, so the keyboard does not cover it
   POST /keyboard  {"visible": bool}: show or hide by hand
@@ -21,6 +25,13 @@ underneath. Like Steam's overlay it stays mapped and hides by opacity:
 gamescope stops watching a window's properties once it is unmapped, so a
 hidden overlay's marks could never be cleared. It also hides while the AYN
 dashboard is up, since overlays are drawn above it.
+
+Apps are Firefox instances, each with its own profile under
+~/.local/share/barry_launcher: the browser, and Discord's web app in kiosk
+mode (no address bar or tabs). gamescope shows the top of the stacking
+order, so switching is raising a window (_NET_ACTIVE_WINDOW, xdotool
+windowactivate); holding the AYN button (sm8550-thor-backlightd) writes
+HOME_REQUEST, and any change to it brings the home screen forward.
 """
 from __future__ import annotations
 
@@ -37,12 +48,20 @@ from gi.repository import Atspi, Gio, GLib  # noqa: E402
 
 PORT = 47824
 KEYBOARD_TITLE = "Barry Launcher Keyboard"
+HOME_TITLE = "Barry Launcher"
 DASHBOARD_FLAG = "/run/sm8550-thor/overlay"
+HOME_REQUEST = "/run/sm8550-thor/home"
 HOME = os.path.expanduser("~")
-FIREFOX_PROFILE = os.path.join(os.environ.get("XDG_DATA_HOME", f"{HOME}/.local/share"), "barry_launcher/browser")
-# The panel is about 420 pixels per inch; 2.5 gives phone-sized pages.
+DATA = os.path.join(os.environ.get("XDG_DATA_HOME", f"{HOME}/.local/share"), "barry_launcher")
+# name -> Firefox profile folder, extra arguments, zoom. The panel is about
+# 420 pixels per inch: 2.5 gives phone-sized pages; Discord's site has no
+# phone layout (it sends phones to the app), so it gets its desktop layout,
+# which needs about 1000 CSS pixels across.
+APPS = {
+    "browser": {"profile": "browser", "args": [], "zoom": "2.5"},
+    "discord": {"profile": "discord", "args": ["--kiosk", "https://discord.com/app"], "zoom": "1.25"},
+}
 FIREFOX_PREFS = {
-    "layout.css.devPixelsPerPx": "2.5",
     "browser.shell.checkDefaultBrowser": False,
     "browser.aboutwelcome.enabled": False,
     "browser.startup.homepage_override.mstone": "ignore",
@@ -69,7 +88,7 @@ class State:
         self.lock = threading.Lock()
         self.visible = False
         self.top = False
-        self.firefox: subprocess.Popen | None = None
+        self.apps: dict[str, subprocess.Popen] = {}
         self.overlay_marked = False
         self.input_focus: bool | None = None
 
@@ -127,28 +146,61 @@ def keyboard_input_focus(on: bool) -> None:
         STATE.input_focus = on
 
 
-def write_firefox_prefs() -> None:
-    os.makedirs(FIREFOX_PROFILE, exist_ok=True)
-    lines = [f"user_pref({json.dumps(k)}, {json.dumps(v)});" for k, v in FIREFOX_PREFS.items()]
-    with open(f"{FIREFOX_PROFILE}/user.js", "w", encoding="utf-8") as fh:
-        fh.write("// Written by barry_launcher_shelld at every start; edit prefs.js-style settings in about:config.\n")
+def write_firefox_prefs(profile: str, zoom: str) -> None:
+    os.makedirs(profile, exist_ok=True)
+    prefs = dict(FIREFOX_PREFS, **{"layout.css.devPixelsPerPx": zoom})
+    lines = [f"user_pref({json.dumps(k)}, {json.dumps(v)});" for k, v in prefs.items()]
+    with open(f"{profile}/user.js", "w", encoding="utf-8") as fh:
+        fh.write("// Written by barry_launcher_shelld at every start; change other settings in about:config.\n")
         fh.write("\n".join(lines) + "\n")
 
 
+def running(app: str) -> subprocess.Popen | None:
+    proc = STATE.apps.get(app)
+    return proc if proc and proc.poll() is None else None
+
+
+def activate(args: list[str]) -> bool:
+    """xdotool search ARGS, then raise the first match (gamescope shows it)."""
+    r = subprocess.run(["xdotool", "search", "--onlyvisible", *args, "windowactivate"],
+                       capture_output=True, text=True)
+    return r.returncode == 0
+
+
+def go_home() -> None:
+    STATE.set_keyboard(False)
+    if not activate(["--name", f"^{HOME_TITLE}$"]):
+        log("cannot find the home screen window")
+
+
 def launch(app: str) -> tuple[int, dict]:
-    if app != "browser":
+    spec = APPS.get(app)
+    if spec is None:
         return 404, {"error": f"no app {app!r}"}
-    if STATE.firefox and STATE.firefox.poll() is None:
+    proc = running(app)
+    if proc:
+        activate(["--pid", str(proc.pid), "--classname", "Navigator"])
         return 200, {"ok": True, "running": True}
-    write_firefox_prefs()
+    profile = os.path.join(DATA, spec["profile"])
+    write_firefox_prefs(profile, spec["zoom"])
     env = dict(os.environ, MOZ_USE_XINPUT2="1", MOZ_ENABLE_WAYLAND="0", GNOME_ACCESSIBILITY="1")
     env.pop("WAYLAND_DISPLAY", None)
-    STATE.firefox = subprocess.Popen(
-        ["firefox", "--no-remote", "--profile", FIREFOX_PROFILE],
+    STATE.apps[app] = subprocess.Popen(
+        ["firefox", "--no-remote", "--profile", profile, *spec["args"]],
         env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
-    log(f"started Firefox (pid {STATE.firefox.pid})")
+    log(f"started {app} (pid {STATE.apps[app].pid})")
     return 200, {"ok": True, "running": False}
+
+
+def close(app: str) -> tuple[int, dict]:
+    if app not in APPS:
+        return 404, {"error": f"no app {app!r}"}
+    proc = running(app)
+    if proc:
+        proc.terminate()
+        log(f"closing {app}")
+    return 200, {"ok": True}
 
 
 def type_input(body: dict) -> tuple[int, dict]:
@@ -183,8 +235,11 @@ class Handler(BaseHTTPRequestHandler):
             return {}
 
     def do_GET(self) -> None:
-        if self.path.split("?", 1)[0] == "/keyboard":
+        path = self.path.split("?", 1)[0]
+        if path == "/keyboard":
             self._json(200, STATE.keyboard())
+        elif path == "/apps":
+            self._json(200, {name: {"running": running(name) is not None} for name in APPS})
         else:
             self._json(404, {"error": "not found"})
 
@@ -193,6 +248,11 @@ class Handler(BaseHTTPRequestHandler):
         body = self._body()
         if path == "/launch":
             self._json(*launch(str(body.get("app", ""))))
+        elif path == "/close":
+            self._json(*close(str(body.get("app", ""))))
+        elif path == "/home":
+            go_home()
+            self._json(200, {"ok": True})
         elif path == "/keyboard":
             STATE.set_keyboard(bool(body.get("visible")))
             self._json(200, STATE.keyboard())
@@ -245,16 +305,32 @@ def main() -> None:
     Atspi.init()
     listener = Atspi.EventListener.new(on_focus)
     listener.register("object:state-changed:focused")
+    def home_request_stamp() -> int | None:
+        try:
+            return os.stat(HOME_REQUEST).st_mtime_ns
+        except OSError:
+            return None
+
+    last_home = home_request_stamp()
+
     def watch() -> bool:
+        nonlocal last_home
         # The keyboard window appears shortly after we start; mark it then,
         # so gamescope does not take it for an app.
         if not STATE.overlay_marked:
             mark_keyboard_overlay(quiet=True)
-        # Firefox ending means its fields are gone too.
-        if STATE.firefox and STATE.firefox.poll() is not None:
-            log("Firefox exited")
-            STATE.firefox = None
-            STATE.set_keyboard(False)
+        # An app ending means its fields are gone too.
+        for name, proc in list(STATE.apps.items()):
+            if proc.poll() is not None:
+                log(f"{name} exited")
+                del STATE.apps[name]
+                STATE.set_keyboard(False)
+        # AYN held: home.
+        stamp = home_request_stamp()
+        if stamp != last_home:
+            last_home = stamp
+            if stamp is not None:
+                go_home()
         # Overlays draw above the dashboard: step aside while it is up.
         if STATE.keyboard()["visible"] and dashboard_up():
             STATE.set_keyboard(False)

@@ -17,8 +17,10 @@ driver powers the backlight up again on each modeset and wake, and the Game
 Mode / Desktop start scripts re-enable the touchscreen.
 
 AYN button: InputPlumber leaves gpio-keys-ayn alone on the Thor (see the
-devices.d override written by apply-overlays.sh); this grabs it and each
-press of KEY_F24 toggles OVERLAY. Barry Launcher's dashboard shows itself
+devices.d override written by apply-overlays.sh); this grabs it. A short
+press of KEY_F24 toggles OVERLAY; holding it LONG_PRESS_S writes HOME, which
+Barry Launcher watches to bring its home screen forward (and hides the
+dashboard). Barry Launcher's dashboard shows itself
 over whatever the bottom screen holds while OVERLAY is "1" (and writes "0"
 itself if an idle time is set). While the overlay is up the bottom screen is on even if
 the switch says off (from OVERLAY_DELAY_S after the press, once the
@@ -41,6 +43,8 @@ TOP = "/sys/class/backlight/ae96000.dsi.0"
 STATE = "/var/lib/steamos-sm8550/thor-bottom-screen"
 RUN_DIR = "/run/sm8550-thor"
 OVERLAY = f"{RUN_DIR}/overlay"
+HOME = f"{RUN_DIR}/home"  # a request counter; any change means "go home"
+LONG_PRESS_S = 0.6
 TOUCH_NAME = "bottom_touchscreen"
 AYN_KEYS_NAME = "gpio-keys-ayn"
 KEY_F24 = 194
@@ -137,6 +141,8 @@ def main() -> int:
     last = bottom_set()  # leave the top panel alone until something changes
     was_on = None
     overlay_since: float | None = None
+    pressed_at: float | None = None  # AYN held down since, until handled
+    home_count = 0
     log(f"following {BOTTOM} (max {bottom_max}) -> {TOP} (max {top_max})")
     while True:
         poller = select.poll()
@@ -147,7 +153,8 @@ def main() -> int:
         os.lseek(bl_fd, 0, os.SEEK_SET)
         os.read(bl_fd, 32)  # consume the notification
 
-        # AYN button: each press toggles the dashboard overlay.
+        # AYN button: a short press toggles the dashboard, a long one goes
+        # home. Decided on release, or once held long enough.
         if key_fd is not None and key_fd in events:
             try:
                 data = os.read(key_fd, EVENT.size * 32)
@@ -158,15 +165,29 @@ def main() -> int:
                 key_fd, data = None, b""
             for off in range(0, len(data) - EVENT.size + 1, EVENT.size):
                 _, _, etype, code, value = EVENT.unpack_from(data, off)
-                if etype == EV_KEY and code == KEY_F24 and value == 1:
+                if etype != EV_KEY or code != KEY_F24:
+                    continue
+                if value == 1:
+                    pressed_at = time.monotonic()
+                elif value == 0 and pressed_at is not None:
+                    pressed_at = None
                     up = read(OVERLAY, "0") != "1"
                     write(OVERLAY, "1" if up else "0")
                     log(f"AYN button: dashboard {'shown' if up else 'hidden'}")
         elif key_fd is None:
+            pressed_at = None
             key_retry += 1
             if key_retry >= 50:  # every 5 s
                 key_retry = 0
                 key_fd = open_ayn_key()
+
+        if pressed_at is not None and time.monotonic() - pressed_at >= LONG_PRESS_S:
+            pressed_at = None  # the release does nothing more
+            home_count += 1
+            write(HOME, str(home_count))
+            if read(OVERLAY, "0") == "1":
+                write(OVERLAY, "0")
+            log("AYN button held: home")
 
         overlay = read(OVERLAY, "0") == "1"
         if overlay and overlay_since is None:
