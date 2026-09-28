@@ -158,6 +158,17 @@ fi
 WANT_STEAMOS=(kate networkmanager-qt modemmanager-qt extra-cmake-modules)
 WANT_GEAR=(ark kcalc gwenview okular filelight)
 WANT_OPTIONAL=(p7zip 7zip unrar unzip zip kdialog unarchiver lrzip yyjson fastfetch)
+# Per-device additions from the caller (space-separated), e.g. Firefox on SM8550.
+# "alarm-core:<name>" replaces an installed package with Arch Linux ARM core's
+# newer build (Valve's Firefox needs a newer nss than the Frame snapshot).
+WANT_EXTRA=()
+WANT_ALARM_CORE=()
+for p in ${EXTRA_PKGS:-}; do
+  case "$p" in
+    alarm-core:*) WANT_ALARM_CORE+=("${p#alarm-core:}") ;;
+    *) WANT_EXTRA+=("$p") ;;
+  esac
+done
 
 install_pkg() {
   local name="$1"
@@ -220,7 +231,47 @@ install_pkg() {
 
 ok=0
 fail=0
-for name in "${WANT_STEAMOS[@]}" "${WANT_GEAR[@]}" "${WANT_OPTIONAL[@]}"; do
+if (( ${#WANT_ALARM_CORE[@]} )); then
+  alarm_core="http://mirror.archlinuxarm.org/aarch64/core"
+  if download_db "$alarm_core/core.db" "$WORKDIR/alarm-core.db"; then
+    for name in "${WANT_ALARM_CORE[@]}"; do
+      unset "PKG_URL[$name]" "PKG_FILE[$name]"
+    done
+    # Index only the wanted names, so everything else keeps its source.
+    declare -A KEEP_URL KEEP_FILE
+    for k in "${!PKG_URL[@]}"; do KEEP_URL[$k]="${PKG_URL[$k]}"; KEEP_FILE[$k]="${PKG_FILE[$k]}"; done
+    index_db "$WORKDIR/alarm-core.db" "$alarm_core"
+    for k in "${!PKG_URL[@]}"; do
+      if [[ " ${WANT_ALARM_CORE[*]} " != *" $k "* ]]; then
+        if [[ -n "${KEEP_URL[$k]:-}" ]]; then
+          PKG_URL[$k]="${KEEP_URL[$k]}"; PKG_FILE[$k]="${KEEP_FILE[$k]}"
+        else
+          unset "PKG_URL[$k]" "PKG_FILE[$k]"
+        fi
+      fi
+    done
+  else
+    warn "cannot fetch Arch Linux ARM core.db"
+  fi
+  for name in "${WANT_ALARM_CORE[@]}"; do
+    [[ "${PKG_URL[$name]:-}" == *archlinuxarm* ]] || { warn "not found in ALARM core: $name"; fail=$((fail + 1)); continue; }
+    if compgen -G "$DB/local/${name}-[0-9]*" >/dev/null 2>&1 \
+        && [[ -n "$(ls -d "$DB/local/${name}-"[0-9]* 2>/dev/null | grep -F "${PKG_FILE[$name]%-aarch64.pkg.tar*}")" ]]; then
+      log "have $name (ALARM core)"
+      continue
+    fi
+    if install_pkg "$name"; then
+      # Drop the older entry, so pacman's view matches the files.
+      for old in "$DB/local/${name}-"[0-9]*; do
+        [[ -d "$old" && "$old" != *"${PKG_FILE[$name]%-aarch64.pkg.tar*}"* ]] && rm -rf "$old"
+      done
+      ok=$((ok + 1))
+    else
+      fail=$((fail + 1))
+    fi
+  done
+fi
+for name in "${WANT_STEAMOS[@]}" "${WANT_GEAR[@]}" "${WANT_OPTIONAL[@]}" "${WANT_EXTRA[@]}"; do
   if already_installed "$name"; then
     log "have $name"
     continue

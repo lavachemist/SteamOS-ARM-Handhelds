@@ -630,17 +630,18 @@ if [[ "$SOC" == sm8550 ]]; then
     "$R/usr/lib/steamos-sm8550/sm8550-touch-inhibit" 0755
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-run-bottom" \
     "$R/usr/lib/steamos-sm8550/sm8550-run-bottom" 0755
-  for f in thor-dashboard thor-statsd; do
+  for f in thor-dashboard thor-statsd thor-shelld; do
     install_file "$SM8550_OVL/usr/lib/steamos-sm8550/$f" "$R/usr/lib/steamos-sm8550/$f" 0755
   done
   # The dashboard's QML host and built-in skins, and the bottom screen's
-  # base window. Replaced whole, so a removed skin does not linger.
-  rm -rf "$R/usr/share/steamos-sm8550/thor-dashboard"
+  # shell and keyboard. Replaced whole, so removed files do not linger.
   mkdir -p "$R/usr/share/steamos-sm8550"
-  cp -r "$SM8550_OVL/usr/share/steamos-sm8550/thor-dashboard" "$R/usr/share/steamos-sm8550/"
-  chmod -R u=rwX,go=rX "$R/usr/share/steamos-sm8550/thor-dashboard"
-  install_file "$SM8550_OVL/usr/share/steamos-sm8550/bottom-home.qml" \
-    "$R/usr/share/steamos-sm8550/bottom-home.qml" 0644
+  rm -f "$R/usr/share/steamos-sm8550/bottom-home.qml"
+  for d in thor-dashboard bottom-shell; do
+    rm -rf "$R/usr/share/steamos-sm8550/$d"
+    cp -r "$SM8550_OVL/usr/share/steamos-sm8550/$d" "$R/usr/share/steamos-sm8550/"
+    chmod -R u=rwX,go=rX "$R/usr/share/steamos-sm8550/$d"
+  done
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-bottom-session" \
     "$R/usr/lib/steamos-sm8550/sm8550-bottom-session" 0755
   install_file "$SM8550_OVL/usr/lib/systemd/user/sm8550-bottom-session.service" \
@@ -683,7 +684,8 @@ if [[ "$SOC" == sm8550 ]]; then
   done
 else
   rm -rf "$R/usr/lib/steamos-sm8550" "$R/usr/share/sm8550-fand" \
-    "$R/usr/share/steamos-sm8550/thor-dashboard" "$R/usr/share/steamos-sm8550/bottom-home.qml"
+    "$R/usr/share/steamos-sm8550/thor-dashboard" "$R/usr/share/steamos-sm8550/bottom-shell" \
+    "$R/usr/share/steamos-sm8550/bottom-home.qml"
   rm -f "$R/usr/share/steamos-manager/devices/retroid-pocket6.toml" \
     "$R/usr/share/steamos-manager/devices/ayn-thor.toml" \
     "$R/usr/lib/udev/rules.d/72-sm8550-touch-inhibit.rules" \
@@ -868,7 +870,11 @@ rm -f "$HOME_DST/Desktop/Decky Loader.desktop" "$HOME_DST/Desktop/install-decky.
 # Plasma extras + ARM-Manager + LSFG/Thor/Decky plugins
 # ---------------------------------------------------------------------------
 log "== plasma extras (holo kate/ark/networkmanager-qt/…)"
-STEAMOS_HOME="$HOME_DST" "${SCRIPT_DIR}/install-plasma-extras.sh" "$R" \
+# SM8550: Firefox for the AYN Thor's bottom screen (Valve's build; it needs
+# nss/nspr newer than the Frame snapshot's), xdotool for its keyboard.
+extra_pkgs=""
+[[ "$SOC" == sm8550 ]] && extra_pkgs="alarm-core:nspr alarm-core:nss firefox libxss xdotool"
+STEAMOS_HOME="$HOME_DST" EXTRA_PKGS="$extra_pkgs" "${SCRIPT_DIR}/install-plasma-extras.sh" "$R" \
   || log "WARN: plasma extras incomplete"
 if [[ ! -f "$R/usr/lib/qt6/plugins/plasma/kcms/systemsettings/kcm_kscreen.so" ]]; then
   log "== official Plasma kscreen 6.2.5 KCM"
