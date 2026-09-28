@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -189,6 +190,14 @@ def launch(app: str) -> tuple[int, dict]:
         return 200, {"ok": True, "running": True}
     profile = os.path.join(DATA, spec["profile"])
     write_firefox_prefs(profile, spec["zoom"])
+    # Start clean: a session left by a killed instance makes Firefox offer
+    # "Open previous tabs?", which a kiosk app cannot act on.
+    for leftover in ("sessionstore.jsonlz4", "sessionstore-backups"):
+        path = os.path.join(profile, leftover)
+        if os.path.isdir(path):
+            shutil.rmtree(path, ignore_errors=True)
+        elif os.path.exists(path):
+            os.remove(path)
     env = dict(os.environ, MOZ_USE_XINPUT2="1", MOZ_ENABLE_WAYLAND="0", GNOME_ACCESSIBILITY="1")
     env.pop("WAYLAND_DISPLAY", None)
     STATE.apps[app] = subprocess.Popen(
