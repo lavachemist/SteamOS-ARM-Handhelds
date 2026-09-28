@@ -1,38 +1,57 @@
 #!/usr/bin/env python3
-"""sm8550-thor-backlightd: AYN Thor, one brightness for both panels, and the
-bottom-screen switch.
+"""sm8550-thor-backlightd: AYN Thor bottom screen. One brightness for both
+panels, the Dual Screen switch, and the AYN button's dashboard overlay.
 
-Steam's Game Mode brightness slider adjusts the first backlight it finds, the
-bottom panel's (ae94000.dsi.0), and writes it directly (the video group may).
-Game Mode shows the top panel (ae96000.dsi.0). This follows every change of
-the bottom backlight and sets the top one to the same fraction of its range
-straight away. (A steamos-priv-write redirect alone ran pkexec for every
-slider step and lagged; it stays as a fallback.)
+Brightness: Steam's Game Mode slider adjusts the first backlight it finds,
+the bottom panel's (ae94000.dsi.0), and writes it directly (the video group
+may). Game Mode shows the top panel (ae96000.dsi.0). This follows every
+change of the bottom backlight and sets the top one to the same fraction of
+its range straight away. (A steamos-priv-write redirect alone ran pkexec for
+every slider step and lagged; it stays as a fallback.)
 
-The Dual Screen Decky plugin writes "off" or "on" to STATE. While it is
-"off" the bottom panel's backlight is powered down (bl_power; the brightness
+Dual Screen switch: the Decky plugin writes "off" or "on" to STATE. While the
+bottom screen is off its backlight is powered down (bl_power; the brightness
 Steam sets is kept underneath, so the top panel still follows) and its
 touchscreen is inhibited. Both are enforced on every pass, because the panel
 driver powers the backlight up again on each modeset and wake, and the Game
-Mode / Desktop start scripts re-enable the touchscreen. Switching back to
-"on" powers the backlight up at the top panel's brightness and re-enables
-touch.
+Mode / Desktop start scripts re-enable the touchscreen.
+
+AYN button: InputPlumber leaves gpio-keys-ayn alone on the Thor (see the
+devices.d override written by apply-overlays.sh); this grabs it and each
+press of KEY_F24 toggles OVERLAY. thor-dashboard shows itself over whatever
+the bottom screen holds while OVERLAY is "1" and writes "0" after a minute
+without touch. While the overlay is up the bottom screen is on even if the
+switch says off; afterwards it returns to the switch's state.
 """
 from __future__ import annotations
 
+import fcntl
 import glob
+import grp
 import os
 import select
+import struct
 import sys
 
 BOTTOM = "/sys/class/backlight/ae94000.dsi.0"
 TOP = "/sys/class/backlight/ae96000.dsi.0"
 STATE = "/var/lib/steamos-sm8550/thor-bottom-screen"
+RUN_DIR = "/run/sm8550-thor"
+OVERLAY = f"{RUN_DIR}/overlay"
 TOUCH_NAME = "bottom_touchscreen"
+AYN_KEYS_NAME = "gpio-keys-ayn"
+KEY_F24 = 194
+EV_KEY = 1
+EVIOCGRAB = 0x40044590
+EVENT = struct.Struct("llHHi")
 BL_ON, BL_OFF = "0", "4"  # FB_BLANK_UNBLANK, FB_BLANK_POWERDOWN
 # The kernel notifies actual_brightness on changes; the timeout also paces
-# enforcing the switch.
+# enforcing the switch and retrying the AYN key device.
 POLL_MS = 100
+
+
+def log(msg: str) -> None:
+    print(msg, flush=True)
 
 
 def read(path: str, default: str = "") -> str:
@@ -48,56 +67,107 @@ def write(path: str, value: str) -> None:
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(value)
     except OSError as err:
-        print(f"cannot write {value} to {path}: {err}", file=sys.stderr, flush=True)
+        log(f"cannot write {value} to {path}: {err}")
+
+
+def input_dirs(name: str) -> list[str]:
+    return [d for d in glob.glob("/sys/class/input/input*") if read(f"{d}/name") == name]
 
 
 def touch_inhibited_paths() -> list[str]:
-    return [
-        f"{d}/inhibited"
-        for d in glob.glob("/sys/class/input/input*")
-        if read(f"{d}/name") == TOUCH_NAME
-    ]
+    return [f"{d}/inhibited" for d in input_dirs(TOUCH_NAME)]
 
 
-def bottom_off() -> bool:
-    return read(STATE, "on") == "off"
+def setup_overlay() -> None:
+    """Session-writable overlay flag: the dashboard clears it on timeout."""
+    os.makedirs(RUN_DIR, exist_ok=True)
+    try:
+        gid = grp.getgrnam("input").gr_gid
+    except KeyError:
+        gid = -1
+    os.chown(RUN_DIR, -1, gid)
+    os.chmod(RUN_DIR, 0o2775)
+    write(OVERLAY, "0")
+    os.chown(OVERLAY, -1, gid)
+    os.chmod(OVERLAY, 0o664)
+
+
+def open_ayn_key() -> int | None:
+    for d in input_dirs(AYN_KEYS_NAME):
+        for ev in glob.glob(f"{d}/event*"):
+            try:
+                fd = os.open(f"/dev/input/{os.path.basename(ev)}", os.O_RDONLY | os.O_NONBLOCK)
+            except OSError:
+                continue
+            try:
+                fcntl.ioctl(fd, EVIOCGRAB, 1)
+            except OSError as err:
+                log(f"cannot grab {AYN_KEYS_NAME}: {err}")
+                os.close(fd)
+                return None
+            log(f"AYN button on {os.path.basename(ev)}")
+            return fd
+    return None
 
 
 def main() -> int:
     bottom_max = int(read(f"{BOTTOM}/max_brightness", "0") or 0)
     top_max = int(read(f"{TOP}/max_brightness", "0") or 0)
     if bottom_max <= 0 or top_max <= 0:
-        print("no usable backlights", file=sys.stderr)
+        log("no usable backlights")
         return 1
+    setup_overlay()
 
-    fd = os.open(f"{BOTTOM}/actual_brightness", os.O_RDONLY)
-
-    def bottom_raw() -> int:
-        os.lseek(fd, 0, os.SEEK_SET)
-        return int(os.read(fd, 32).strip() or 0)
+    bl_fd = os.open(f"{BOTTOM}/actual_brightness", os.O_RDONLY)
+    key_fd = open_ayn_key()
+    key_retry = 0
 
     def bottom_set() -> int:
         # actual_brightness reads 0 while bl_power is off; follow the value
         # Steam set instead.
         return int(read(f"{BOTTOM}/brightness", "0") or 0)
 
-    poller = select.poll()
-    poller.register(fd, select.POLLPRI | select.POLLERR)
     last = bottom_set()  # leave the top panel alone until something changes
-    was_off = None
-    print(f"following {BOTTOM} (max {bottom_max}) -> {TOP} (max {top_max})", flush=True)
+    was_on = None
+    log(f"following {BOTTOM} (max {bottom_max}) -> {TOP} (max {top_max})")
     while True:
-        poller.poll(POLL_MS)
-        bottom_raw()  # consume the notification
+        poller = select.poll()
+        poller.register(bl_fd, select.POLLPRI | select.POLLERR)
+        if key_fd is not None:
+            poller.register(key_fd, select.POLLIN | select.POLLERR)
+        events = dict(poller.poll(POLL_MS))
+        os.lseek(bl_fd, 0, os.SEEK_SET)
+        os.read(bl_fd, 32)  # consume the notification
 
-        off = bottom_off()
-        if off:
+        # AYN button: each press toggles the dashboard overlay.
+        if key_fd is not None and key_fd in events:
+            try:
+                data = os.read(key_fd, EVENT.size * 32)
+            except BlockingIOError:
+                data = b""
+            except OSError:
+                os.close(key_fd)
+                key_fd, data = None, b""
+            for off in range(0, len(data) - EVENT.size + 1, EVENT.size):
+                _, _, etype, code, value = EVENT.unpack_from(data, off)
+                if etype == EV_KEY and code == KEY_F24 and value == 1:
+                    up = read(OVERLAY, "0") != "1"
+                    write(OVERLAY, "1" if up else "0")
+                    log(f"AYN button: dashboard {'shown' if up else 'hidden'}")
+        elif key_fd is None:
+            key_retry += 1
+            if key_retry >= 50:  # every 5 s
+                key_retry = 0
+                key_fd = open_ayn_key()
+
+        on = read(STATE, "on") != "off" or read(OVERLAY, "0") == "1"
+        if not on:
             if read(f"{BOTTOM}/bl_power") != BL_OFF:
                 write(f"{BOTTOM}/bl_power", BL_OFF)
             for p in touch_inhibited_paths():
                 if read(p) != "1":
                     write(p, "1")
-        elif was_off:
+        elif was_on is False:
             # Back on: match the top panel, then power up and allow touch.
             top_now = int(read(f"{TOP}/brightness", "0") or 0)
             match = max(1, min(bottom_max, round(top_now * bottom_max / top_max)))
@@ -106,9 +176,9 @@ def main() -> int:
             write(f"{BOTTOM}/bl_power", BL_ON)
             for p in touch_inhibited_paths():
                 write(p, "0")
-        if off != was_off:
-            print(f"bottom screen {'off' if off else 'on'}", flush=True)
-        was_off = off
+        if on != was_on:
+            log(f"bottom screen {'on' if on else 'off'}")
+        was_on = on
 
         value = bottom_set()
         if value == last:

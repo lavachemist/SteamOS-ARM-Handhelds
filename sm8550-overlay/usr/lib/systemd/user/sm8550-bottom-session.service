@@ -1,0 +1,16 @@
+[Unit]
+Description=AYN Thor: bottom-screen session (dashboard overlay and bottom apps)
+PartOf=gamescope-session.target
+After=gamescope-session.service
+
+[Service]
+Type=simple
+ExecCondition=/bin/sh -c 'grep -qa "ayn,thor" /sys/firmware/devicetree/base/compatible'
+# Game Mode's gamescope creates the lease socket once it is up.
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do [ -S /tmp/gamescope-lease.sock ] && exit 0; sleep 1; done; exit 1'
+ExecStart=/usr/lib/steamos-sm8550/sm8550-run-bottom -- /usr/lib/steamos-sm8550/sm8550-bottom-session
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=gamescope-session.target

@@ -632,6 +632,24 @@ if [[ "$SOC" == sm8550 ]]; then
     "$R/usr/lib/steamos-sm8550/sm8550-run-bottom" 0755
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/thor-dashboard" \
     "$R/usr/lib/steamos-sm8550/thor-dashboard" 0755
+  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-bottom-session" \
+    "$R/usr/lib/steamos-sm8550/sm8550-bottom-session" 0755
+  install_file "$SM8550_OVL/usr/lib/systemd/user/sm8550-bottom-session.service" \
+    "$R/usr/lib/systemd/user/sm8550-bottom-session.service" 0644
+  mkdir -p "$R/usr/lib/systemd/user/gamescope-session.target.wants"
+  ln -sfn ../sm8550-bottom-session.service \
+    "$R/usr/lib/systemd/user/gamescope-session.target.wants/sm8550-bottom-session.service"
+  # AYN Thor: InputPlumber leaves the AYN button to sm8550-thor-backlightd,
+  # which uses it to show the bottom-screen dashboard.
+  ip_thor="$R/usr/share/inputplumber/devices/50-ayn_thor.yaml"
+  if [[ -f "$ip_thor" ]]; then
+    for etc in "$R/etc" "$R/var/lib/overlays/etc/upper"; do
+      [[ "$etc" == "$R/etc" || -d "$etc" ]] || continue
+      mkdir -p "$etc/inputplumber/devices.d"
+      python3 "$SM8550_OVL/usr/share/steamos-sm8550/ip-thor-without-ayn-key.py" \
+        "$ip_thor" "$etc/inputplumber/devices.d/50-ayn_thor.yaml"
+    done
+  fi
   # Steer Steam's brightness writes to the Thor's top panel (see the .inc).
   if [[ -f "$R/usr/bin/steamos-polkit-helpers/steamos-priv-write" ]]; then
     python3 "$SM8550_OVL/usr/share/steamos-sm8550/insert-priv-write-backlight.py" \
@@ -664,6 +682,10 @@ else
     "$R/usr/lib/systemd/system/sm8550-fand.service" \
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-fand.service" \
     "$R/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules" \
+    "$R/usr/lib/systemd/user/sm8550-bottom-session.service" \
+    "$R/usr/lib/systemd/user/gamescope-session.target.wants/sm8550-bottom-session.service" \
+    "$R/etc/inputplumber/devices.d/50-ayn_thor.yaml" \
+    "$R/var/lib/overlays/etc/upper/inputplumber/devices.d/50-ayn_thor.yaml" \
     "$R/usr/lib/systemd/system/sm8550-thor-backlightd.service" \
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-thor-backlightd.service"
 fi

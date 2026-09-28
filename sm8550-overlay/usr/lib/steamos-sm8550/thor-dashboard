@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """thor-dashboard: performance monitor for the AYN Thor's bottom screen.
 
-Runs inside the bottom-screen session (sm8550-run-bottom -- thor-dashboard)
-while Game Mode drives the top panel. Laid out like AYN's Android dashboard:
-status bar, current FPS, temperature, fan, and gauges for CPU, GPU, power and
-memory. Read-only for now; the quick controls come later.
+Runs hidden inside the bottom-screen session (sm8550-bottom-session) while
+Game Mode drives the top panel. The AYN button (sm8550-thor-backlightd) sets
+OVERLAY to "1": the dashboard then shows itself over whatever the bottom
+screen holds, and hides again when OVERLAY goes back to "0", either on the
+next AYN press or after IDLE_S without a touch, which it clears itself.
+Laid out like AYN's Android dashboard: status bar, current FPS, temperature,
+fan, and gauges for CPU, GPU, power and memory. Read-only for now; the quick
+controls come later.
 
 Sources: gamescope's stats pipe (fps=/focus= lines; nothing else reads it),
 cpufreq, the GPU devfreq node, thermal zones, the pwm fan, the battery and
@@ -28,6 +32,8 @@ GPU = "/sys/class/devfreq/3d00000.gpu"
 BATTERY = "/sys/class/power_supply/battery"
 WIFI = "wlan0"
 REFRESH_MS = 1000
+OVERLAY = "/run/sm8550-thor/overlay"
+IDLE_S = 60
 ACCENT = (0.73, 0.40, 0.98)  # violet, like AYN's
 TRACK = (1, 1, 1, 0.12)
 
@@ -270,8 +276,35 @@ class Dashboard(Gtk.ApplicationWindow):
         root.append(gauges)
         root.append(label("Quick controls are coming in the next version.", "note", xalign=0.5))
 
-        self._tick()
+        # Any input on the dashboard counts as activity for the idle timeout.
+        self.last_activity = time.monotonic()
+        activity = Gtk.EventControllerLegacy()
+        activity.connect("event", self._on_input)
+        self.add_controller(activity)
+
         GLib.timeout_add(REFRESH_MS, self._tick)
+        GLib.timeout_add(200, self._check_overlay)
+
+    def _on_input(self, *_args) -> bool:
+        self.last_activity = time.monotonic()
+        return False
+
+    def _check_overlay(self) -> bool:
+        wanted = read(OVERLAY, "0") == "1"
+        if wanted and not self.get_visible():
+            self.last_activity = time.monotonic()
+            self.fullscreen()
+            self.present()
+            self._tick()
+        elif not wanted and self.get_visible():
+            self.set_visible(False)
+        elif wanted and time.monotonic() - self.last_activity > IDLE_S:
+            try:
+                with open(OVERLAY, "w", encoding="utf-8") as fh:
+                    fh.write("0")
+            except OSError:
+                self.set_visible(False)
+        return True
 
     def _tile(self, parent: Gtk.Box, title: str) -> Gtk.Label:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -287,6 +320,8 @@ class Dashboard(Gtk.ApplicationWindow):
         return value
 
     def _tick(self) -> bool:
+        if not self.get_visible():
+            return True
         s = self.stats
         self.clock.set_text(time.strftime("%-I:%M %p"))
         self.net.set_text(human_rate(s.net_speed()))
@@ -319,9 +354,8 @@ def main() -> None:
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
-        win = Dashboard(a)
-        win.fullscreen()
-        win.present()
+        Dashboard(a)  # stays hidden until the AYN button asks for it
+        a.hold()
 
     app.connect("activate", activate)
     app.run(None)

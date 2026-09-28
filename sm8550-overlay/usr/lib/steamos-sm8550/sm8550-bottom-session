@@ -1,0 +1,10 @@
+#!/bin/bash
+# sm8550-bottom-session: what runs on the AYN Thor's bottom screen during
+# Game Mode, inside the nested gamescope that sm8550-run-bottom starts on the
+# lease. The bottom screen is a general space: apps meant to live there are
+# started here. thor-dashboard runs hidden and raises itself over them when
+# the AYN button asks (gamescope shows the most recently shown window). X11
+# clients, so gamescope's stacking applies.
+export GDK_BACKEND=x11
+/usr/lib/steamos-sm8550/thor-dashboard &
+wait
