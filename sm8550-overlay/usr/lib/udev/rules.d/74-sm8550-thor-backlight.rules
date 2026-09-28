@@ -1,0 +1,9 @@
+# AYN Thor: Steam adjusts the first backlight it finds, the bottom panel's
+# (ae94000.dsi.0). 60-gamescope-backlight.rules makes every backlight writable
+# by the video group, so Steam wrote it directly and Game Mode's brightness
+# slider only changed the dark bottom panel. Keep the bottom panel root-only
+# so Steam falls back to steamos-priv-write, which steers the write to the top
+# panel (see priv-write-backlight.inc; Armada withholds the grant the same way).
+ACTION=="add|change", SUBSYSTEM=="backlight", KERNEL=="ae94000.dsi.0", \
+  PROGRAM="/bin/grep -qa ayn,thor /sys/firmware/devicetree/base/compatible", \
+  RUN+="/bin/chmod 0644 /sys/class/backlight/%k/brightness"
