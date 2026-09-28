@@ -62,12 +62,14 @@ def read(path: str, default: str = "") -> str:
         return default
 
 
-def write(path: str, value: str) -> None:
+def write(path: str, value: str) -> bool:
     try:
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(value)
+        return True
     except OSError as err:
         log(f"cannot write {value} to {path}: {err}")
+        return False
 
 
 def input_dirs(name: str) -> list[str]:
@@ -183,9 +185,11 @@ def main() -> int:
         value = bottom_set()
         if value == last:
             continue
-        last = value
         top = max(1, min(top_max, round(value * top_max / bottom_max)))
-        write(f"{TOP}/brightness", str(top))
+        # The top panel refuses writes (EINVAL) while Game Mode is bringing
+        # it up; leave last unchanged so the next pass tries again.
+        if write(f"{TOP}/brightness", str(top)):
+            last = value
 
 
 if __name__ == "__main__":
