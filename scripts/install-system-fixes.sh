@@ -181,6 +181,10 @@ if [[ -n "${DECKY_PLUGINS:-}" ]]; then
   IFS=: read -ra decky_plugins <<<"${DECKY_PLUGINS}"
 elif [[ "$SOC" == sm8650 ]]; then
   decky_plugins=("${MOD}/Decky/sm8650/konkr-control")
+elif [[ "$SOC" == sm8550 ]]; then
+  # Thor Screens: per-screen brightness on the AYN Thor (says so and does
+  # nothing on single-screen SM8550 devices).
+  decky_plugins=("${MOD}/Decky/sm8550/thor-screens")
 fi
 # The bundle is owned by this script: start clean so a rootfs reused from
 # another target keeps no stale plugins.
