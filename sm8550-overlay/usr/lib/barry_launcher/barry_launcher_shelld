@@ -61,7 +61,10 @@ DATA = os.path.join(os.environ.get("XDG_DATA_HOME", f"{HOME}/.local/share"), "ba
 # which needs about 1000 CSS pixels across.
 APPS = {
     "browser": {"profile": "browser", "args": [], "zoom": "2.5"},
-    "discord": {"profile": "discord", "args": ["--kiosk", "https://discord.com/app"], "zoom": "1.25"},
+    # Kiosk mode may not show permission prompts; this profile only runs
+    # Discord, so allow the microphone (voice chat) up front.
+    "discord": {"profile": "discord", "args": ["--kiosk", "https://discord.com/app"], "zoom": "1.25",
+                "prefs": {"permissions.default.microphone": 1}},
 }
 FIREFOX_PREFS = {
     "browser.shell.checkDefaultBrowser": False,
@@ -148,9 +151,9 @@ def keyboard_input_focus(on: bool) -> None:
         STATE.input_focus = on
 
 
-def write_firefox_prefs(profile: str, zoom: str) -> None:
+def write_firefox_prefs(profile: str, zoom: str, extra: dict) -> None:
     os.makedirs(profile, exist_ok=True)
-    prefs = dict(FIREFOX_PREFS, **{"layout.css.devPixelsPerPx": zoom})
+    prefs = dict(FIREFOX_PREFS, **{"layout.css.devPixelsPerPx": zoom}, **extra)
     lines = [f"user_pref({json.dumps(k)}, {json.dumps(v)});" for k, v in prefs.items()]
     with open(f"{profile}/user.js", "w", encoding="utf-8") as fh:
         fh.write("// Written by barry_launcher_shelld at every start; change other settings in about:config.\n")
@@ -189,7 +192,7 @@ def launch(app: str) -> tuple[int, dict]:
         activate(["--pid", str(proc.pid), "--classname", "Navigator"])
         return 200, {"ok": True, "running": True}
     profile = os.path.join(DATA, spec["profile"])
-    write_firefox_prefs(profile, spec["zoom"])
+    write_firefox_prefs(profile, spec["zoom"], spec.get("prefs", {}))
     # Start clean: a session left by a killed instance makes Firefox offer
     # "Open previous tabs?", which a kiosk app cannot act on.
     for leftover in ("sessionstore.jsonlz4", "sessionstore-backups"):
