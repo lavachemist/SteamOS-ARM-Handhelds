@@ -22,6 +22,7 @@ Window {
 
     readonly property string api: "http://127.0.0.1:47824"
     readonly property real s: Math.min(width / 1240, height / 1080)
+    readonly property real keyHeight: 92  // at 1240 x 1080
     property bool shown: false
     property bool atTop: false
     property bool shifted: false
@@ -67,14 +68,18 @@ Window {
     }
 
     readonly property var letters: [
+        ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"],
         ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"],
         ["a", "s", "d", "f", "g", "h", "j", "k", "l"],
         ["shift", "z", "x", "c", "v", "b", "n", "m", "BackSpace"],
         ["symbols", ",", "space", ".", "Return", "hide"],
     ]
+    // The number row stays on the letters page, so this page takes the rarer
+    // symbols; five rows like the letters, so the keyboard keeps its height.
     readonly property var symbolRows: [
-        ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"],
+        ["[", "]", "{", "}", "<", ">", "^", "`", "|", "\\"],
         ["@", "#", "$", "%", "&", "-", "+", "(", ")", "/"],
+        ["€", "£", "¥", "°", "•", "…", "×", "÷", "¿", "¡"],
         ["=", "*", "\"", "'", ":", ";", "!", "?", "BackSpace"],
         ["symbols", "_", "space", "~", "Return", "hide"],
     ]
@@ -86,7 +91,8 @@ Window {
     Rectangle {
         id: panel
         width: parent.width
-        height: 470 * win.s
+        // Five rows of keys plus the gaps and margins.
+        height: (5 * win.keyHeight + 4 * 10 + 24) * win.s
         y: win.atTop ? 0 : parent.height - height
         color: "#1b1d24"
 
@@ -128,7 +134,7 @@ Window {
              : k === "shift" || k === "BackSpace" ? unit * 1.45
              : k === "symbols" || k === "Return" ? unit * 1.5
              : unit
-        height: 104 * win.s
+        height: win.keyHeight * win.s
         radius: 16 * win.s
         color: tap.pressed ? "#4a4f60"
              : (k === "shift" && win.shifted) || (k === "symbols" && win.symbols) ? "#6b2fb3"

@@ -21,7 +21,9 @@ devices.d override written by apply-overlays.sh); this grabs it and each
 press of KEY_F24 toggles OVERLAY. Barry Launcher's dashboard shows itself
 over whatever the bottom screen holds while OVERLAY is "1" (and writes "0"
 itself if an idle time is set). While the overlay is up the bottom screen is on even if
-the switch says off; afterwards it returns to the switch's state.
+the switch says off (from OVERLAY_DELAY_S after the press, once the
+dashboard has drawn, so the app under it does not flash up); afterwards it
+returns to the switch's state.
 """
 from __future__ import annotations
 
@@ -32,6 +34,7 @@ import os
 import select
 import struct
 import sys
+import time
 
 BOTTOM = "/sys/class/backlight/ae94000.dsi.0"
 TOP = "/sys/class/backlight/ae96000.dsi.0"
@@ -48,6 +51,8 @@ BL_ON, BL_OFF = "0", "4"  # FB_BLANK_UNBLANK, FB_BLANK_POWERDOWN
 # The kernel notifies actual_brightness on changes; the timeout also paces
 # enforcing the switch and retrying the AYN key device.
 POLL_MS = 100
+# The dashboard polls the flag every 200 ms, then maps and draws.
+OVERLAY_DELAY_S = 0.5
 
 
 def log(msg: str) -> None:
@@ -131,6 +136,7 @@ def main() -> int:
 
     last = bottom_set()  # leave the top panel alone until something changes
     was_on = None
+    overlay_since: float | None = None
     log(f"following {BOTTOM} (max {bottom_max}) -> {TOP} (max {top_max})")
     while True:
         poller = select.poll()
@@ -162,7 +168,14 @@ def main() -> int:
                 key_retry = 0
                 key_fd = open_ayn_key()
 
-        on = read(STATE, "on") != "off" or read(OVERLAY, "0") == "1"
+        overlay = read(OVERLAY, "0") == "1"
+        if overlay and overlay_since is None:
+            overlay_since = time.monotonic()
+        elif not overlay:
+            overlay_since = None
+        on = read(STATE, "on") != "off" or (
+            overlay_since is not None and time.monotonic() - overlay_since >= OVERLAY_DELAY_S
+        )
         if not on:
             if read(f"{BOTTOM}/bl_power") != BL_OFF:
                 write(f"{BOTTOM}/bl_power", BL_OFF)
