@@ -630,6 +630,12 @@ if [[ "$SOC" == sm8550 ]]; then
     "$R/usr/lib/steamos-sm8550/sm8550-touch-inhibit" 0755
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-run-bottom" \
     "$R/usr/lib/steamos-sm8550/sm8550-run-bottom" 0755
+  # Steer Steam's brightness writes to the Thor's top panel (see the .inc).
+  if [[ -f "$R/usr/bin/steamos-polkit-helpers/steamos-priv-write" ]]; then
+    python3 "$SM8550_OVL/usr/share/steamos-sm8550/insert-priv-write-backlight.py" \
+      "$R/usr/bin/steamos-polkit-helpers/steamos-priv-write" \
+      "$SM8550_OVL/usr/share/steamos-sm8550/priv-write-backlight.inc"
+  fi
   install_file "$SM8550_OVL/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules" \
     "$R/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules" 0644
   install_file "$SM8550_OVL/usr/lib/udev/rules.d/72-sm8550-touch-inhibit.rules" \
