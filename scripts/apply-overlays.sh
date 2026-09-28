@@ -628,14 +628,12 @@ if [[ "$SOC" == sm8550 ]]; then
     "$R/usr/lib/systemd/system/sm8550-powerbuttond.service" 0644
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-touch-inhibit" \
     "$R/usr/lib/steamos-sm8550/sm8550-touch-inhibit" 0755
-  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-ufs-detach" \
-    "$R/usr/lib/steamos-sm8550/sm8550-ufs-detach" 0755
-  install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-ufs-detach.service" \
-    "$R/usr/lib/systemd/system/sm8550-ufs-detach.service" 0644
+  install_file "$SM8550_OVL/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules" \
+    "$R/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules" 0644
   install_file "$SM8550_OVL/usr/lib/udev/rules.d/72-sm8550-touch-inhibit.rules" \
     "$R/usr/lib/udev/rules.d/72-sm8550-touch-inhibit.rules" 0644
   mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
-  for u in sm8550-fand.service sm8550-powerbuttond.service sm8550-ufs-detach.service; do
+  for u in sm8550-fand.service sm8550-powerbuttond.service; do
     ln -sfn ../$u "$R/usr/lib/systemd/system/multi-user.target.wants/$u"
   done
 else
@@ -647,8 +645,7 @@ else
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-powerbuttond.service" \
     "$R/usr/lib/systemd/system/sm8550-fand.service" \
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-fand.service" \
-    "$R/usr/lib/systemd/system/sm8550-ufs-detach.service" \
-    "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-ufs-detach.service"
+    "$R/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules"
 fi
 
 # Temporary remote-test aid (BUNDLE_TAILSCALE=1); every other build removes it.
