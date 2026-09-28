@@ -18,14 +18,27 @@ Rectangle {
             width: 260 * home.s
             height: 260 * home.s
             radius: 56 * home.s
-            color: tap.pressed ? "#2a3a66" : "#1b2440"
-            border.color: "#3d5aa8"
+            color: tap.pressed ? "#2d3140" : "#1b1d24"
+            border.color: "#3a3e4d"
             border.width: 3 * home.s
 
+            // Firefox's own logo, as installed with it (not copied here).
+            Image {
+                id: logo
+                anchors.centerIn: parent
+                width: 160 * home.s
+                height: 160 * home.s
+                source: "file:///usr/lib/firefox/browser/chrome/icons/default/default128.png"
+                sourceSize: Qt.size(128, 128)
+                fillMode: Image.PreserveAspectFit
+                smooth: true
+                mipmap: true
+            }
             Icon {
                 anchors.centerIn: parent
                 width: 150 * home.s
                 height: 150 * home.s
+                visible: logo.status !== Image.Ready
                 kind: "globe"
                 color: "#cfe0ff"
                 lineWidth: 9 * home.s
@@ -37,7 +50,7 @@ Rectangle {
         }
         Text {
             anchors.horizontalCenter: parent.horizontalCenter
-            text: "Browser"
+            text: "Firefox"
             color: "#eef0f4"
             font { family: "Noto Sans"; pixelSize: 40 * home.s; weight: Font.DemiBold }
         }
