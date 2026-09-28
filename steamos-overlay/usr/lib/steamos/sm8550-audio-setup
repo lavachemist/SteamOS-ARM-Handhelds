@@ -55,4 +55,21 @@ amixer -c "$card_id" cset name='RX_RX0 Digital Volume' 84 >/dev/null 2>&1
 amixer -c "$card_id" cset name='RX_RX1 Digital Volume' 84 >/dev/null 2>&1
 
 log "card ${card_id} speaker mixers applied"
+
+# AYN Thor: the built-in digital mic (DMIC3 through the TX macro to capture
+# PCM 2), as the Thor UCM's "Mic" device and HiFi verb enable it. PipeWire
+# runs the card in pro-audio, so no UCM sequence switches it on; capture
+# then fails with EIO, and PipeWire's realtime thread spun on that until
+# the kernel killed it, taking all audio down (a Discord call did this).
+if grep -qa 'ayn,thor' /sys/firmware/devicetree/base/compatible 2>/dev/null; then
+  amixer -c "$card_id" cset name='MultiMedia3 Mixer TX_CODEC_DMA_TX_3' 1 >/dev/null 2>&1
+  amixer -c "$card_id" cset name='TX DEC0 MUX' SWR_MIC >/dev/null 2>&1
+  amixer -c "$card_id" cset name='TX SMIC MUX0' SWR_MIC7 >/dev/null 2>&1
+  amixer -c "$card_id" cset name='DMIC3 Switch' 1 >/dev/null 2>&1
+  amixer -c "$card_id" cset name='DMIC3_MIXER Switch' 1 >/dev/null 2>&1
+  amixer -c "$card_id" cset name='TX_AIF1_CAP Mixer DEC0' 1 >/dev/null 2>&1
+  amixer -c "$card_id" cset name='DEC0 MODE' ADC_DEFAULT >/dev/null 2>&1
+  amixer -c "$card_id" cset name='TX_DEC0 Volume' 100 >/dev/null 2>&1
+  log "card ${card_id} Thor mic mixers applied"
+fi
 exit 0
