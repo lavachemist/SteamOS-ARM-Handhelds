@@ -2010,6 +2010,20 @@ static inline void stats_printf( const char* format, ...)
 	}
 }
 
+// Game frame rate for the stats pipe, from mangoapp_output_update() on the
+// page-flip thread: format locally, since stats_printf() uses static buffers
+// and belongs to the steamcompmgr thread.
+void stats_report_app_fps( float fps )
+{
+	char buffer[64];
+	snprintf( buffer, sizeof( buffer ), "fps=%f\n", fps );
+	std::unique_lock< std::mutex > lock( statsEventQueueLock );
+	if ( statsEventQueue.size() > 50 )
+		return;
+	statsEventQueue.push_back( buffer );
+	statsThreadSem.signal();
+}
+
 uint64_t get_time_in_nanos()
 {
 	timespec ts;
@@ -3461,8 +3475,7 @@ paint_all( global_focus_t *pFocus, bool async )
 	fit = override;
 
 	// Report once a second (was every 300 frames: 5 s at 60 FPS, far longer
-	// when idle), so the AYN Thor bottom-screen dashboard can show live FPS.
-	// Only the stats pipe reads this.
+	// when idle). Only the stats pipe reads this.
 	++frameCounter;
 	if ( currentTime - lastSampledFrameTime >= 1000 )
 	{
@@ -3470,7 +3483,9 @@ paint_all( global_focus_t *pFocus, bool async )
 		lastSampledFrameTime = currentTime;
 		frameCounter = 0;
 
-		stats_printf( "fps=%f\n", currentFrameRate );
+		// Compositor repaints per second; the game's own frame rate is
+		// reported as fps= by mangoapp_output_update().
+		stats_printf( "paintfps=%f\n", currentFrameRate );
 
 		if ( window_is_steam( w ) )
 		{

@@ -323,6 +323,7 @@ class Dashboard(Gtk.ApplicationWindow):
         if not self.get_visible():
             return True
         s = self.stats
+        time.tzset()  # Steam can change the time zone after we started
         self.clock.set_text(time.strftime("%-I:%M %p"))
         self.net.set_text(human_rate(s.net_speed()))
         pct, status = s.battery()

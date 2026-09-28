@@ -257,8 +257,28 @@ extern bool g_bCurrentBasePlaneIsFifo;
 extern uint32_t g_uCurrentBasePlaneAppID;
 extern gamescope::ConVar<bool> cv_mangoapp_use_output_timing;
 
+extern void stats_report_app_fps( float fps );
+
 void mangoapp_output_update( uint64_t vblanktime )
 {
+	// Game frame rate for the stats pipe (the AYN Thor bottom-screen
+	// dashboard): new base-plane commits reaching the screen per second, the
+	// same signal mangoapp's frame times come from.
+	static uint64_t s_uFpsCommitID = 0, s_uFpsFrames = 0, s_uFpsStart = 0;
+	if ( s_uFpsCommitID != g_uCurrentBasePlaneCommitID )
+	{
+		s_uFpsCommitID = g_uCurrentBasePlaneCommitID;
+		s_uFpsFrames++;
+	}
+	if ( !s_uFpsStart || vblanktime < s_uFpsStart )
+		s_uFpsStart = vblanktime;
+	else if ( vblanktime - s_uFpsStart >= 1'000'000'000ull )
+	{
+		stats_report_app_fps( s_uFpsFrames * 1e9f / float( vblanktime - s_uFpsStart ) );
+		s_uFpsFrames = 0;
+		s_uFpsStart = vblanktime;
+	}
+
 	static uint64_t s_uLastBasePlaneCommitID = 0;
 	if ( s_uLastBasePlaneCommitID != g_uCurrentBasePlaneCommitID )
 	{
