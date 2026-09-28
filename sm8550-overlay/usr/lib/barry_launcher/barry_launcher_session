@@ -1,0 +1,19 @@
+#!/bin/bash
+# barry_launcher_session: Barry Launcher, what runs on the AYN Thor's bottom
+# screen during Game Mode, inside the nested gamescope that sm8550-run-bottom
+# starts on the lease. The bottom screen is a general space: the shell (home
+# screen, the base window under everything, so the screen never freezes on
+# an overlay's last frame) starts its apps through barry_launcher_shelld,
+# which also runs the on-screen keyboard. barry_launcher_dashboard runs
+# hidden and raises itself over them when the AYN button asks (gamescope
+# shows the most recently shown window). X11 clients, so gamescope's
+# stacking and overlays apply.
+export QT_QPA_PLATFORM=xcb QT_XCB_GL_INTEGRATION=xcb_egl
+SHELL_QML=/usr/share/barry_launcher/shell
+/usr/lib/barry_launcher/barry_launcher_statsd &
+/usr/lib/barry_launcher/barry_launcher_shelld &
+qml6 "$SHELL_QML/Shell.qml" &
+sleep 1  # home first, so it stays at the bottom
+qml6 "$SHELL_QML/Keyboard.qml" &
+/usr/lib/barry_launcher/barry_launcher_dashboard &
+wait

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""thor-statsd: device stats for the AYN Thor's bottom-screen dashboard.
+"""barry_launcher_statsd: device stats for Barry Launcher's dashboard on the
+AYN Thor's bottom screen.
 
-Serves JSON on 127.0.0.1:PORT for the QML dashboard (thor-dashboard) and its
-skins, so a skin is plain QML with no Python of its own:
+Serves JSON on 127.0.0.1:PORT for the QML dashboard (barry_launcher_dashboard)
+and its skins, so a skin is plain QML with no Python of its own:
 
   GET  /stats     one sample (schema below); sampled on request, at most
                   once per MIN_SAMPLE_S, so nothing runs while nobody asks
@@ -43,10 +44,10 @@ OVERLAY = "/run/sm8550-thor/overlay"
 MIN_SAMPLE_S = 0.8
 HOME = os.path.expanduser("~")
 SKIN_DIRS = [
-    os.path.join(os.environ.get("XDG_DATA_HOME", f"{HOME}/.local/share"), "thor-dashboard/skins"),
-    "/usr/share/steamos-sm8550/thor-dashboard/skins",
+    os.path.join(os.environ.get("XDG_DATA_HOME", f"{HOME}/.local/share"), "barry_launcher/skins"),
+    "/usr/share/barry_launcher/dashboard/skins",
 ]
-SETTINGS = os.path.join(os.environ.get("XDG_CONFIG_HOME", f"{HOME}/.config"), "thor-dashboard/settings.json")
+SETTINGS = os.path.join(os.environ.get("XDG_CONFIG_HOME", f"{HOME}/.config"), "barry_launcher/settings.json")
 DEFAULTS = {"skin": "ayn", "idleSeconds": 0}
 
 

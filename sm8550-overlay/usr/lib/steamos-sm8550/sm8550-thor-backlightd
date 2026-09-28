@@ -18,9 +18,9 @@ Mode / Desktop start scripts re-enable the touchscreen.
 
 AYN button: InputPlumber leaves gpio-keys-ayn alone on the Thor (see the
 devices.d override written by apply-overlays.sh); this grabs it and each
-press of KEY_F24 toggles OVERLAY. thor-dashboard shows itself over whatever
-the bottom screen holds while OVERLAY is "1" (and writes "0" itself if an
-idle time is set). While the overlay is up the bottom screen is on even if
+press of KEY_F24 toggles OVERLAY. Barry Launcher's dashboard shows itself
+over whatever the bottom screen holds while OVERLAY is "1" (and writes "0"
+itself if an idle time is set). While the overlay is up the bottom screen is on even if
 the switch says off; afterwards it returns to the switch's state.
 """
 from __future__ import annotations

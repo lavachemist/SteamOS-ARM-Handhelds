@@ -1,0 +1,8 @@
+#!/bin/bash
+# barry_launcher_dashboard: Barry Launcher's performance dashboard for the
+# AYN Thor's bottom screen. A QML host (host.qml) that shows the chosen skin
+# while the AYN button's flag is up; stats come from barry_launcher_statsd.
+# Skins: see README.md there. X11 client inside Barry Launcher's gamescope,
+# EGL for the GPU.
+export QT_QPA_PLATFORM=xcb QT_XCB_GL_INTEGRATION=xcb_egl
+exec qml6 /usr/share/barry_launcher/dashboard/host.qml

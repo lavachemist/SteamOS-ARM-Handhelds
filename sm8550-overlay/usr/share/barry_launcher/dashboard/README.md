@@ -1,16 +1,17 @@
-# Thor dashboard skins
+# Barry Launcher dashboard skins
 
-The AYN button shows the performance dashboard on the Thor's bottom screen.
+The AYN button shows Barry Launcher's performance dashboard on the Thor's
+bottom screen.
 What it looks like is a *skin*: a folder of QML (Qt 6.8, QtQuick). No
 building and no Python needed.
 
 ## Where skins live
 
-- `~/.local/share/thor-dashboard/skins/<name>/`: yours
-- `/usr/share/steamos-sm8550/thor-dashboard/skins/<name>/`: built in (`ayn`)
+- `~/.local/share/barry_launcher/skins/<name>/`: yours
+- `/usr/share/barry_launcher/dashboard/skins/<name>/`: built in (`ayn`)
 
 A user skin with the same name as a built-in one replaces it. The chosen skin
-is in `~/.config/thor-dashboard/settings.json`:
+is in `~/.config/barry_launcher/settings.json`:
 
 ```json
 { "skin": "ayn", "idleSeconds": 0 }
@@ -83,4 +84,4 @@ Rectangle {
 The built-in `ayn` skin is a fuller example.
 
 If a skin fails to load, the dashboard falls back to the built-in one; the
-error is in the user journal (`journalctl --user -u sm8550-bottom-session`).
+error is in the user journal (`journalctl --user -u barry_launcher_session`).

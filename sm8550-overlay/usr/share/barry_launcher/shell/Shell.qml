@@ -1,7 +1,7 @@
-// The AYN Thor bottom screen's home during Game Mode: the first window of
-// the bottom session, under everything else. Tiles start the bottom screen's
-// apps through thor-shelld (Firefox for now); closing an app's last window
-// comes back here. Because this window is always shown, gamescope falls back
+// Barry Launcher's home screen on the AYN Thor's bottom screen during Game
+// Mode: the first window of barry_launcher_session, under everything else.
+// Tiles start the bottom screen's apps through barry_launcher_shelld (Firefox
+// for now); closing an app's last window comes back here. Because this window is always shown, gamescope falls back
 // to it when an overlay such as the dashboard hides, instead of freezing on
 // the overlay's last frame.
 import QtQuick
@@ -9,7 +9,7 @@ import QtQuick.Window
 
 Window {
     id: win
-    title: "Bottom Screen"
+    title: "Barry Launcher"
     color: "black"
     visibility: Window.FullScreen
     visible: true

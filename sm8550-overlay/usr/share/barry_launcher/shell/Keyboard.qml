@@ -1,8 +1,8 @@
 pragma ComponentBehavior: Bound
-// On-screen keyboard for the AYN Thor's bottom screen. thor-shelld shows it
-// when a text field gets focus (AT-SPI), marks this window as a gamescope
-// overlay that leaves key focus on the app below, and types what is tapped
-// there through XTest. Covers the screen while up: keys on the lower (or,
+// Barry Launcher's on-screen keyboard for the AYN Thor's bottom screen.
+// barry_launcher_shelld shows it when a text field gets focus (AT-SPI),
+// marks this window as a gamescope overlay that leaves key focus on the app
+// below, and types what is tapped there through XTest. Covers the screen while up: keys on the lower (or,
 // for a field in the lower half, upper) part; tapping the rest hides it.
 // The window stays mapped and hides by opacity, as Steam's overlay does
 // (gamescope ignores property changes on unmapped windows).
@@ -11,7 +11,7 @@ import QtQuick.Window
 
 Window {
     id: win
-    title: "Thor Keyboard"
+    title: "Barry Launcher Keyboard"
     flags: Qt.WindowDoesNotAcceptFocus
     color: "transparent"
     visibility: Window.FullScreen

@@ -610,6 +610,15 @@ fi
 # another target may carry a stale copy, so remove it on other SoCs.
 # ---------------------------------------------------------------------------
 SM8550_OVL="${ROOT}/sm8550-overlay"
+# Barry Launcher's files under the names earlier builds used.
+remove_old_bottom_session() {
+  rm -rf "$R/usr/share/steamos-sm8550/thor-dashboard" "$R/usr/share/steamos-sm8550/bottom-shell"
+  rm -f "$R/usr/share/steamos-sm8550/bottom-home.qml" \
+    "$R/usr/lib/steamos-sm8550/thor-dashboard" "$R/usr/lib/steamos-sm8550/thor-statsd" \
+    "$R/usr/lib/steamos-sm8550/thor-shelld" "$R/usr/lib/steamos-sm8550/sm8550-bottom-session" \
+    "$R/usr/lib/systemd/user/sm8550-bottom-session.service" \
+    "$R/usr/lib/systemd/user/gamescope-session.target.wants/sm8550-bottom-session.service"
+}
 if [[ "$SOC" == sm8550 ]]; then
   log "== SM8550 overlay (fan curve, power button, steamos-manager devices, Thor touch)"
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-fand" \
@@ -630,25 +639,22 @@ if [[ "$SOC" == sm8550 ]]; then
     "$R/usr/lib/steamos-sm8550/sm8550-touch-inhibit" 0755
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-run-bottom" \
     "$R/usr/lib/steamos-sm8550/sm8550-run-bottom" 0755
-  for f in thor-dashboard thor-statsd thor-shelld; do
-    install_file "$SM8550_OVL/usr/lib/steamos-sm8550/$f" "$R/usr/lib/steamos-sm8550/$f" 0755
+  # Barry Launcher: the AYN Thor bottom screen's home screen, apps, keyboard
+  # and performance dashboard. Replaced whole, so removed files do not
+  # linger; earlier builds' names (thor-*, sm8550-bottom-session) go.
+  remove_old_bottom_session
+  rm -rf "$R/usr/lib/barry_launcher" "$R/usr/share/barry_launcher"
+  mkdir -p "$R/usr/lib/barry_launcher" "$R/usr/share"
+  for f in barry_launcher_session barry_launcher_dashboard barry_launcher_statsd barry_launcher_shelld; do
+    install_file "$SM8550_OVL/usr/lib/barry_launcher/$f" "$R/usr/lib/barry_launcher/$f" 0755
   done
-  # The dashboard's QML host and built-in skins, and the bottom screen's
-  # shell and keyboard. Replaced whole, so removed files do not linger.
-  mkdir -p "$R/usr/share/steamos-sm8550"
-  rm -f "$R/usr/share/steamos-sm8550/bottom-home.qml"
-  for d in thor-dashboard bottom-shell; do
-    rm -rf "$R/usr/share/steamos-sm8550/$d"
-    cp -r "$SM8550_OVL/usr/share/steamos-sm8550/$d" "$R/usr/share/steamos-sm8550/"
-    chmod -R u=rwX,go=rX "$R/usr/share/steamos-sm8550/$d"
-  done
-  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-bottom-session" \
-    "$R/usr/lib/steamos-sm8550/sm8550-bottom-session" 0755
-  install_file "$SM8550_OVL/usr/lib/systemd/user/sm8550-bottom-session.service" \
-    "$R/usr/lib/systemd/user/sm8550-bottom-session.service" 0644
+  cp -r "$SM8550_OVL/usr/share/barry_launcher" "$R/usr/share/"
+  chmod -R u=rwX,go=rX "$R/usr/share/barry_launcher"
+  install_file "$SM8550_OVL/usr/lib/systemd/user/barry_launcher.service" \
+    "$R/usr/lib/systemd/user/barry_launcher.service" 0644
   mkdir -p "$R/usr/lib/systemd/user/gamescope-session.target.wants"
-  ln -sfn ../sm8550-bottom-session.service \
-    "$R/usr/lib/systemd/user/gamescope-session.target.wants/sm8550-bottom-session.service"
+  ln -sfn ../barry_launcher.service \
+    "$R/usr/lib/systemd/user/gamescope-session.target.wants/barry_launcher.service"
   # AYN Thor: InputPlumber leaves the AYN button to sm8550-thor-backlightd,
   # which uses it to show the bottom-screen dashboard.
   ip_thor="$R/usr/share/inputplumber/devices/50-ayn_thor.yaml"
@@ -683,9 +689,9 @@ if [[ "$SOC" == sm8550 ]]; then
     ln -sfn ../$u "$R/usr/lib/systemd/system/multi-user.target.wants/$u"
   done
 else
+  remove_old_bottom_session
   rm -rf "$R/usr/lib/steamos-sm8550" "$R/usr/share/sm8550-fand" \
-    "$R/usr/share/steamos-sm8550/thor-dashboard" "$R/usr/share/steamos-sm8550/bottom-shell" \
-    "$R/usr/share/steamos-sm8550/bottom-home.qml"
+    "$R/usr/lib/barry_launcher" "$R/usr/share/barry_launcher"
   rm -f "$R/usr/share/steamos-manager/devices/retroid-pocket6.toml" \
     "$R/usr/share/steamos-manager/devices/ayn-thor.toml" \
     "$R/usr/lib/udev/rules.d/72-sm8550-touch-inhibit.rules" \
@@ -694,8 +700,8 @@ else
     "$R/usr/lib/systemd/system/sm8550-fand.service" \
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-fand.service" \
     "$R/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules" \
-    "$R/usr/lib/systemd/user/sm8550-bottom-session.service" \
-    "$R/usr/lib/systemd/user/gamescope-session.target.wants/sm8550-bottom-session.service" \
+    "$R/usr/lib/systemd/user/barry_launcher.service" \
+    "$R/usr/lib/systemd/user/gamescope-session.target.wants/barry_launcher.service" \
     "$R/etc/inputplumber/devices.d/50-ayn_thor.yaml" \
     "$R/var/lib/overlays/etc/upper/inputplumber/devices.d/50-ayn_thor.yaml" \
     "$R/usr/lib/systemd/system/sm8550-thor-backlightd.service" \

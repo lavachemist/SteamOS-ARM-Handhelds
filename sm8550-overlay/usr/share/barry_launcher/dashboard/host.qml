@@ -1,14 +1,15 @@
-// thor-dashboard host: shows the chosen skin over the AYN Thor's bottom
-// screen while the AYN button's flag is up (sm8550-thor-backlightd toggles
-// it), and hides again when the flag drops, or after the idle time if one is
-// set. Stats, the flag and the settings come from thor-statsd over HTTP, so
-// a skin is a plain QML folder; see README.md next to this file.
+// Barry Launcher dashboard host: shows the chosen skin over the AYN Thor's
+// bottom screen while the AYN button's flag is up (sm8550-thor-backlightd
+// toggles it), and hides again when the flag drops, or after the idle time
+// if one is set. Stats, the flag and the settings come from
+// barry_launcher_statsd over HTTP, so a skin is a plain QML folder; see
+// README.md next to this file.
 import QtQuick
 import QtQuick.Window
 
 Window {
     id: win
-    title: "Thor Dashboard"
+    title: "Barry Launcher Dashboard"
     color: "#0d0e12"
     visible: false
     width: 1240
@@ -32,7 +33,7 @@ Window {
         function hide() { win.request("POST", "/overlay", { shown: false }); win.close() }
         // Count as activity for the idle timeout (host touches count already).
         function poke() { win.lastActivity = Date.now() }
-        // Raw access to thor-statsd for anything newer than this host.
+        // Raw access to barry_launcher_statsd for anything newer than this host.
         function request(method, path, body, callback) { win.request(method, path, body, callback) }
     }
 

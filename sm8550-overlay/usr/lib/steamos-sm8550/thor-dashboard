@@ -1,7 +1,0 @@
-#!/bin/bash
-# thor-dashboard: performance dashboard for the AYN Thor's bottom screen.
-# A QML host (host.qml) that shows the chosen skin while the AYN button's
-# flag is up; stats come from thor-statsd. Skins: see README.md there.
-# X11 client inside the bottom session's gamescope, EGL for the GPU.
-export QT_QPA_PLATFORM=xcb QT_XCB_GL_INTEGRATION=xcb_egl
-exec qml6 /usr/share/steamos-sm8550/thor-dashboard/host.qml
