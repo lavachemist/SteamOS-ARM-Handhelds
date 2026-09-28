@@ -176,6 +176,24 @@ if [[ -z "$OUTPUT" ]]; then
   OUTPUT="${OUTPUT:-DSI-1}"
 fi
 
+# Two panels (AYN Thor): gamescope takes the first backlight it finds, which is
+# the bottom panel's, so Steam's slider dimmed the dark screen. Point it at the
+# backlight of the panel it drives (DSI-1 = mdss_dsi0 @ ae94000, DSI-2 =
+# mdss_dsi1 @ ae96000; Armada's ayn-thor.conf pairs them the same way).
+if [[ -z "${GAMESCOPE_BACKLIGHT_PATH:-}" ]]; then
+  backlights=(/sys/class/backlight/*)
+  if (( ${#backlights[@]} > 1 )); then
+    case "$OUTPUT" in
+      DSI-1) bl=/sys/class/backlight/ae94000.dsi.0 ;;
+      DSI-2) bl=/sys/class/backlight/ae96000.dsi.0 ;;
+      *) bl= ;;
+    esac
+    if [[ -n "$bl" && -e "$bl" ]]; then
+      export GAMESCOPE_BACKLIGHT_PATH="$bl"
+    fi
+  fi
+fi
+
 if [[ "$PANEL_H" -gt "$PANEL_W" ]]; then
   W="${GAMESCOPE_WIDTH:-$PANEL_H}"
   H="${GAMESCOPE_HEIGHT:-$PANEL_W}"
