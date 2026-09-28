@@ -3,7 +3,8 @@
 # wlroots/libdrm/vulkan), like build-box64-in-rootfs.sh.
 #
 # The vendored MSM port targets upstream 6edb42b (3.16.30 + 2 commits).
-# Subprojects must come from the same revision.
+# Subprojects must come from the same revision. 6edb42b is no longer on
+# GitHub ("not our ref"), so take them from the 3.16.30 tag.
 #
 # Usage: build-gamescope-in-rootfs.sh <rootfs> [build-dir]
 set -euo pipefail
@@ -15,7 +16,7 @@ WORKDIR="${STEAMOS_WORK:-/work}"
 BUILD="${2:-${WORKDIR}/gamescope-build}"
 SRC="${WORKDIR}/gamescope-src"
 SUBS="${WORKDIR}/gamescope-subprojects"
-UPSTREAM_REF="6edb42bffacb9650c0b3fd63fe2eee3c5f43c75a"
+UPSTREAM_REF="3.16.30"
 
 log() { printf '==> [gamescope] %s\n' "$*"; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }

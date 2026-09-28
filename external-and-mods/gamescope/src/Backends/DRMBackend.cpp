@@ -9,7 +9,10 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <poll.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 
+#include <array>
 #include <atomic>
 #include <cassert>
 #include <cinttypes>
@@ -23,6 +26,8 @@
 #include <span>
 #include <string>
 #include <thread>
+#include <chrono>
+#include <condition_variable>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -163,6 +168,19 @@ struct drm_t {
 	std::unordered_map< std::string, int > connector_priorities;
 
 	char *device_name = nullptr;
+
+	// DRM lease support: track resources leased to companion apps
+	std::unordered_set< uint32_t > leasedConnectorIds;
+	std::unordered_set< uint32_t > leasedCRTCIds;
+	std::unordered_set< uint32_t > leasedPlaneIds;
+	uint32_t uLeaseId = 0;
+	int nLeaseFd = -1;
+	uint32_t uLeasedConnectorId = 0;
+	std::string sLeasedConnectorName;
+	std::array< std::pair< uint32_t, uint32_t >, 5 > leaseBlankProperties = {};
+	int nLeaseSocketFd = -1;
+	std::atomic<bool> bLeaseThreadRunning = { false };
+	std::string sLeaseSocketPath;
 };
 
 void drm_drop_fbid( struct drm_t *drm, uint32_t fbid );
@@ -178,6 +196,10 @@ struct drm_t g_DRM = {};
 // thread still using the DRM fd while we clean up.
 static std::thread g_page_flip_handler_thread;
 static std::atomic<bool> g_page_flip_handler_thread_should_exit{false};
+static std::atomic<bool> g_page_flip_handler_thread_parked{false};
+static const void *g_pPresentCtxs[3] = {};
+// Serializes Present() against suspension of a lease-client companion.
+static std::mutex g_leasePresentMutex;
 
 static int g_page_flip_pipe_fds[2] = { -1, -1 };
 
@@ -656,11 +678,82 @@ static gamescope::CDRMCRTC *find_crtc_for_connector( struct drm_t *drm, gamescop
 {
 	for ( std::unique_ptr< gamescope::CDRMCRTC > &pCRTC : drm->crtcs )
 	{
+		if ( drm->leasedCRTCIds.contains( pCRTC->GetObjectId() ) )
+			continue;
 		if ( pConnector->GetPossibleCRTCMask() & pCRTC->GetCRTCMask() )
 			return pCRTC.get();
 	}
 
 	return nullptr;
+}
+
+static bool drm_detach_lease_resources(
+	struct drm_t *drm,
+	gamescope::CDRMConnector *pLeaseConnector,
+	gamescope::CDRMCRTC *pLeaseCRTC,
+	gamescope::CDRMPlane *pLeasePlane )
+{
+	// A lease must not split an existing pipeline across lessor and lessee.
+	// Atomically disable every CRTC currently connected to a leased object,
+	// along with all connectors and planes using those CRTCs.
+	std::unordered_set< uint64_t > affectedCRTCIds = {
+		pLeaseCRTC->GetObjectId(),
+		pLeaseConnector->GetProperties().CRTC_ID->GetCurrentValue(),
+		pLeasePlane->GetProperties().CRTC_ID->GetCurrentValue(),
+	};
+	affectedCRTCIds.erase( 0 );
+
+	drmModeAtomicReq *pRequest = drmModeAtomicAlloc();
+	if ( !pRequest )
+		return false;
+	defer( drmModeAtomicFree( pRequest ) );
+
+	std::vector< gamescope::CDRMAtomicProperty * > changedProperties;
+	bool bValid = true;
+	auto SetProperty = [&]( gamescope::CDRMAtomicProperty &property, uint64_t uValue )
+	{
+		if ( property.SetPendingValue( pRequest, uValue, true ) < 0 )
+			bValid = false;
+		else
+			changedProperties.push_back( &property );
+	};
+
+	for ( auto &iter : drm->connectors )
+	{
+		gamescope::CDRMConnector *pConnector = &iter.second;
+		if ( affectedCRTCIds.contains( pConnector->GetProperties().CRTC_ID->GetCurrentValue() ) )
+			SetProperty( *pConnector->GetProperties().CRTC_ID, 0 );
+	}
+
+	for ( const std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
+	{
+		if ( affectedCRTCIds.contains( pPlane->GetProperties().CRTC_ID->GetCurrentValue() ) )
+		{
+			SetProperty( *pPlane->GetProperties().FB_ID, 0 );
+			SetProperty( *pPlane->GetProperties().CRTC_ID, 0 );
+		}
+	}
+
+	for ( const std::unique_ptr< gamescope::CDRMCRTC > &pCRTC : drm->crtcs )
+	{
+		if ( affectedCRTCIds.contains( pCRTC->GetObjectId() ) )
+		{
+			SetProperty( *pCRTC->GetProperties().ACTIVE, 0 );
+			SetProperty( *pCRTC->GetProperties().MODE_ID, 0 );
+		}
+	}
+
+	if ( !bValid || drmModeAtomicCommit( drm->fd, pRequest, DRM_MODE_ATOMIC_ALLOW_MODESET, nullptr ) != 0 )
+	{
+		for ( gamescope::CDRMAtomicProperty *pProperty : changedProperties )
+			pProperty->Rollback();
+		return false;
+	}
+
+	for ( gamescope::CDRMAtomicProperty *pProperty : changedProperties )
+		pProperty->OnCommit();
+
+	return true;
 }
 
 static bool get_plane_formats( struct drm_t *drm, gamescope::CDRMPlane *pPlane, struct wlr_drm_format_set *pFormatSet )
@@ -730,6 +823,8 @@ static gamescope::CDRMPlane *find_primary_plane(struct drm_t *drm)
 
 	for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
 	{
+		if ( drm->leasedPlaneIds.contains( pPlane->GetObjectId() ) )
+			continue;
 		if ( pPlane->GetModePlane()->possible_crtcs & drm->pCRTC->GetCRTCMask() )
 		{
 			if ( pPlane->GetProperties().type->GetCurrentValue() == DRM_PLANE_TYPE_PRIMARY )
@@ -759,6 +854,8 @@ static bool have_overlay_planes(struct drm_t *drm)
 
 	for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
 	{
+		if ( drm->leasedPlaneIds.contains( pPlane->GetObjectId() ) )
+			continue;
 		if ( pPlane->GetModePlane()->possible_crtcs & drm->pCRTC->GetCRTCMask() )
 		{
 			if ( pPlane->GetProperties().type->GetCurrentValue() == DRM_PLANE_TYPE_OVERLAY )
@@ -772,6 +869,10 @@ static bool have_overlay_planes(struct drm_t *drm)
 extern void mangoapp_output_update( uint64_t vblanktime );
 static void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsigned int usec, unsigned int crtc_id, void *data)
 {
+	// A lease fd is shared with the other holders, whose events carry
+	// their own user data.
+	if ( data != g_pPresentCtxs[0] && data != g_pPresentCtxs[1] && data != g_pPresentCtxs[2] )
+		return;
 	DRMPresentCtx *pCtx = reinterpret_cast<DRMPresentCtx *>( data );
 
 	// Make this const when we move into CDRMBackend.
@@ -832,7 +933,11 @@ void flip_handler_thread_run(void)
 
 	while ( !g_page_flip_handler_thread_should_exit.load( std::memory_order_acquire ) )
 	{
-		int ret = poll( fds, nfds, -1 );
+		// A suspended companion leaves the shared event queue to the holder,
+		// once its own last flip has been drained.
+		const bool bSuspended = drm_lease_client_suspended() && g_DRM.uPendingFlipCount.load() == 0;
+		g_page_flip_handler_thread_parked.store( bSuspended, std::memory_order_release );
+		int ret = bSuspended ? poll( &fds[1], 1, 100 ) : poll( fds, nfds, g_sDrmLeaseClientSocket ? 100 : -1 );
 		if ( ret < 0 ) {
 			if ( errno == EINTR )
 				continue;
@@ -845,7 +950,7 @@ void flip_handler_thread_run(void)
 			break;
 		}
 
-		if ( (fds[0].revents & POLLIN) ) {
+		if ( !bSuspended && (fds[0].revents & POLLIN) ) {
 			drmEventContext evctx = {
 				.version = 3,
 				.page_flip_handler2 = page_flip_handler,
@@ -1352,6 +1457,9 @@ static bool setup_best_connector(struct drm_t *drm, bool force, bool initial)
 	{
 		gamescope::CDRMConnector *pConnector = &iter.second;
 
+		if ( drm->leasedConnectorIds.contains( pConnector->GetObjectId() ) )
+			continue;
+
 		if ( pConnector->GetModeConnector()->connection != DRM_MODE_CONNECTED )
 			continue;
 
@@ -1535,6 +1643,242 @@ gamescope_liftoff_log_handler(enum liftoff_log_priority liftoff_priority, const 
 	liftoff_log_scope.vlogf(priority, fmt, args);
 }
 
+static std::mutex g_leaseClientMutex;
+static std::condition_variable g_leaseClientCv;
+static int g_nLeaseClientFd = -1;
+static bool g_bLeaseClientWantsTouch = false;
+static bool g_bLeaseClientYields = false;
+static bool g_bLeaseClientSuspendPending = false;
+static bool g_bLeaseClientSuspended = false;
+static uint64_t g_uLeaseClientGeneration = 0;
+
+static bool lease_send_fd( int nClientFd, int nLeaseFd )
+{
+	union {
+		char buf[ CMSG_SPACE( sizeof(int) ) ];
+		struct cmsghdr align;
+	} control = {};
+	char data = 'L';
+	struct iovec iov = { .iov_base = &data, .iov_len = 1 };
+	struct msghdr msg = {
+		.msg_iov = &iov,
+		.msg_iovlen = 1,
+		.msg_control = control.buf,
+		.msg_controllen = sizeof( control.buf ),
+	};
+	struct cmsghdr *cmsg = CMSG_FIRSTHDR( &msg );
+	cmsg->cmsg_level = SOL_SOCKET;
+	cmsg->cmsg_type = SCM_RIGHTS;
+	cmsg->cmsg_len = CMSG_LEN( sizeof(int) );
+	memcpy( CMSG_DATA( cmsg ), &nLeaseFd, sizeof(int) );
+
+	return sendmsg( nClientFd, &msg, MSG_NOSIGNAL ) == 1;
+}
+
+static void lease_disconnect_client( int &nClientFd )
+{
+	if ( nClientFd < 0 )
+		return;
+
+	{
+		std::lock_guard lock( g_leaseClientMutex );
+		g_nLeaseClientFd = -1;
+		g_bLeaseClientWantsTouch = false;
+		g_bLeaseClientYields = false;
+		g_bLeaseClientSuspendPending = false;
+		g_bLeaseClientSuspended = false;
+		g_uLeaseClientGeneration++;
+	}
+	g_leaseClientCv.notify_all();
+	close( nClientFd );
+	nClientFd = -1;
+	{
+		std::scoped_lock grantLock( g_LeaseGrantMutex );
+		if ( g_nActiveLeaseClients.fetch_sub( 1 ) == 1 )
+			drm_lease_blank();
+	}
+	drm_log.infof( "lease-connector: companion app disconnected" );
+}
+
+void drm_lease_send_touch( DrmLeaseEventType type, double x, double y, int touchId, uint32_t time )
+{
+	static_assert( sizeof( DrmLeaseEvent ) == 20 );
+	std::lock_guard lock( g_leaseClientMutex );
+	if ( !g_bLeaseClientWantsTouch || g_bLeaseClientSuspended )
+		return;
+
+	DrmLeaseEvent event = {
+		.type = type,
+		.touchId = touchId,
+		.time = time,
+		.x = static_cast<float>( x ),
+		.y = static_cast<float>( y ),
+	};
+	if ( send( g_nLeaseClientFd, &event, sizeof( event ), MSG_DONTWAIT | MSG_NOSIGNAL ) != sizeof( event ) )
+	{
+		g_bLeaseClientWantsTouch = false;
+		g_bLeaseClientYields = false;
+	}
+}
+
+// Caller holds g_leaseClientMutex.
+static bool lease_send_control( DrmLeaseEventType type )
+{
+	DrmLeaseEvent event = { .type = type };
+	if ( send( g_nLeaseClientFd, &event, sizeof( event ), MSG_DONTWAIT | MSG_NOSIGNAL ) == sizeof( event ) )
+		return true;
+	// The socket is unusable but the lease fd may still be driven; stop
+	// talking to it and let the peer's disconnect end its tenure.
+	g_bLeaseClientWantsTouch = false;
+	g_bLeaseClientYields = false;
+	return false;
+}
+
+bool drm_lease_companion_active()
+{
+	std::lock_guard lock( g_leaseClientMutex );
+	return g_nLeaseClientFd >= 0 && !g_bLeaseClientSuspended;
+}
+
+bool drm_lease_companion_suspend( int nTimeoutMs )
+{
+	std::unique_lock<std::mutex> lock( g_leaseClientMutex );
+	if ( g_nLeaseClientFd < 0 || g_bLeaseClientSuspended )
+		return true;
+	if ( !g_bLeaseClientYields || g_bLeaseClientSuspendPending )
+		return false;
+	const uint64_t uGeneration = g_uLeaseClientGeneration;
+	g_bLeaseClientSuspendPending = true;
+	if ( !lease_send_control( DrmLeaseEventType::Suspend ) )
+	{
+		g_bLeaseClientSuspendPending = false;
+		return false;
+	}
+	g_leaseClientCv.wait_for( lock, std::chrono::milliseconds( nTimeoutMs ),
+		[&] { return g_bLeaseClientSuspended || g_uLeaseClientGeneration != uGeneration; } );
+	g_bLeaseClientSuspendPending = false;
+	if ( g_uLeaseClientGeneration != uGeneration )
+		return false;
+	if ( !g_bLeaseClientSuspended )
+	{
+		drm_log.infof( "lease-connector: companion did not suspend in time" );
+		lease_send_control( DrmLeaseEventType::Resume );
+		return false;
+	}
+	return true;
+}
+
+void drm_lease_companion_resume()
+{
+	std::lock_guard lock( g_leaseClientMutex );
+	if ( g_nLeaseClientFd < 0 || !g_bLeaseClientSuspended )
+		return;
+	g_bLeaseClientSuspended = false;
+	if ( lease_send_control( DrmLeaseEventType::Resume ) )
+		drm_log.infof( "lease-connector: companion resumed" );
+}
+
+static void lease_socket_thread_run( struct drm_t *drm )
+{
+	pthread_setname_np( pthread_self(), "gs-lease-sock" );
+	int nClientFd = -1;
+
+	while ( drm->bLeaseThreadRunning.load() )
+	{
+		struct pollfd pfds[2] = {
+			{ .fd = drm->nLeaseSocketFd, .events = POLLIN },
+			{ .fd = nClientFd, .events = POLLIN },
+		};
+		int ret = poll( pfds, nClientFd >= 0 ? 2 : 1, 1000 );
+		if ( ret <= 0 )
+			continue;
+
+		if ( nClientFd >= 0 && pfds[1].revents & ( POLLHUP | POLLERR | POLLNVAL ) )
+			lease_disconnect_client( nClientFd );
+
+		if ( nClientFd >= 0 && pfds[1].revents & POLLIN )
+		{
+			char request = 0;
+			ssize_t nRead = recv( nClientFd, &request, 1, MSG_DONTWAIT );
+			if ( nRead == 0 )
+				lease_disconnect_client( nClientFd );
+			else if ( nRead < 0 && errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK )
+				lease_disconnect_client( nClientFd );
+			else if ( request == 'I' )
+			{
+				std::lock_guard lock( g_leaseClientMutex );
+				g_bLeaseClientWantsTouch = true;
+				drm_log.infof( "lease-connector: companion requested touch input" );
+			}
+			else if ( request == 'Y' )
+			{
+				std::lock_guard lock( g_leaseClientMutex );
+				g_bLeaseClientYields = true;
+				drm_log.infof( "lease-connector: companion yields to drm-lease-v1 clients" );
+			}
+			else if ( request == 'A' )
+			{
+				bool bExpected;
+				{
+					std::lock_guard lock( g_leaseClientMutex );
+					bExpected = g_bLeaseClientSuspendPending;
+					if ( bExpected )
+						g_bLeaseClientSuspended = true;
+				}
+				g_leaseClientCv.notify_all();
+				if ( bExpected )
+					drm_log.infof( "lease-connector: companion suspended" );
+			}
+		}
+
+		if ( !( pfds[0].revents & POLLIN ) )
+			continue;
+
+		int nAcceptedFd = accept4( drm->nLeaseSocketFd, nullptr, nullptr, SOCK_CLOEXEC );
+		if ( nAcceptedFd < 0 )
+			continue;
+		if ( nClientFd >= 0 )
+		{
+			send( nAcceptedFd, "B", 1, MSG_NOSIGNAL );
+			close( nAcceptedFd );
+			drm_log.infof( "lease-connector: rejected companion while lease is busy" );
+			continue;
+		}
+
+		std::unique_lock<std::mutex> grantLock( g_LeaseGrantMutex );
+		if ( g_nProtocolLeaseHolders.load() > 0 )
+		{
+			grantLock.unlock();
+			drm_log.infof( "lease-connector: refusing socket companion, lease is held via drm-lease-v1" );
+			close( nAcceptedFd );
+			continue;
+		}
+		if ( !lease_send_fd( nAcceptedFd, drm->nLeaseFd ) )
+		{
+			grantLock.unlock();
+			drm_log.errorf( "lease-connector: sendmsg failed: %s", strerror( errno ) );
+			close( nAcceptedFd );
+			continue;
+		}
+
+		nClientFd = nAcceptedFd;
+		{
+			std::lock_guard lock( g_leaseClientMutex );
+			g_nLeaseClientFd = nClientFd;
+			g_bLeaseClientWantsTouch = false;
+			g_bLeaseClientYields = false;
+			g_bLeaseClientSuspendPending = false;
+			g_bLeaseClientSuspended = false;
+			g_uLeaseClientGeneration++;
+		}
+		g_nActiveLeaseClients.fetch_add( 1 );
+		grantLock.unlock();
+		drm_log.infof( "lease-connector: sent lease fd to companion app" );
+	}
+
+	lease_disconnect_client( nClientFd );
+}
+
 bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 {
 	load_pnps();
@@ -1625,12 +1969,6 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 		return false;
 	}
 
-	drm->lo_device = liftoff_device_create( drm->fd );
-	if ( drm->lo_device == nullptr )
-		return false;
-	if ( liftoff_device_register_all_planes( drm->lo_device ) < 0 )
-		return false;
-	
 	drm_log.infof("Connectors:");
 	for ( auto &iter : drm->connectors )
 	{
@@ -1644,6 +1982,244 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 	}
 
 	drm->connector_priorities = parse_connector_priorities( g_sOutputName );
+
+	// DRM lease: if --lease-connector was specified, find the connector and
+	// create a lease for it so a companion app can drive it independently.
+	// This must happen BEFORE liftoff plane registration so leased planes
+	// are excluded from liftoff's pool.
+	if ( g_sLeaseConnectorName && g_sLeaseConnectorName[0] != '\0' )
+	{
+		gamescope::CDRMConnector *pLeaseConnector = nullptr;
+		for ( auto &iter : drm->connectors )
+		{
+			if ( strcmp( iter.second.GetName(), g_sLeaseConnectorName ) == 0 )
+			{
+				pLeaseConnector = &iter.second;
+				break;
+			}
+		}
+
+		if ( !pLeaseConnector )
+		{
+			drm_log.errorf( "lease-connector: connector '%s' not found", g_sLeaseConnectorName );
+		}
+		else if ( pLeaseConnector->GetModeConnector()->connection != DRM_MODE_CONNECTED )
+		{
+			drm_log.errorf( "lease-connector: connector '%s' is not connected", g_sLeaseConnectorName );
+		}
+		else
+		{
+			// Find the preferred CRTC for the main (non-leased) connector
+			// so we can avoid stealing it for the lease.  The first matching
+			// CRTC typically has the color-capable primary plane
+			// (AMD_PLANE_CTM / AMD_PLANE_BLEND_TF).
+			gamescope::CDRMConnector *pMainConnector = nullptr;
+			for ( auto &iter : drm->connectors )
+			{
+				if ( &iter.second == pLeaseConnector )
+					continue;
+				if ( iter.second.GetModeConnector()->connection != DRM_MODE_CONNECTED )
+					continue;
+				pMainConnector = &iter.second;
+				break;
+			}
+
+			uint32_t uMainPreferredCRTCId = 0;
+			if ( pMainConnector )
+			{
+				gamescope::CDRMCRTC *pMainCRTC = find_crtc_for_connector( drm, pMainConnector );
+				if ( pMainCRTC )
+				{
+					uMainPreferredCRTCId = pMainCRTC->GetObjectId();
+					drm_log.infof( "lease-connector: main connector '%s' prefers CRTC %u",
+						pMainConnector->GetName(), uMainPreferredCRTCId );
+				}
+			}
+
+			// Pick a CRTC for the lease that is NOT the main connector's
+			// preferred CRTC, so the main display keeps its color-capable plane.
+			gamescope::CDRMCRTC *pLeaseCRTC = nullptr;
+			for ( auto &pCRTC : drm->crtcs )
+			{
+				if ( pCRTC->GetObjectId() == uMainPreferredCRTCId )
+					continue;
+				if ( pLeaseConnector->GetPossibleCRTCMask() & pCRTC->GetCRTCMask() )
+				{
+					pLeaseCRTC = pCRTC.get();
+					break;
+				}
+			}
+			// Fall back to any available CRTC if the above found nothing
+			if ( !pLeaseCRTC )
+				pLeaseCRTC = find_crtc_for_connector( drm, pLeaseConnector );
+
+			if ( !pLeaseCRTC )
+			{
+				drm_log.errorf( "lease-connector: no CRTC available for '%s'", g_sLeaseConnectorName );
+			}
+			else
+			{
+				uint32_t uConnectorId = pLeaseConnector->GetObjectId();
+				uint32_t uCRTCId = pLeaseCRTC->GetObjectId();
+
+				// Find a PRIMARY plane for the leased CRTC. The kernel allows any
+				// plane in the lease, but on AMD the lessee (flip-companion) needs
+				// a primary plane to enable the CRTC for scanout — leasing only
+				// an overlay leaves both screens blank because the companion
+				// cannot bring up its display, and gamescope's main-CRTC state
+				// also degrades. So: primary only.
+				//
+				// Priority among primaries:
+				//   1. exclusive primary (possible_crtcs == leased CRTC mask only)
+				//      — the main pool keeps every primary it could already use.
+				//   2. shared primary
+				//      — costs the main pool one primary slot.
+				const uint32_t uLeaseCrtcMask = pLeaseCRTC->GetCRTCMask();
+				uint32_t    uPlaneId    = 0;
+				gamescope::CDRMPlane *pLeasePlane = nullptr;
+				int         nBestScore  = -1;
+				const char *pszBestKind = nullptr;
+				for ( auto &pPlane : drm->planes )
+				{
+					const uint32_t uPossibleCrtcs = pPlane->GetModePlane()->possible_crtcs;
+					if ( !( uPossibleCrtcs & uLeaseCrtcMask ) )
+						continue;
+
+					if ( pPlane->GetProperties().type->GetCurrentValue() != DRM_PLANE_TYPE_PRIMARY )
+						continue;
+
+					const bool  bExclusive = ( uPossibleCrtcs == uLeaseCrtcMask );
+					const int   nScore     = bExclusive ? 1 : 0;
+					const char *pszKind    = bExclusive ? "exclusive primary" : "shared primary";
+
+					if ( nScore > nBestScore )
+					{
+						nBestScore  = nScore;
+						uPlaneId    = pPlane->GetObjectId();
+						pLeasePlane = pPlane.get();
+						pszBestKind = pszKind;
+						if ( nScore == 1 )
+							break; // exclusive primary — best we can do
+					}
+				}
+
+				if ( uPlaneId == 0 )
+				{
+					drm_log.errorf( "lease-connector: no usable plane found for CRTC %u", uCRTCId );
+				}
+				else if ( !drm_detach_lease_resources( drm, pLeaseConnector, pLeaseCRTC, pLeasePlane ) )
+				{
+					drm_log.errorf_errno( "lease-connector: failed to prepare resources for lease" );
+				}
+				else
+				{
+				drm_log.infof( "lease-connector: selected %s plane %u for CRTC %u",
+					pszBestKind, uPlaneId, uCRTCId );
+
+				uint32_t objects[3];
+				int nObjects = 0;
+				objects[nObjects++] = uConnectorId;
+				objects[nObjects++] = uCRTCId;
+				objects[nObjects++] = uPlaneId;
+
+				uint32_t uLeaseId = 0;
+				int nLeaseFd = drmModeCreateLease( drm->fd, objects, nObjects, O_CLOEXEC, &uLeaseId );
+				if ( nLeaseFd < 0 )
+				{
+					drm_log.errorf( "lease-connector: drmModeCreateLease failed for '%s': %s",
+						g_sLeaseConnectorName, strerror( errno ) );
+				}
+				else
+				{
+					drm->leasedConnectorIds.insert( uConnectorId );
+					drm->leasedCRTCIds.insert( uCRTCId );
+					drm->leasedPlaneIds.insert( uPlaneId );
+					drm->uLeaseId = uLeaseId;
+					drm->nLeaseFd = nLeaseFd;
+					drm->uLeasedConnectorId = uConnectorId;
+					drm->sLeasedConnectorName = pLeaseConnector->GetName();
+					drm->leaseBlankProperties = {{
+						{ uConnectorId, pLeaseConnector->GetProperties().CRTC_ID->GetPropertyId() },
+						{ uCRTCId, pLeaseCRTC->GetProperties().ACTIVE->GetPropertyId() },
+						{ uCRTCId, pLeaseCRTC->GetProperties().MODE_ID->GetPropertyId() },
+						{ uPlaneId, pLeasePlane->GetProperties().FB_ID->GetPropertyId() },
+						{ uPlaneId, pLeasePlane->GetProperties().CRTC_ID->GetPropertyId() },
+					}};
+
+					drm_log.infof( "lease-connector: leased '%s' (connector=%u, crtc=%u, plane=%u) -> fd=%d, lessee=%u",
+						g_sLeaseConnectorName, uConnectorId, uCRTCId, uPlaneId, nLeaseFd, uLeaseId );
+
+					// Set up Unix socket to pass lease fd to companion app via SCM_RIGHTS
+					const char *pszLeaseSocketPath = getenv( "GAMESCOPE_LEASE_SOCK" );
+					if ( !pszLeaseSocketPath )
+						pszLeaseSocketPath = "/tmp/gamescope-lease.sock";
+
+					unlink( pszLeaseSocketPath );
+
+					int nSockFd = socket( AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0 );
+					if ( nSockFd < 0 )
+					{
+						drm_log.errorf( "lease-connector: socket() failed: %s", strerror( errno ) );
+					}
+					else
+					{
+						struct sockaddr_un addr = {};
+						addr.sun_family = AF_UNIX;
+						strncpy( addr.sun_path, pszLeaseSocketPath, sizeof( addr.sun_path ) - 1 );
+
+						if ( bind( nSockFd, (struct sockaddr *)&addr, sizeof( addr ) ) < 0 )
+						{
+							drm_log.errorf( "lease-connector: bind('%s') failed: %s", pszLeaseSocketPath, strerror( errno ) );
+							close( nSockFd );
+						}
+						else if ( listen( nSockFd, 1 ) < 0 )
+						{
+							drm_log.errorf( "lease-connector: listen failed: %s", strerror( errno ) );
+							close( nSockFd );
+							unlink( pszLeaseSocketPath );
+						}
+						else
+						{
+							drm->nLeaseSocketFd = nSockFd;
+							drm->sLeaseSocketPath = pszLeaseSocketPath;
+							drm->bLeaseThreadRunning = true;
+							std::thread lease_thread( lease_socket_thread_run, drm );
+							lease_thread.detach();
+
+							drm_log.infof( "lease-connector: listening on '%s' for companion app", pszLeaseSocketPath );
+						}
+					}
+				}
+				} // closes uPlaneId else
+			}
+		}
+	}
+
+	// Initialize liftoff AFTER lease creation so we can skip leased planes.
+	drm->lo_device = liftoff_device_create( drm->fd );
+	if ( drm->lo_device == nullptr )
+		return false;
+
+	// Register planes individually, skipping any that are leased.
+	{
+		drmModePlaneRes *pPlaneRes = drmModeGetPlaneResources( drm->fd );
+		if ( pPlaneRes == nullptr )
+			return false;
+		for ( uint32_t i = 0; i < pPlaneRes->count_planes; i++ )
+		{
+			if ( drm->leasedPlaneIds.contains( pPlaneRes->planes[i] ) )
+			{
+				drm_log.infof( "lease-connector: skipping leased plane %u from liftoff", pPlaneRes->planes[i] );
+				continue;
+			}
+			if ( liftoff_plane_create( drm->lo_device, pPlaneRes->planes[i] ) == nullptr )
+			{
+				drmModeFreePlaneResources( pPlaneRes );
+				return false;
+			}
+		}
+		drmModeFreePlaneResources( pPlaneRes );
+	}
 
 	if (!setup_best_connector(drm, true, true)) {
 		return false;
@@ -1773,6 +2349,42 @@ void drm_sleep_screen( gamescope::GamescopeScreenType eType, bool bSleep )
 
 void finish_drm(struct drm_t *drm)
 {
+	// Shut down the lease socket thread before revoking the lease
+	if ( drm->bLeaseThreadRunning.load() )
+	{
+		drm->bLeaseThreadRunning = false;
+		if ( drm->nLeaseSocketFd >= 0 )
+		{
+			shutdown( drm->nLeaseSocketFd, SHUT_RDWR );
+			close( drm->nLeaseSocketFd );
+			drm->nLeaseSocketFd = -1;
+		}
+		if ( !drm->sLeaseSocketPath.empty() )
+		{
+			unlink( drm->sLeaseSocketPath.c_str() );
+			drm->sLeaseSocketPath.clear();
+		}
+	}
+
+	// Revoke any active DRM lease before cleaning up
+	{
+		// A release on either frontend may still be blanking the leased objects.
+		std::scoped_lock grantLock( g_LeaseGrantMutex );
+		if ( drm->uLeaseId != 0 )
+		{
+			drmModeRevokeLease( drm->fd, drm->uLeaseId );
+			drm->uLeaseId = 0;
+		}
+		if ( drm->nLeaseFd >= 0 )
+		{
+			close( drm->nLeaseFd );
+			drm->nLeaseFd = -1;
+		}
+		drm->leasedConnectorIds.clear();
+		drm->leasedCRTCIds.clear();
+		drm->leasedPlaneIds.clear();
+	}
+
 	// Disable all connectors, CRTCs and planes. This is necessary to leave a
 	// clean KMS state behind. Some other KMS clients might not support all of
 	// the properties we use, e.g. "rotation" and Xorg don't play well
@@ -1783,6 +2395,9 @@ void finish_drm(struct drm_t *drm)
 	for ( auto &iter : drm->connectors )
 	{
 		gamescope::CDRMConnector *pConnector = &iter.second;
+
+		if ( drm->leasedConnectorIds.contains( pConnector->GetObjectId() ) )
+			continue;
 
 		pConnector->GetProperties().CRTC_ID->SetPendingValue( req, 0, true );
 
@@ -1803,6 +2418,9 @@ void finish_drm(struct drm_t *drm)
 
 	for ( std::unique_ptr< gamescope::CDRMCRTC > &pCRTC : drm->crtcs )
 	{
+		if ( drm->leasedCRTCIds.contains( pCRTC->GetObjectId() ) )
+			continue;
+
 		pCRTC->GetProperties().ACTIVE->SetPendingValue( req, 0, true );
 		pCRTC->GetProperties().MODE_ID->SetPendingValue( req, 0, true );
 
@@ -3432,6 +4050,8 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 		for ( auto &iter : drm->connectors )
 		{
 			gamescope::CDRMConnector *pConnector = &iter.second;
+			if ( drm->leasedConnectorIds.contains( pConnector->GetObjectId() ) )
+				continue;
 			if ( pConnector->GetProperties().CRTC_ID->GetCurrentValue() == 0 )
 				continue;
 
@@ -3452,6 +4072,8 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 
 		for ( std::unique_ptr< gamescope::CDRMCRTC > &pCRTC : drm->crtcs )
 		{
+			if ( drm->leasedCRTCIds.contains( pCRTC->GetObjectId() ) )
+				continue;
 			// We can't disable a CRTC if it's already disabled, or else the
 			// kernel will error out with "requesting event but off".
 			if ( pCRTC->GetProperties().ACTIVE->GetCurrentValue() == 0 )
@@ -3929,6 +4551,98 @@ const char *drm_get_device_name(struct drm_t *drm)
 	return drm->device_name;
 }
 
+bool drm_lease_available()
+{
+	return g_DRM.nLeaseFd >= 0;
+}
+
+int drm_lease_dup_fd()
+{
+	if ( g_DRM.nLeaseFd < 0 )
+		return -1;
+	return fcntl( g_DRM.nLeaseFd, F_DUPFD_CLOEXEC, 0 );
+}
+
+int drm_lease_open_enum_fd()
+{
+	if ( !g_DRM.device_name )
+		return -1;
+
+	int nFd = open( g_DRM.device_name, O_RDWR | O_CLOEXEC );
+	if ( nFd < 0 )
+		return -1;
+
+	// Opening the primary node implicitly grants DRM master when none is
+	// held (e.g. mid VT switch). drm_fd must never carry master.
+	if ( drmIsMaster( nFd ) && drmDropMaster( nFd ) != 0 )
+	{
+		drm_log.errorf( "drm-lease: enum fd unexpectedly master and drop failed" );
+		close( nFd );
+		return -1;
+	}
+
+	return nFd;
+}
+
+const char *drm_lease_connector_name()
+{
+	return g_DRM.sLeasedConnectorName.c_str();
+}
+
+// Caller holds g_LeaseGrantMutex.
+void drm_lease_blank()
+{
+	if ( g_DRM.nLeaseFd < 0 )
+		return;
+
+	drmModeAtomicReq *pRequest = drmModeAtomicAlloc();
+	if ( !pRequest )
+		return;
+	defer( drmModeAtomicFree( pRequest ) );
+
+	for ( const auto &[ uObjectId, uPropertyId ] : g_DRM.leaseBlankProperties )
+	{
+		if ( drmModeAtomicAddProperty( pRequest, uObjectId, uPropertyId, 0 ) < 0 )
+		{
+			drm_log.errorf( "lease-connector: failed to build blank request for '%s'", g_DRM.sLeasedConnectorName.c_str() );
+			return;
+		}
+	}
+
+	if ( drmModeAtomicCommit( g_DRM.fd, pRequest, DRM_MODE_ATOMIC_ALLOW_MODESET, nullptr ) != 0 )
+	{
+		drm_log.errorf_errno( "lease-connector: failed to blank '%s'", g_DRM.sLeasedConnectorName.c_str() );
+		return;
+	}
+
+	drm_log.infof( "lease-connector: blanked '%s'", g_DRM.sLeasedConnectorName.c_str() );
+}
+
+uint32_t drm_lease_connector_id()
+{
+	return g_DRM.uLeasedConnectorId;
+}
+
+bool drm_lease_client_quiesce()
+{
+	// Runs on the wlserver thread, which a present's modeset may need, so
+	// never block; bounded below the broker's wait so a late ack still counts.
+	for ( int i = 0; i < 70; i++ )
+	{
+		if ( g_leasePresentMutex.try_lock() )
+		{
+			const bool bIdle = g_DRM.uPendingFlipCount.load() == 0 &&
+				g_page_flip_handler_thread_parked.load( std::memory_order_acquire );
+			g_leasePresentMutex.unlock();
+			if ( bIdle )
+				return true;
+		}
+		std::this_thread::sleep_for( std::chrono::milliseconds( 5 ) );
+	}
+	drm_log.errorf( "lease client: could not stop presenting while suspending" );
+	return false;
+}
+
 std::pair<uint32_t, uint32_t> drm_get_connector_identifier(struct drm_t *drm)
 {
 	if ( !drm->pConnector )
@@ -3965,6 +4679,8 @@ namespace gamescope
 	public:
 		CDRMBackend()
 		{
+			for ( int i = 0; i < 3; i++ )
+				g_pPresentCtxs[i] = &m_PresentCtxs[i];
 		}
 
 		virtual ~CDRMBackend()
@@ -4027,6 +4743,10 @@ namespace gamescope
 
 		virtual int Present( const FrameInfo_t *pFrameInfo, bool bAsync )
 		{
+			std::lock_guard leaseLock( g_leasePresentMutex );
+			if ( drm_lease_client_suspended() )
+				return 0;
+
 			static uint64_t s_ulLastTime = get_time_in_nanos();
 			uint64_t ulNow = get_time_in_nanos();
 			drm_log.debugf( "CDRMBackend::Present Begin: %lu -> delta: %lu", ulNow, ulNow - s_ulLastTime );

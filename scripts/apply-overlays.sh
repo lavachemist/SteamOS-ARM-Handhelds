@@ -628,6 +628,8 @@ if [[ "$SOC" == sm8550 ]]; then
     "$R/usr/lib/systemd/system/sm8550-powerbuttond.service" 0644
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-touch-inhibit" \
     "$R/usr/lib/steamos-sm8550/sm8550-touch-inhibit" 0755
+  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-run-bottom" \
+    "$R/usr/lib/steamos-sm8550/sm8550-run-bottom" 0755
   install_file "$SM8550_OVL/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules" \
     "$R/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules" 0644
   install_file "$SM8550_OVL/usr/lib/udev/rules.d/72-sm8550-touch-inhibit.rules" \

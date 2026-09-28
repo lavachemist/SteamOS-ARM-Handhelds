@@ -100,6 +100,10 @@ const struct option *gamescope_options = (struct option[]){
 	{ "immediate-flips", no_argument, nullptr, 0 },
 	{ "use-rotation-shader", no_argument, nullptr, 0 },
 	{ "framerate-limit", required_argument, nullptr, 0 },
+	{ "lease-connector", required_argument, nullptr, 0 },
+	{ "drm-lease-client", required_argument, nullptr, 0 },
+	{ "drm-lease-yield", no_argument, nullptr, 0 },
+	{ "ignore-touch-device", required_argument, nullptr, 0 },
 
 	// openvr options
 #if HAVE_OPENVR
@@ -213,6 +217,10 @@ const char usage[] =
 	"  --force-orientation            rotate the internal display (left, right, normal, upsidedown)\n"
 	"  --force-windows-fullscreen     force windows inside of gamescope to be the size of the nested display (fullscreen)\n"
 	"  --cursor-scale-height          if specified, sets a base output height to linearly scale the cursor against.\n"
+	"  --lease-connector              if specified, marks a display connector for DRM leasing.\n"
+	"  --drm-lease-client             use a DRM lease from the given socket.\n"
+	"  --drm-lease-yield              give the lease up to drm-lease-v1 clients while they run.\n"
+	"  --ignore-touch-device          if specified, disables touch input for a given display.\n"
 	"  --virtual-connector-strategy   Specifies how we should make virtual connectors.\n"
 	"  --hdr-enabled                  enable HDR output (needs Gamescope WSI layer enabled for support from clients)\n"
 	"                                 If this is not set, and there is a HDR client, it will be tonemapped SDR.\n"
@@ -709,6 +717,13 @@ int g_nPreferredOutputWidth = 0;
 int g_nPreferredOutputHeight = 0;
 bool g_bExposeWayland = false;
 const char *g_sOutputName = nullptr;
+const char *g_sLeaseConnectorName = nullptr;
+const char *g_sDrmLeaseClientSocket = nullptr;
+bool g_bDrmLeaseYield = false;
+const char *g_sIgnoreTouchDevice = nullptr;
+std::atomic<int> g_nActiveLeaseClients = { 0 };
+std::atomic<int> g_nProtocolLeaseHolders = { 0 };
+std::mutex g_LeaseGrantMutex;
 bool g_bDebugLayers = false;
 bool g_bForceDisableColorMgmt = false;
 bool g_bRt = false;
@@ -862,6 +877,14 @@ int main(int argc, char **argv)
 					g_bAllowDeferredBackend = true;
 				} else if (strcmp(opt_name, "keep-alive") == 0) {
 					cv_shutdown_on_primary_child_death = false;
+				} else if (strcmp(opt_name, "lease-connector") == 0) {
+					g_sLeaseConnectorName = optarg;
+				} else if (strcmp(opt_name, "drm-lease-client") == 0) {
+					g_sDrmLeaseClientSocket = optarg;
+				} else if (strcmp(opt_name, "drm-lease-yield") == 0) {
+					g_bDrmLeaseYield = true;
+				} else if (strcmp(opt_name, "ignore-touch-device") == 0) {
+					g_sIgnoreTouchDevice = optarg;
 				} else if (strcmp(opt_name, "virtual-connector-strategy") == 0) {
 					for ( uint32_t i = 0; i < gamescope::VirtualConnectorStrategies::Count; i++ )
 					{
@@ -970,6 +993,17 @@ int main(int argc, char **argv)
 	if ( eCurrentBackend == gamescope::GamescopeBackend::Auto )
 	{
 		eCurrentBackend = auto_select_backend();
+	}
+
+	if ( g_sDrmLeaseClientSocket && eCurrentBackend != gamescope::GamescopeBackend::DRM )
+	{
+		fprintf( stderr, "gamescope: --drm-lease-client requires --backend drm\n" );
+		return 1;
+	}
+	if ( g_sDrmLeaseClientSocket && g_sLeaseConnectorName )
+	{
+		fprintf( stderr, "gamescope: --drm-lease-client cannot be used with --lease-connector\n" );
+		return 1;
 	}
 
 	if ( g_pOriginalWaylandDisplay != NULL )

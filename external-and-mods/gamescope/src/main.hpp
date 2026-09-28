@@ -3,6 +3,7 @@
 #include <getopt.h>
 
 #include <atomic>
+#include <mutex>
 #include <optional>
 #include <string_view>
 #include <utility>
@@ -38,6 +39,65 @@ extern bool g_bGrabbed;
 
 extern float g_mouseSensitivity;
 extern const char *g_sOutputName;
+extern const char *g_sLeaseConnectorName;
+extern const char *g_sDrmLeaseClientSocket;
+extern bool g_bDrmLeaseYield;
+extern const char *g_sIgnoreTouchDevice;
+
+// Number of companion apps currently holding the DRM lease socket connection.
+// Updated by the DRM lease socket thread. When > 0, wlserver drops touch
+// events originating from devices matching --ignore-touch-device, so the
+// companion exclusively owns them in Game Mode. When 0 (e.g. Desktop Mode
+// where the companion isn't running), gamescope forwards touch events
+// normally so the bottom touchscreen works in the Plasma session.
+extern std::atomic<int> g_nActiveLeaseClients;
+
+// Protocol-frontend holders; each is also counted in g_nActiveLeaseClients.
+extern std::atomic<int> g_nProtocolLeaseHolders;
+
+// Lease grants/releases on both frontends mutate the counters under this
+// lock; reads stay lock-free.
+extern std::mutex g_LeaseGrantMutex;
+
+bool drm_lease_available();
+int drm_lease_dup_fd();
+int drm_lease_open_enum_fd();
+const char *drm_lease_connector_name();
+uint32_t drm_lease_connector_id();
+void drm_lease_blank();
+
+enum class DrmLeaseEventType : uint32_t
+{
+	Down = 1,
+	Motion,
+	Up,
+	// Broker to a yielding companion: stop using the lease / take it back.
+	Suspend,
+	Resume,
+};
+
+struct DrmLeaseEvent
+{
+	DrmLeaseEventType type;
+	int32_t touchId;
+	uint32_t time;
+	float x;
+	float y;
+};
+
+void drm_lease_send_touch( DrmLeaseEventType type, double x, double y, int touchId, uint32_t time );
+
+// Suspends a yielding companion for a protocol client; true only once it
+// acknowledged that nothing of its can commit; false leaves it the holder.
+bool drm_lease_companion_suspend( int nTimeoutMs );
+void drm_lease_companion_resume();
+// True while a connected companion may still commit to the lease.
+bool drm_lease_companion_active();
+
+// Companion side (--drm-lease-client). quiesce returns false when a
+// present or the flip reader could not be stopped in time.
+bool drm_lease_client_suspended();
+bool drm_lease_client_quiesce();
 
 enum class GamescopeUpscaleFilter : uint32_t
 {

@@ -1,0 +1,32 @@
+#!/bin/bash
+# sm8550-run-bottom -- <command> [args...]
+# Run <command> on the AYN Thor's bottom panel while Game Mode drives the top
+# one (after Armada's armada-run-bottom). Game Mode's gamescope lends DSI-1
+# over its lease socket (--lease-connector) and forwards the bottom
+# touchscreen (--ignore-touch-device); this nested gamescope takes that lease.
+set -euo pipefail
+
+fail() {
+  echo "sm8550-run-bottom: $*" >&2
+  exit 1
+}
+
+[[ "${1:-}" == -- ]] || fail "usage: sm8550-run-bottom -- <command> [args...]"
+shift
+(( $# > 0 )) || fail "no command specified"
+
+sock="${GAMESCOPE_LEASE_SOCK:-/tmp/gamescope-lease.sock}"
+[[ -S "$sock" ]] || fail "no lease socket at $sock (is Game Mode running?)"
+
+unset DISPLAY WAYLAND_DISPLAY GAMESCOPE_WAYLAND_DISPLAY
+exec gamescope \
+  --backend drm \
+  --drm-lease-client "$sock" \
+  --drm-lease-yield \
+  --expose-wayland \
+  --force-windows-fullscreen \
+  --xwayland-count 1 \
+  --default-touch-mode 4 \
+  --force-orientation right \
+  --force-composition-rotation \
+  -- "$@"

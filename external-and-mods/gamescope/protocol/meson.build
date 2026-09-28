@@ -5,7 +5,7 @@ wayland_scanner_path = wayland_scanner_dep.get_variable(pkgconfig: 'wayland_scan
 wayland_scanner = find_program(wayland_scanner_path, native: true)
 
 wayland_protos = dependency('wayland-protocols',
-	version: '>=1.17',
+	version: '>=1.22',
 	fallback: 'wayland-protocols',
 	default_options: ['tests=false'],
 )
@@ -23,6 +23,7 @@ protocols = [
 	wl_protocol_dir / 'unstable/primary-selection/primary-selection-unstable-v1.xml',
 	wl_protocol_dir / 'staging/fractional-scale/fractional-scale-v1.xml',
 	wl_protocol_dir / 'staging/linux-drm-syncobj/linux-drm-syncobj-v1.xml',
+	wl_protocol_dir / 'staging/drm-lease/drm-lease-v1.xml',
 
 	'color-management-v1.xml',
 

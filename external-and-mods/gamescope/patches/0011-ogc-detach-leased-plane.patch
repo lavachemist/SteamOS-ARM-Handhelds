@@ -1,0 +1,110 @@
+Record only (the build uses the vendored source, which has this applied).
+From OpenGamingCollective/gamescope, c84fea16d999...082811ccbd73 (PR #17, fix/detach-leased-plane, by pacoa-kdbg). Applied unmodified.
+
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+index 086871b2f..9b75a2555 100644
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -688,6 +688,75 @@ static gamescope::CDRMCRTC *find_crtc_for_connector( struct drm_t *drm, gamescop
+ 	return nullptr;
+ }
+ 
++static bool drm_detach_lease_resources(
++	struct drm_t *drm,
++	gamescope::CDRMConnector *pLeaseConnector,
++	gamescope::CDRMCRTC *pLeaseCRTC,
++	gamescope::CDRMPlane *pLeasePlane )
++{
++	// A lease must not split an existing pipeline across lessor and lessee.
++	// Atomically disable every CRTC currently connected to a leased object,
++	// along with all connectors and planes using those CRTCs.
++	std::unordered_set< uint64_t > affectedCRTCIds = {
++		pLeaseCRTC->GetObjectId(),
++		pLeaseConnector->GetProperties().CRTC_ID->GetCurrentValue(),
++		pLeasePlane->GetProperties().CRTC_ID->GetCurrentValue(),
++	};
++	affectedCRTCIds.erase( 0 );
++
++	drmModeAtomicReq *pRequest = drmModeAtomicAlloc();
++	if ( !pRequest )
++		return false;
++	defer( drmModeAtomicFree( pRequest ) );
++
++	std::vector< gamescope::CDRMAtomicProperty * > changedProperties;
++	bool bValid = true;
++	auto SetProperty = [&]( gamescope::CDRMAtomicProperty &property, uint64_t uValue )
++	{
++		if ( property.SetPendingValue( pRequest, uValue, true ) < 0 )
++			bValid = false;
++		else
++			changedProperties.push_back( &property );
++	};
++
++	for ( auto &iter : drm->connectors )
++	{
++		gamescope::CDRMConnector *pConnector = &iter.second;
++		if ( affectedCRTCIds.contains( pConnector->GetProperties().CRTC_ID->GetCurrentValue() ) )
++			SetProperty( *pConnector->GetProperties().CRTC_ID, 0 );
++	}
++
++	for ( const std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
++	{
++		if ( affectedCRTCIds.contains( pPlane->GetProperties().CRTC_ID->GetCurrentValue() ) )
++		{
++			SetProperty( *pPlane->GetProperties().FB_ID, 0 );
++			SetProperty( *pPlane->GetProperties().CRTC_ID, 0 );
++		}
++	}
++
++	for ( const std::unique_ptr< gamescope::CDRMCRTC > &pCRTC : drm->crtcs )
++	{
++		if ( affectedCRTCIds.contains( pCRTC->GetObjectId() ) )
++		{
++			SetProperty( *pCRTC->GetProperties().ACTIVE, 0 );
++			SetProperty( *pCRTC->GetProperties().MODE_ID, 0 );
++		}
++	}
++
++	if ( !bValid || drmModeAtomicCommit( drm->fd, pRequest, DRM_MODE_ATOMIC_ALLOW_MODESET, nullptr ) != 0 )
++	{
++		for ( gamescope::CDRMAtomicProperty *pProperty : changedProperties )
++			pProperty->Rollback();
++		return false;
++	}
++
++	for ( gamescope::CDRMAtomicProperty *pProperty : changedProperties )
++		pProperty->OnCommit();
++
++	return true;
++}
++
+ static bool get_plane_formats( struct drm_t *drm, gamescope::CDRMPlane *pPlane, struct wlr_drm_format_set *pFormatSet )
+ {
+ 	for ( uint32_t i = 0; i < pPlane->GetModePlane()->count_formats; i++ )
+@@ -1601,6 +1670,7 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
+ 				//      — costs the main pool one primary slot.
+ 				const uint32_t uLeaseCrtcMask = pLeaseCRTC->GetCRTCMask();
+ 				uint32_t    uPlaneId    = 0;
++				gamescope::CDRMPlane *pLeasePlane = nullptr;
+ 				int         nBestScore  = -1;
+ 				const char *pszBestKind = nullptr;
+ 				for ( auto &pPlane : drm->planes )
+@@ -1620,6 +1690,7 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
+ 					{
+ 						nBestScore  = nScore;
+ 						uPlaneId    = pPlane->GetObjectId();
++						pLeasePlane = pPlane.get();
+ 						pszBestKind = pszKind;
+ 						if ( nScore == 1 )
+ 							break; // exclusive primary — best we can do
+@@ -1630,6 +1701,10 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
+ 				{
+ 					drm_log.errorf( "lease-connector: no usable plane found for CRTC %u", uCRTCId );
+ 				}
++				else if ( !drm_detach_lease_resources( drm, pLeaseConnector, pLeaseCRTC, pLeasePlane ) )
++				{
++					drm_log.errorf_errno( "lease-connector: failed to prepare resources for lease" );
++				}
+ 				else
+ 				{
+ 				drm_log.infof( "lease-connector: selected %s plane %u for CRTC %u",
