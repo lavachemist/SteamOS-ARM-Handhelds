@@ -747,8 +747,9 @@ else
     "$R/usr/lib/systemd/user/default.target.wants/sm8550-volume-keeper.service"
 fi
 
-# Temporary remote-test aid (BUNDLE_TAILSCALE=1); every other build removes it.
-if [[ "${BUNDLE_TAILSCALE:-0}" == 1 ]]; then
+# Tailscale: in every image but off, with no account or keys (see the
+# script). TAILSCALE=0 leaves it out; BUNDLE_TAILSCALE=0 still works too.
+if [[ "${TAILSCALE:-${BUNDLE_TAILSCALE:-1}}" == 1 ]]; then
   "${SCRIPT_DIR}/install-tailscale.sh" "$R" install
 else
   "${SCRIPT_DIR}/install-tailscale.sh" "$R" remove
