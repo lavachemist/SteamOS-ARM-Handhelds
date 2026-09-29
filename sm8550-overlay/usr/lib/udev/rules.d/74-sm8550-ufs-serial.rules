@@ -1,0 +1,16 @@
+# UFS serial number as text. The SCSI unit serial page (VPD 0x80) of some UFS
+# parts starts with raw bytes (YMTC YMUS8B4TF1D1C1 in the Retroid Pocket 6:
+# "\xec\xfb\xbe\x93"), so ID_SCSI_SERIAL is not valid UTF-8. udisksd then
+# fails to publish Drive.Serial ("g_variant_new_string(): requires valid
+# UTF-8") for every UFS LUN each time a client reads the drives: ~40,000
+# journal lines an hour. ufshcd exposes the device's serial string
+# descriptor as text; use that instead. Runs after 60-persistent-storage.
+#
+# Whole disks only: reading the descriptor is a UFS query command, and doing
+# it for all ~124 partitions at boot once left udev workers stuck on the UFS
+# partitions (fan driver never loaded). Partitions import ID_* from their
+# disk (60-persistent-storage), and udev handles a disk before its partitions.
+ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", \
+  SUBSYSTEMS=="platform", DRIVERS=="ufshcd-qcom", \
+  ATTRS{string_descriptors/serial_number}=="?*", \
+  ENV{ID_SCSI_SERIAL}="$attr{string_descriptors/serial_number}"

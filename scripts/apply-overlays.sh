@@ -620,7 +620,7 @@ remove_old_bottom_session() {
     "$R/usr/lib/systemd/user/gamescope-session.target.wants/sm8550-bottom-session.service"
 }
 if [[ "$SOC" == sm8550 ]]; then
-  log "== SM8550 overlay (fan curve, power button, steamos-manager devices, Thor touch)"
+  log "== SM8550 overlay (fan curve, power button, thread boost, steamos-manager devices, Thor touch)"
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-fand" \
     "$R/usr/lib/steamos-sm8550/sm8550-fand" 0755
   install_file "$SM8550_OVL/usr/share/sm8550-fand/fan.conf" \
@@ -672,8 +672,36 @@ if [[ "$SOC" == sm8550 ]]; then
       "$R/usr/bin/steamos-polkit-helpers/steamos-priv-write" \
       "$SM8550_OVL/usr/share/steamos-sm8550/priv-write-backlight.inc"
   fi
+  # Interrupts off the little cores: the A740's GMU wedges otherwise.
+  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-irq-affinity" \
+    "$R/usr/lib/steamos-sm8550/sm8550-irq-affinity" 0755
+  install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-irq-affinity.service" \
+    "$R/usr/lib/systemd/system/sm8550-irq-affinity.service" 0644
+  # Game and Steam UI threads on the big cores with a uclamp boost.
+  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-boostd" \
+    "$R/usr/lib/steamos-sm8550/sm8550-boostd" 0755
+  install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-boostd.service" \
+    "$R/usr/lib/systemd/system/sm8550-boostd.service" 0644
   install_file "$SM8550_OVL/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules" \
     "$R/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules" 0644
+  install_file "$SM8550_OVL/usr/lib/udev/rules.d/74-sm8550-ufs-serial.rules" \
+    "$R/usr/lib/udev/rules.d/74-sm8550-ufs-serial.rules" 0644
+  install_file "$SM8550_OVL/usr/lib/udev/rules.d/99-zz-sm8550-backlight-nosystemd.rules" \
+    "$R/usr/lib/udev/rules.d/99-zz-sm8550-backlight-nosystemd.rules" 0644
+  # zram: zstd, RAM-sized up to 8 GB (the 8 GB models ran out of swap in Palworld).
+  install_file "$SM8550_OVL/usr/lib/systemd/zram-generator.conf.d/60-sm8550-zram.conf" \
+    "$R/usr/lib/systemd/zram-generator.conf.d/60-sm8550-zram.conf" 0644
+  # TEO cpuidle governor (same fps as menu, ~4 % less power in game).
+  install_file "$SM8550_OVL/usr/lib/tmpfiles.d/sm8550-cpuidle-teo.conf" \
+    "$R/usr/lib/tmpfiles.d/sm8550-cpuidle-teo.conf" 0644
+  # Output volume across reboots (pro-audio outputs have no saved routes).
+  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-volume-keeper" \
+    "$R/usr/lib/steamos-sm8550/sm8550-volume-keeper" 0755
+  install_file "$SM8550_OVL/usr/lib/systemd/user/sm8550-volume-keeper.service" \
+    "$R/usr/lib/systemd/user/sm8550-volume-keeper.service" 0644
+  mkdir -p "$R/usr/lib/systemd/user/default.target.wants"
+  ln -sfn ../sm8550-volume-keeper.service \
+    "$R/usr/lib/systemd/user/default.target.wants/sm8550-volume-keeper.service"
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-thor-backlightd" \
     "$R/usr/lib/steamos-sm8550/sm8550-thor-backlightd" 0755
   install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-thor-backlightd.service" \
@@ -685,7 +713,8 @@ if [[ "$SOC" == sm8550 ]]; then
   install_file "$SM8550_OVL/usr/lib/udev/rules.d/72-sm8550-touch-inhibit.rules" \
     "$R/usr/lib/udev/rules.d/72-sm8550-touch-inhibit.rules" 0644
   mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
-  for u in sm8550-fand.service sm8550-powerbuttond.service sm8550-thor-backlightd.service; do
+  for u in sm8550-fand.service sm8550-powerbuttond.service sm8550-thor-backlightd.service \
+           sm8550-irq-affinity.service sm8550-boostd.service; do
     ln -sfn ../$u "$R/usr/lib/systemd/system/multi-user.target.wants/$u"
   done
 else
@@ -705,7 +734,17 @@ else
     "$R/etc/inputplumber/devices.d/50-ayn_thor.yaml" \
     "$R/var/lib/overlays/etc/upper/inputplumber/devices.d/50-ayn_thor.yaml" \
     "$R/usr/lib/systemd/system/sm8550-thor-backlightd.service" \
-    "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-thor-backlightd.service"
+    "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-thor-backlightd.service" \
+    "$R/usr/lib/systemd/system/sm8550-irq-affinity.service" \
+    "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-irq-affinity.service" \
+    "$R/usr/lib/systemd/system/sm8550-boostd.service" \
+    "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-boostd.service" \
+    "$R/usr/lib/udev/rules.d/74-sm8550-ufs-serial.rules" \
+    "$R/usr/lib/udev/rules.d/99-zz-sm8550-backlight-nosystemd.rules" \
+    "$R/usr/lib/systemd/zram-generator.conf.d/60-sm8550-zram.conf" \
+    "$R/usr/lib/tmpfiles.d/sm8550-cpuidle-teo.conf" \
+    "$R/usr/lib/systemd/user/sm8550-volume-keeper.service" \
+    "$R/usr/lib/systemd/user/default.target.wants/sm8550-volume-keeper.service"
 fi
 
 # Temporary remote-test aid (BUNDLE_TAILSCALE=1); every other build removes it.

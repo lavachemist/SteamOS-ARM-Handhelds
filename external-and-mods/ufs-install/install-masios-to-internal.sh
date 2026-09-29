@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Install the SteamOS running from the microSD card to internal UFS.
-# KONKR Pocket FIT / AYANEO Pocket S2 (SM8650) with ROCKNIX ABL 1.1.8+.
+# SM8650 (KONKR Pocket FIT, AYANEO Pocket S2) and SM8550 (Retroid Pocket 6,
+# AYN Thor) with ROCKNIX ABL.
 #
 #   ... | userdata (Android, you pick) | ROCKNIX 2G | STORAGE 20G | HOME (rest) |
 #
@@ -67,8 +68,9 @@ for t in sfdisk mkfs.vfat mkfs.ext4 rsync findmnt lsblk python3 md5sum blockdev;
   command -v "$t" >/dev/null || die "missing tool: $t"
 done
 
-tr '\0' '\n' </sys/firmware/devicetree/base/compatible | grep -qx 'qcom,sm8650' \
-  || die "this installer is for SM8650 devices (KONKR Pocket FIT / AYANEO Pocket S2)"
+# Both SoCs use the same ROCKNIX ABL layout (userdata, then ROCKNIX + STORAGE).
+tr '\0' '\n' </sys/firmware/devicetree/base/compatible | grep -qxE 'qcom,sm(8650|8550)' \
+  || die "this installer is for SM8650 (KONKR Pocket FIT, AYANEO Pocket S2) and SM8550 (Retroid Pocket 6, AYN Thor) devices"
 MODEL="$(tr -d '\0' </sys/firmware/devicetree/base/model)"
 
 # The initramfs carries no modules, so root on UFS needs the drivers built in.

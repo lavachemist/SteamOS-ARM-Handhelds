@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+"""sm8550-volume-keeper: keep the output volume across reboots.
+
+SM8550 audio runs in PipeWire's pro-audio profile, whose outputs have no
+routes. WirePlumber keeps their volume only in its stream-properties state
+(a normal reboot of the Retroid Pocket 6 kept it), but outputs came back at
+100% after some shutdowns or hard power-offs, and an output that was never
+the default (e.g. the second pro-output) sits at 100%.
+
+This restores each output's last volume and mute state when it first shows
+up as the default output (one never seen before keeps its volume, or gets
+half if it is at the boot-time 100%), then saves them whenever they change,
+flushed to disk at once, so holding the power button seconds after a change
+does not lose it.
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+STATE = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state")),
+                     "sm8550-volume.json")
+SINK = "@DEFAULT_AUDIO_SINK@"
+FIRST_VOLUME = 0.5
+POLL_S = 2
+
+
+def log(msg: str) -> None:
+    print(msg, flush=True)
+
+
+def wpctl(*args: str) -> str | None:
+    try:
+        r = subprocess.run(["wpctl", *args], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def sink_name() -> str | None:
+    out = wpctl("inspect", SINK) or ""
+    m = re.search(r'node\.name = "([^"]+)"', out)
+    return m.group(1) if m else None
+
+
+def get_volume() -> tuple[float, bool] | None:
+    out = wpctl("get-volume", SINK) or ""
+    m = re.match(r"Volume: ([0-9.]+)", out)
+    return (round(float(m.group(1)), 2), "[MUTED]" in out) if m else None
+
+
+def load() -> dict:
+    try:
+        with open(STATE, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save(data: dict) -> None:
+    """Write and flush to disk before replacing: this has to survive a hard
+    power-off seconds later, which is when the volume gets lost."""
+    d = os.path.dirname(STATE)
+    os.makedirs(d, exist_ok=True)
+    tmp = STATE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, STATE)
+    fd = os.open(d, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def main() -> int:
+    saved = load()
+    restored: set[str] = set()  # outputs handled this session
+    while True:
+        name = sink_name()
+        now = get_volume() if name else None
+        if name and now:
+            if name not in restored:
+                restored.add(name)
+                # Never seen: keep what it has, unless that is the 100% a
+                # fresh boot starts with.
+                want = saved.get(name) or {"volume": FIRST_VOLUME if now[0] >= 0.99 else now[0],
+                                           "muted": now[1]}
+                wpctl("set-volume", SINK, f"{float(want['volume']):.2f}")
+                wpctl("set-mute", SINK, "1" if want.get("muted") else "0")
+                log(f"{name}: volume {float(want['volume']):.2f}{' (muted)' if want.get('muted') else ''}")
+                now = get_volume() or now
+            volume, muted = now
+            if saved.get(name) != {"volume": volume, "muted": muted}:
+                saved[name] = {"volume": volume, "muted": muted}
+                save(saved)
+        time.sleep(POLL_S)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

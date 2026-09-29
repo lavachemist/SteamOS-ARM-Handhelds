@@ -2,7 +2,9 @@
 
 Moves the SteamOS you're running from the microSD card onto the internal
 storage, next to Android. For the KONKR Pocket FIT (and the AYANEO Pocket S2,
-untested) with ROCKNIX ABL 1.1.8 or newer.
+untested) with ROCKNIX ABL 1.1.8 or newer, and the Snapdragon 8 Gen 2
+handhelds (Retroid Pocket 6, AYN Thor; not yet tested on hardware) with
+ROCKNIX ABL.
 
 > **This erases Android's user data** (apps, photos, accounts) and changes the
 > internal partition table. Android itself stays and sets itself up again.
@@ -17,6 +19,12 @@ Desktop Mode, or in a terminal:
 sudo install-masios-to-internal.sh --dry-run     # shows the plan, writes nothing
 sudo install-masios-to-internal.sh               # asks for the Android size
 ```
+
+The installer window shows each step with a progress bar and the live log,
+and won't close while it's installing. It ends with a pop-up: the next steps,
+or on failure the error and whether internal storage was already changed. The
+log is saved as `~/easy-ufs-install-<date>.log`; after a failure a copy goes
+on the desktop.
 
 When it's done: power off and take the SD card out. In the ABL menu (hold
 Volume Down at power-on) set **Boot source** to **Internal**, then boot Linux.

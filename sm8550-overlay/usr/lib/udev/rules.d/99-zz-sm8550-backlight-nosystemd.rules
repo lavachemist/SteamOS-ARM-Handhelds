@@ -1,0 +1,12 @@
+# Keep systemd from tracking backlight devices. Every brightness write makes
+# the kernel send a backlight "change" uevent; Steam's idle dimming and the
+# brightness slider send dozens a second. systemd updates the device unit for
+# each one (and logs "Failed to enqueue SYSTEMD_WANTS job": SteamOS masks
+# systemd-backlight@), which emits PropertiesChanged on D-Bus. Wine's
+# mountmgr (winedevice.exe, running with every Proton game) re-reads the whole
+# UDisks2 object tree on such signals, and with the ~130 UFS partitions that
+# kept udisksd at up to ~90 % CPU and the little cores clocked up. Measured on
+# the Retroid Pocket 6 while moving the slider: udisksd 34 % -> 4 %.
+# Brightness is set through sysfs by gamescope/PowerDevil, not through systemd.
+# Sorts after 99-systemd.rules, which adds the tag.
+SUBSYSTEM=="backlight", TAG-="systemd"

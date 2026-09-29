@@ -4,43 +4,83 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 import gi
 
 gi.require_version("Gtk", "3.0")
-from gi.repository import GLib, Gtk, Pango
+gi.require_version("Gdk", "3.0")
+from gi.repository import Gdk, GLib, Gtk, Pango
 
 APP_NAME = "Easy UFS Installer"
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.1.0"
 
 SHARE = Path(os.environ.get("EASY_UFS_INSTALL_ROOT", "/usr/share/easy-ufs-install"))
 INSTALL_SH = SHARE / "install-masios-to-internal.sh"
 PROBE_SH = SHARE / "ufs-probe-sizes.sh"
 DIAGNOSE_SH = SHARE / "ufs-diagnose.sh"
 
-WARNING_TEXT = (
-    "WARNING — THIS WILL MODIFY THE INTERNAL STORAGE OF YOUR DEVICE\n\n"
-    "This tool repartitions internal UFS and installs SteamOS alongside Android "
-    "(ROCKNIX ABL 3-partition layout: boot + root + home).\n\n"
-    "• Android userdata will be ERASED (factory-reset style).\n"
-    "• Incorrect use MAY cause data loss or make Android/Linux unbootable.\n"
-    "• Run this from microSD Linux, not from an already-installed UFS root.\n"
-    "• Keep ROCKNIX ABL installed and a working /boot/KERNEL on the SD.\n\n"
-    "Nothing should go wrong if you follow the steps, but DATA LOSS IS POSSIBLE.\n"
-    "Proceed only if you understand the risk."
-)
+# Installer log lines -> what the user sees, in order. The installer prints
+# each as "[ufs] ..."; step 2 is the first one that changes internal storage.
+STEPS = [
+    (re.compile(r"\[ufs\] .*: internal disk"), "Checking the device and internal storage"),
+    (re.compile(r"\[ufs\] repartitioning"), "Repartitioning internal storage"),
+    (re.compile(r"\[ufs\] formatting"), "Formatting the new partitions"),
+    (re.compile(r"\[ufs\] copying the system"), "Copying the system (several minutes)"),
+    (re.compile(r"\[ufs\] copying .*/home"), "Copying the home folder"),
+    (re.compile(r"\[ufs\] installing KERNEL"), "Installing the boot kernel"),
+    (re.compile(r"\[ufs\] checking the result"), "Checking the result"),
+]
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+PERCENT_RE = re.compile(r"\s(\d{1,3})%\s")
+
+
+def _root_argv(argv: list[str]) -> list[str]:
+    if os.geteuid() == 0:
+        return argv
+    if shutil.which("pkexec"):
+        return ["pkexec", *argv]
+    return ["sudo", "--", *argv]
 
 
 def _pkexec(argv: list[str]) -> subprocess.CompletedProcess[str]:
-    if os.geteuid() == 0:
-        return subprocess.run(argv, check=False, text=True, capture_output=True)
-    if shutil.which("pkexec"):
-        return subprocess.run(["pkexec", *argv], check=False, text=True, capture_output=True)
-    return subprocess.run(["sudo", "--", *argv], check=False, text=True, capture_output=True)
+    return subprocess.run(_root_argv(argv), check=False, text=True,
+                          capture_output=True, stdin=subprocess.DEVNULL)
+
+
+def _run_streaming(argv: list[str], on_text) -> int:
+    """Run as root; call on_text(text, is_progress) for each output line.
+
+    rsync --info=progress2 redraws one line with carriage returns; those
+    segments come through with is_progress=True instead of flooding the log.
+    stdin is closed so an unexpected prompt fails instead of hanging.
+    """
+    proc = subprocess.Popen(_root_argv(argv), stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    assert proc.stdout is not None
+    buf = b""
+    while True:
+        chunk = proc.stdout.read1(4096)
+        if not chunk:
+            break
+        buf += chunk
+        while True:
+            i_n, i_r = buf.find(b"\n"), buf.find(b"\r")
+            cands = [i for i in (i_n, i_r) if i >= 0]
+            if not cands:
+                break
+            i = min(cands)
+            seg = ANSI_RE.sub("", buf[:i].decode("utf-8", "replace"))
+            buf = buf[i + 1:]
+            on_text(seg, i == i_r)
+    if buf:
+        on_text(ANSI_RE.sub("", buf.decode("utf-8", "replace")), False)
+    return proc.wait()
 
 
 def probe_sizes() -> dict[str, str]:
@@ -67,24 +107,24 @@ def probe_sizes() -> dict[str, str]:
 class MainWindow(Gtk.Window):
     def __init__(self) -> None:
         super().__init__(title=APP_NAME)
-        self.set_default_size(640, 720)
-        self.set_border_width(14)
+        self._fit_to_screen()
         self._busy = False
         self._info: dict[str, str] = {}
 
+        # Everything scrolls, so the window fits small handheld screens
+        # (the Pocket FIT's panel with desktop scaling is only ~700 px tall).
+        outer = Gtk.ScrolledWindow()
+        outer.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.add(outer)
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        self.add(root)
+        root.set_border_width(14)
+        outer.add(root)
 
         title = Gtk.Label()
         title.set_markup(f"<span size='x-large'><b>{APP_NAME}</b></span>")
         title.set_xalign(0)
         root.pack_start(title, False, False, 0)
 
-        warn = Gtk.Label(label=WARNING_TEXT)
-        warn.set_xalign(0)
-        warn.set_line_wrap(True)
-        warn.set_selectable(True)
-        warn.override_color(Gtk.StateFlags.NORMAL, None)
         frame = Gtk.Frame(label="Read carefully")
         frame.set_shadow_type(Gtk.ShadowType.ETCHED_IN)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -157,21 +197,67 @@ class MainWindow(Gtk.Window):
         buttons.pack_end(Gtk.Label(label=f"v{APP_VERSION}"), False, False, 0)
         root.pack_start(buttons, False, False, 0)
 
+        self.step_label = Gtk.Label(xalign=0)
+        self.step_label.set_line_wrap(True)
+        root.pack_start(self.step_label, False, False, 0)
+        self.progress = Gtk.ProgressBar()
+        self.progress.set_show_text(True)
+        self.progress.set_no_show_all(True)
+        root.pack_start(self.progress, False, False, 0)
+
         self.log = Gtk.TextView()
         self.log.set_editable(False)
         self.log.set_monospace(True)
         self.log.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
         scroll = Gtk.ScrolledWindow()
-        scroll.set_min_content_height(180)
+        scroll.set_min_content_height(280)
+        scroll.set_vexpand(True)
         scroll.add(self.log)
         root.pack_start(scroll, True, True, 0)
 
+        self._installing = False
+        self._log_file = None
+        self.connect("delete-event", self._on_delete)
         self.connect("destroy", Gtk.main_quit)
         self.refresh_async()
+
+    def _fit_to_screen(self) -> None:
+        width, height = 640, 720
+        display = Gdk.Display.get_default()
+        monitor = (display.get_primary_monitor() or display.get_monitor(0)) if display else None
+        if monitor is not None:
+            area = monitor.get_workarea()
+            width = min(width, int(area.width * 0.95))
+            height = min(height, int(area.height * 0.95))
+            if area.height < 800:
+                self.maximize()
+        self.set_default_size(width, height)
 
     def _append(self, text: str) -> None:
         buf = self.log.get_buffer()
         buf.insert(buf.get_end_iter(), text.rstrip() + "\n")
+        mark = buf.create_mark(None, buf.get_end_iter(), False)
+        self.log.scroll_mark_onscreen(mark)
+        buf.delete_mark(mark)
+        if self._log_file:
+            self._log_file.write(text.rstrip() + "\n")
+            self._log_file.flush()
+
+    def _on_delete(self, *_args) -> bool:
+        if not self._installing:
+            return False
+        self._message(Gtk.MessageType.WARNING, "Installation in progress",
+                      "Closing now could leave internal storage half-installed. "
+                      "Wait until the installer says it has finished.")
+        return True  # keep the window open
+
+    def _message(self, kind: Gtk.MessageType, title: str, body: str) -> None:
+        dialog = Gtk.MessageDialog(transient_for=self, modal=True,
+                                   message_type=kind,
+                                   buttons=Gtk.ButtonsType.OK, text=title)
+        dialog.format_secondary_text(body)
+        dialog.run()
+        dialog.destroy()
 
     def _update_linux_label(self) -> None:
         if not self._info:
@@ -274,28 +360,134 @@ class MainWindow(Gtk.Window):
             return
 
         self._busy = True
+        self._installing = True
         self.install_btn.set_sensitive(False)
-        self.status.set_text(f"Installing with --android-gb {android_gb} (this takes a while)…")
+        self.refresh_btn.set_sensitive(False)
+        self.size_spin.set_sensitive(False)
+        self.home_combo.set_sensitive(False)
+        self.ack.set_sensitive(False)
+        self.status.set_text(f"Installing SteamOS to internal storage (Android: {android_gb} GB). "
+                             "Don't power off or close this window.")
 
         fingerprint = self._info.get("TABLE_FINGERPRINT", "")
         home_mode = self.home_combo.get_active_id() or "all"
         # The table is about to change: the next install needs a fresh probe.
         self._info = {}
 
+        log_path = Path.home() / f"easy-ufs-install-{time.strftime('%Y%m%d-%H%M%S')}.log"
+        try:
+            self._log_file = open(log_path, "w", encoding="utf-8")
+        except OSError:
+            self._log_file = None
+        self._append(f"=== Install started {time.strftime('%Y-%m-%d %H:%M:%S')} "
+                     f"(log: {log_path}) ===")
+        self.progress.show()
+        self.progress.set_fraction(0.0)
+        started = time.monotonic()
+        state = {"step": 0, "pct": 0, "error": ""}
+
+        def show_step() -> None:
+            n = state["step"]
+            label = STEPS[n - 1][1] if n else "Starting (enter your password when asked)"
+            mins, secs = divmod(int(time.monotonic() - started), 60)
+            self.step_label.set_markup(
+                f"<b>Step {max(n, 1)} of {len(STEPS)}:</b> {GLib.markup_escape_text(label)}"
+                f"   <small>({mins}:{secs:02d} elapsed)</small>")
+            # Each step is an equal slice; the copy steps fill theirs with rsync %.
+            frac = (max(n, 1) - 1 + state["pct"] / 100) / len(STEPS)
+            self.progress.set_fraction(min(frac, 1.0))
+            self.progress.set_text(f"{int(frac * 100)}%")
+
+        def tick() -> bool:
+            if not self._installing:
+                return False
+            show_step()
+            return True
+
+        GLib.timeout_add_seconds(1, tick)
+        show_step()
+
+        def on_text(text: str, is_progress: bool) -> None:
+            def ui() -> None:
+                if is_progress:
+                    m = PERCENT_RE.search(" " + text + " ")
+                    if m:
+                        state["pct"] = min(int(m.group(1)), 100)
+                        show_step()
+                    return
+                for i, (pattern, _label) in enumerate(STEPS, start=1):
+                    if i > state["step"] and pattern.search(text):
+                        state["step"], state["pct"] = i, 0
+                        show_step()
+                if "ERROR:" in text:
+                    state["error"] = text.split("ERROR:", 1)[1].strip()
+                if text.strip():
+                    self._append(text)
+            GLib.idle_add(ui)
+
         def worker() -> None:
-            proc = _pkexec(["bash", str(script), "--force", "--android-gb", str(android_gb),
-                            "--expect", fingerprint, "--home", home_mode])
-            out = ((proc.stdout or "") + (proc.stderr or "")).strip()
+            argv = ["bash", str(script), "--force", "--android-gb", str(android_gb),
+                    "--expect", fingerprint, "--home", home_mode]
+            try:
+                rc = _run_streaming(argv, on_text)
+            except OSError as exc:
+                on_text(f"ERROR: could not start the installer: {exc}", False)
+                rc = 127
 
             def done() -> None:
                 self._busy = False
-                self.install_btn.set_sensitive(False)
-                if out:
-                    self._append(out[-8000:])
-                if proc.returncode == 0:
+                self._installing = False
+                # Refresh re-probes the new table; Install stays off until then.
+                self.refresh_btn.set_sensitive(True)
+                self.size_spin.set_sensitive(True)
+                self.home_combo.set_sensitive(True)
+                self.ack.set_sensitive(True)
+                mins, secs = divmod(int(time.monotonic() - started), 60)
+                self._append(f"=== Installer exited with code {rc} after {mins}:{secs:02d} ===")
+                if self._log_file:
+                    self._log_file.close()
+                    self._log_file = None
+                if rc == 0:
+                    self.progress.set_fraction(1.0)
+                    self.progress.set_text("Done")
+                    self.step_label.set_markup("<b>Installation complete.</b>")
                     self.status.set_text("Install finished. Power off, remove the SD card, then in the ABL menu set Boot source to Internal and boot Linux.")
-                else:
-                    self.status.set_text(f"Install failed (exit {proc.returncode}). See log.")
+                    self._message(
+                        Gtk.MessageType.INFO, "SteamOS is installed on internal storage",
+                        "Next:\n"
+                        "1. Power off the device and remove the microSD card.\n"
+                        "2. Hold Volume Down while powering on to open the ABL menu.\n"
+                        "3. Set Boot source to Internal, then boot Linux.\n\n"
+                        "Android is still in the same menu; it sets itself up again "
+                        "because its user data was erased.\n\n"
+                        f"The full log is saved as {log_path}.")
+                    return
+                # Put a copy where it's easy to find and attach to a report.
+                saved = log_path
+                desktop = Path(GLib.get_user_special_dir(
+                    GLib.UserDirectory.DIRECTORY_DESKTOP) or Path.home() / "Desktop")
+                try:
+                    desktop.mkdir(parents=True, exist_ok=True)
+                    saved = desktop / f"easy-ufs-install-FAILED-{time.strftime('%Y%m%d-%H%M%S')}.log"
+                    shutil.copyfile(log_path, saved)
+                except OSError as exc:
+                    self._append(f"Could not copy the log to the desktop: {exc}")
+                    saved = log_path
+                self.step_label.set_markup("<b>Installation failed.</b>")
+                self.status.set_text(f"Install failed (exit {rc}). See the log below.")
+                self._message(
+                    Gtk.MessageType.ERROR, "Installation failed",
+                    (f"{state['error']}\n\n" if state["error"] else "")
+                    + ("The installer stopped before changing internal storage."
+                       if state["step"] < 2 else
+                       "Internal storage was already being changed, so it may be "
+                       "partly installed. Android may not boot until this is fixed; "
+                       "the ABL menu's UNINSTALL CFW removes the Linux partitions, "
+                       "and the old partition table is saved on the SD card in "
+                       "/boot/ufs-backup.")
+                    + (f"\n\nThe full log is saved on the desktop as {saved.name}."
+                       if saved != log_path else
+                       f"\n\nThe full log is saved as {log_path}."))
 
             GLib.idle_add(done)
 

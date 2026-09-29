@@ -1,0 +1,13 @@
+[Unit]
+Description=SM8550 interrupts on the big cores (Adreno 740 GMU hang)
+ConditionPathExists=/sys/firmware/devicetree/base/compatible
+# Before anything starts rendering.
+Before=display-manager.service
+
+[Service]
+Type=oneshot
+ExecCondition=/bin/sh -c 'grep -qa "qcom,sm8550" /sys/firmware/devicetree/base/compatible'
+ExecStart=/usr/lib/steamos-sm8550/sm8550-irq-affinity
+
+[Install]
+WantedBy=multi-user.target

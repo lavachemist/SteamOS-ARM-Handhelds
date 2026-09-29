@@ -1,0 +1,13 @@
+[Unit]
+Description=SM8550: keep the output volume across reboots
+After=wireplumber.service
+ConditionPathExists=/sys/firmware/devicetree/base/compatible
+
+[Service]
+ExecCondition=/bin/sh -c 'grep -qa "qcom,sm8550" /sys/firmware/devicetree/base/compatible'
+ExecStart=/usr/lib/steamos-sm8550/sm8550-volume-keeper
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
