@@ -13,7 +13,8 @@ build_cmdline() {
   # as build.sh / the image builder set it): its A740 GMU wedges when a GPU
   # interrupt wakes one of the little cores 0-2 out of power collapse (GMU
   # HFI timeouts, then "OOB set GPU_SET" timeouts and a GPU hang; Armada
-  # e2d9802), so there they go to the big cores.
+  # e2d9802), so there they go to the big cores. The kernel always adds the
+  # boot CPU (0) to this mask, so sm8550-irq-affinity.service finishes the job.
   local irqcpus=0-1
   [[ "${SOC:-sm8650}" == sm8550 ]] && irqcpus=3-7
   # No clk_ignore_unused / pd_ignore_unused: those are SM8550 (MaSi) flags;
