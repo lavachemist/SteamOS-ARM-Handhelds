@@ -9,11 +9,18 @@
 
 build_cmdline() {
   local partuuid="$1"
+  # Interrupts go to the little cores (0-1 on SM8650). Not on SM8550 (SOC,
+  # as build.sh / the image builder set it): its A740 GMU wedges when a GPU
+  # interrupt wakes one of the little cores 0-2 out of power collapse (GMU
+  # HFI timeouts, then "OOB set GPU_SET" timeouts and a GPU hang; Armada
+  # e2d9802), so there they go to the big cores.
+  local irqcpus=0-1
+  [[ "${SOC:-sm8650}" == sm8550 ]] && irqcpus=3-7
   # No clk_ignore_unused / pd_ignore_unused: those are SM8550 (MaSi) flags;
   # ROCKNIX boots SM8650 without them and they can upset display bring-up.
   local -a parts=(
     video=efifb:off
-    irqaffinity=0-1
+    "irqaffinity=${irqcpus}"
     # Pocket FIT pad is an XInput device on USB; 2 ms polling like ROCKNIX
     # (needs 0506-usbcore-add-interrupt-interval-override.patch).
     usbcore.interrupt_interval_override=045e:028e:2

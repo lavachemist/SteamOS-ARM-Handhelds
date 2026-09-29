@@ -243,7 +243,16 @@ repack_kernel_partuuid() {
   local cmdline
   # shellcheck source=external-and-mods/kernel-sm8650/cmdline.sh
   source "${MOD}/kernel-sm8650/cmdline.sh"
-  cmdline="$(build_cmdline "${partuuid}")"
+  # The SoC follows the kernel (LOCALVERSION -<soc>-steamos), as in
+  # scripts/apply-overlays.sh; the cmdline differs per SoC.
+  local soc="${SOC:-}"
+  if [[ -z "$soc" ]]; then
+    case "$(basename "$(readlink -f "$KOUT")")" in
+      *-sm8550-*) soc=sm8550 ;;
+      *) soc=sm8650 ;;
+    esac
+  fi
+  cmdline="$(SOC="$soc" build_cmdline "${partuuid}")"
   # Patch the ANDROID! header cmdline in place; kernel + DTB chain untouched.
   python3 - "${src}" "${dest}" "${cmdline}" <<'PY'
 import sys
