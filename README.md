@@ -81,6 +81,10 @@ Coming from v1.1? That one has no updater yet, so flash v1.2 once.
 
 SSH is off by default. To turn it on, set a password (`passwd` in Konsole), then run `sudo systemctl enable --now sshd`. From your PC: `ssh steamos@<device-ip>`. Root login is off, use sudo. `sudo systemctl disable --now sshd` turns it off again.
 
+## Tailscale
+
+Tailscale is installed but off, with no account or keys in the image. To reach the device from your own tailnet (for SSH away from home), run `sudo systemctl enable --now tailscaled`, then `sudo tailscale up` and open the login link it prints. `sudo tailscale logout` and `sudo systemctl disable --now tailscaled` undo it.
+
 ## Handy commands
 
 ```
