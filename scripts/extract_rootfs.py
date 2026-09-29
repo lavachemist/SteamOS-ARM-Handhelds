@@ -25,10 +25,10 @@ TABLE_ENTRY_LEN = 40
 
 DEFAULT_STORE = (
     "https://steamdeck-images.steamos.cloud/vr/"
-    "20260921.6090922/deckard-20260921.6090922-0.5.0.castr"
+    "20260922.6101926/deckard-stable-20260922.6101926-0.3.0.castr"
 )
 FALLBACK_STORE = "https://steamdeck-images.steamos.cloud/vr/chunks.castr"
-EXPECTED_SHA256 = "5c53ff2ed7dc78f313a19fc9224aa07e7fb63271b811a4ada295441a0361e6a8"
+EXPECTED_SHA256 = "d2e69c17165c1d79c18675598590954f06e32fece32c7f9f9caeb345d33c82c7"
 
 
 def parse_caibx(path: str) -> tuple[int, list[tuple[int, int, bytes]]]:
