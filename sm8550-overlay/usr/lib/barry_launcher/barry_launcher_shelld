@@ -61,17 +61,7 @@ DATA = os.path.join(os.environ.get("XDG_DATA_HOME", f"{HOME}/.local/share"), "ba
 # which needs about 1000 CSS pixels across.
 APPS = {
     "browser": {"profile": "browser", "args": [], "zoom": "2.5"},
-    # Voice chat: this profile only runs Discord, so the microphone needs no
-    # prompt (kiosk mode may not show one), and incoming voice may play
-    # without a tap (Firefox's autoplay block would otherwise hold it back).
-    # Media and audio logging goes to the journal, to diagnose calls.
-    "discord": {"profile": "discord", "args": ["--kiosk", "https://discord.com/app"], "zoom": "1.25",
-                "prefs": {"permissions.default.microphone": 1,
-                          "media.navigator.permission.disabled": True,
-                          "media.autoplay.default": 0,
-                          "media.autoplay.blocking_policy": 0},
-                "env": {"MOZ_LOG": "MediaManager:4,cubeb:4"},
-                "log": True},
+    "discord": {"profile": "discord", "args": ["--kiosk", "https://discord.com/app"], "zoom": "1.25"},
 }
 FIREFOX_PREFS = {
     "browser.shell.checkDefaultBrowser": False,
@@ -158,9 +148,9 @@ def keyboard_input_focus(on: bool) -> None:
         STATE.input_focus = on
 
 
-def write_firefox_prefs(profile: str, zoom: str, extra: dict) -> None:
+def write_firefox_prefs(profile: str, zoom: str) -> None:
     os.makedirs(profile, exist_ok=True)
-    prefs = dict(FIREFOX_PREFS, **{"layout.css.devPixelsPerPx": zoom}, **extra)
+    prefs = dict(FIREFOX_PREFS, **{"layout.css.devPixelsPerPx": zoom})
     lines = [f"user_pref({json.dumps(k)}, {json.dumps(v)});" for k, v in prefs.items()]
     with open(f"{profile}/user.js", "w", encoding="utf-8") as fh:
         fh.write("// Written by barry_launcher_shelld at every start; change other settings in about:config.\n")
@@ -199,7 +189,7 @@ def launch(app: str) -> tuple[int, dict]:
         activate(["--pid", str(proc.pid), "--classname", "Navigator"])
         return 200, {"ok": True, "running": True}
     profile = os.path.join(DATA, spec["profile"])
-    write_firefox_prefs(profile, spec["zoom"], spec.get("prefs", {}))
+    write_firefox_prefs(profile, spec["zoom"])
     # Start clean: a session left by a killed instance makes Firefox offer
     # "Open previous tabs?", which a kiosk app cannot act on.
     for leftover in ("sessionstore.jsonlz4", "sessionstore-backups"):
@@ -208,13 +198,11 @@ def launch(app: str) -> tuple[int, dict]:
             shutil.rmtree(path, ignore_errors=True)
         elif os.path.exists(path):
             os.remove(path)
-    env = dict(os.environ, MOZ_USE_XINPUT2="1", MOZ_ENABLE_WAYLAND="0", GNOME_ACCESSIBILITY="1",
-               **spec.get("env", {}))
+    env = dict(os.environ, MOZ_USE_XINPUT2="1", MOZ_ENABLE_WAYLAND="0", GNOME_ACCESSIBILITY="1")
     env.pop("WAYLAND_DISPLAY", None)
-    out = None if spec.get("log") else subprocess.DEVNULL  # None: our journal
     STATE.apps[app] = subprocess.Popen(
         ["firefox", "--no-remote", "--profile", profile, *spec["args"]],
-        env=env, stdin=subprocess.DEVNULL, stdout=out, stderr=out,
+        env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     log(f"started {app} (pid {STATE.apps[app].pid})")
     return 200, {"ok": True, "running": False}
