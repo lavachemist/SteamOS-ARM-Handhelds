@@ -80,6 +80,13 @@ check_deps() {
   if ((${#missing[@]})); then
     die "missing: ${missing[*]}  (sudo apt-get install -y build-essential bc bison flex libssl-dev libelf-dev python3 curl xz-utils cpio kmod patch rsync dwarves)"
   fi
+  # BTF for sched_ext (steamos.config). pahole < 1.26 (Ubuntu 24.04 ships
+  # 1.25) writes kfunc prototypes scx_lavd rejects ("malformed scx kfunc
+  # prototype(s)"), so SteamOS's default scheduler would silently not start.
+  local pv
+  pv="$(pahole --version 2>/dev/null | tr -dc 0-9)"
+  [[ -n "$pv" && "$pv" -ge 126 ]] \
+    || die "need pahole >= 1.26 for sched_ext BTF (have: $(pahole --version 2>&1 | head -1)); build it from git.kernel.org/pub/scm/devel/pahole/pahole.git into /usr/local"
 }
 
 fetch() {
