@@ -5,6 +5,12 @@
 # UTF-8") for every UFS LUN each time a client reads the drives: ~40,000
 # journal lines an hour. ufshcd exposes the device's serial string
 # descriptor as text; use that instead. Runs after 60-persistent-storage.
-ACTION=="add|change", SUBSYSTEM=="block", SUBSYSTEMS=="platform", DRIVERS=="ufshcd-qcom", \
+#
+# Whole disks only: reading the descriptor is a UFS query command, and doing
+# it for all ~124 partitions at boot once left udev workers stuck on the UFS
+# partitions (fan driver never loaded). Partitions import ID_* from their
+# disk (60-persistent-storage), and udev handles a disk before its partitions.
+ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", \
+  SUBSYSTEMS=="platform", DRIVERS=="ufshcd-qcom", \
   ATTRS{string_descriptors/serial_number}=="?*", \
   ENV{ID_SCSI_SERIAL}="$attr{string_descriptors/serial_number}"
