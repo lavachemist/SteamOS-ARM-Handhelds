@@ -640,6 +640,8 @@ if [[ "$SOC" == sm8550 ]]; then
     "$R/usr/lib/systemd/system/sm8550-boostd.service" 0644
   install_file "$SM8550_OVL/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules" \
     "$R/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules" 0644
+  install_file "$SM8550_OVL/usr/lib/udev/rules.d/74-sm8550-ufs-serial.rules" \
+    "$R/usr/lib/udev/rules.d/74-sm8550-ufs-serial.rules" 0644
   install_file "$SM8550_OVL/usr/lib/udev/rules.d/72-sm8550-touch-inhibit.rules" \
     "$R/usr/lib/udev/rules.d/72-sm8550-touch-inhibit.rules" 0644
   mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
@@ -660,7 +662,8 @@ else
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-irq-affinity.service" \
     "$R/usr/lib/systemd/system/sm8550-boostd.service" \
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-boostd.service" \
-    "$R/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules"
+    "$R/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules" \
+    "$R/usr/lib/udev/rules.d/74-sm8550-ufs-serial.rules"
 fi
 
 # Temporary remote-test aid (BUNDLE_TAILSCALE=1); every other build removes it.
