@@ -24,15 +24,22 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PORT_ROOT="$(cd "${HERE}/../.." && pwd)"
 
-# ROCKNIX's released SM8650 recipe (tag 20260801: Linux 7.1.2). Their
-# development branch (7.2 + extra SM8650 power-domain/GPU patches) does not
-# boot on the Pocket FIT — black screen before the console, verified on
-# hardware 2026-09-23 — so builds pin the release.
-KVER="${KVER:-7.1.2}"
 SOC="${SOC:-sm8650}"
+# ROCKNIX's released recipes, pinned per SoC:
+# - SM8650: tag 20260801, Linux 7.1.2. Their 7.2 development branch (with
+#   extra SM8650 power-domain/GPU patches) does not boot on the Pocket FIT:
+#   black screen before the console, verified on hardware 2026-09-23.
+# - SM8550: tag 20260901 (their 7.2 recipe) on the newest 7.2 stable release.
+case "$SOC" in
+  sm8550) _kver=7.2.8 _rocknix_ref=20260901 ;;
+  *)      _kver=7.1.2 _rocknix_ref=20260801 ;;
+esac
+KVER="${KVER:-$_kver}"
+# ROCKNIX's version patch dir is named after the series (patches/7.2).
+KSERIES="${KVER%.*}"
 LOCALVERSION="${LOCALVERSION:--${SOC}-steamos}"
-ROCKNIX_DIR="${ROCKNIX_DIR:-${PORT_ROOT}/../rocknix-20260801}"
-ROCKNIX_REF="${ROCKNIX_REF:-20260801}"
+ROCKNIX_REF="${ROCKNIX_REF:-$_rocknix_ref}"
+ROCKNIX_DIR="${ROCKNIX_DIR:-${PORT_ROOT}/../rocknix-${ROCKNIX_REF}}"
 EXTRA_FW_REF="${EXTRA_FW_REF:-88b363e67d4f730feb2c3124724d26dfaa88ce76}"
 TDDI_REF="${TDDI_REF:-af27029fa2b27c4a77d16809298ed5d03c9da5a6}"
 # DTBs to append to KERNEL (ABL shows one menu entry per DTB model).
@@ -126,7 +133,7 @@ prepare_source() {
   tar -C "$WORK" -xf "$tarball"
 
   # Same order ROCKNIX uses: PKG_PATCH_DIRS="${LINUX} mainline ${DEVICE} default"
-  # (${LINUX}=7.2 is the version dir).
+  # (${LINUX} is the series dir, e.g. 7.2).
   # ROCKNIX patches this port leaves out (rocknix-skip: one basename per line).
   local -A skip=()
   local line
@@ -138,7 +145,7 @@ prepare_source() {
   fi
   local d p
   local -a dirs=(
-    "projects/ROCKNIX/packages/linux/patches/${KVER}"
+    "projects/ROCKNIX/packages/linux/patches/${KSERIES}"
     "projects/ROCKNIX/packages/linux/patches/mainline"
     "projects/ROCKNIX/devices/${SOC_UC}/patches/linux"
     "packages/linux/patches/default"
@@ -152,6 +159,8 @@ prepare_source() {
       [[ -e "$p" ]] || continue
       case "$(basename "$p")" in
         9900-i915-10bit-hack.patch) continue ;;  # x86 only
+        # perf's Rust target names for ROCKNIX's toolchain; we don't build perf
+        9999-fix-rust-build-error.patch) continue ;;
       esac
       if [[ "$d" != "@port" && -n "${skip[$(basename "$p")]:-}" ]]; then
         log "skip $(basename "$d")/$(basename "$p") (rocknix-skip)"

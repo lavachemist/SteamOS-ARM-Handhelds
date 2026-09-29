@@ -1,8 +1,3 @@
-Taken from Armada (armada-os/armada@939fb84, packages/kernel/patches/0523-regulator-qcom-rpmh-add-suspend-state-support.patch).
-Part of Armada's SM8550 s2idle set: the Retroid Pocket 6 never woke from sleep without it.
-Rebased for Linux 7.1.2: 7.2's per-regulator hw_data->pmic_bypass_mode does not
-exist yet; 7.1.2 always uses PMIC4_BOB_MODE_PASS for BOB bypass, so that is used.
-
 From: Luke Johnson <jaewun@me.com>
 Date: Thu, 2 Jul 2026 00:00:00 +1200
 Subject: [PATCH] regulator: qcom-rpmh: add suspend-state (SLEEP/WAKE TCS) support
@@ -135,7 +130,7 @@ Active-set votes are never modified.
 +static int rpmh_regulator_vrm_active_pmic_mode(struct rpmh_vreg *vreg)
 +{
 +	if (vreg->bypassed)
-+		return PMIC4_BOB_MODE_PASS;
++		return vreg->hw_data->pmic_bypass_mode;
 +
 +	if (vreg->mode == REGULATOR_MODE_INVALID)
 +		return -EINVAL;

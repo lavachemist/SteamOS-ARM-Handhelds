@@ -1,11 +1,12 @@
 # ROCKNIX devices/SM8550 patches build.sh leaves out for SOC=sm8550, one
-# basename per line. Matches Armada's SM8550 GPU/power set, which fixed a GPU
-# hang on the Retroid Pocket 6 (GMU "OOB set GPU_SET" timeout, then a GPU
-# fault and failed hangcheck recovery, 2026-09-27).
+# basename per line.
 #
-# Superseded by ROCKNIX ef264a23 ("sm8550/sm8750: fix gx clock issues"); the
-# newer versions are in patches/ (taken from Armada).
-0120-20250728_konradybcio_gpu_cc_power_requirements_reality_check.patch
-0121-pmdomain-qcom-rpmhpd-no-max-clamp-on-gmu-rails.patch
-# DDR/LLCC/L3 bandwidth scaling: Armada does not carry it.
-0101-v3_20260219_webgeek1234_arm64_qcom_sm8550_add_ddr_llcc_l3_cpu_bandwidth_scaling.patch
+# ROCKNIX's GMU rail clamp; patches/0121 (Armada's presync floor) replaces
+# it. Part of the set that fixed the RP6 GPU hang (GMU "OOB set GPU_SET"
+# timeout, then a GPU fault and failed hangcheck recovery, 2026-09-27).
+0121-pmdomain-qcom-rpmhpd-presync-floor-gmu-rails.patch
+#
+# Drops IRQF_NO_SUSPEND from the IPCC IRQ. patches/0504 (Armada) supersedes
+# it: keeps the doorbell live in s2idle (charger cable attach) and masks it
+# only for suspend-to-RAM.
+0502-wakeup-qcom-ipcc-remove-IRQF-NO-SUSPEND.patch
