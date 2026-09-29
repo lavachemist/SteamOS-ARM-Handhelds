@@ -647,6 +647,9 @@ if [[ "$SOC" == sm8550 ]]; then
   # zram: zstd, RAM-sized up to 8 GB (the 8 GB models ran out of swap in Palworld).
   install_file "$SM8550_OVL/usr/lib/systemd/zram-generator.conf.d/60-sm8550-zram.conf" \
     "$R/usr/lib/systemd/zram-generator.conf.d/60-sm8550-zram.conf" 0644
+  # TEO cpuidle governor (same fps as menu, ~4 % less power in game).
+  install_file "$SM8550_OVL/usr/lib/tmpfiles.d/sm8550-cpuidle-teo.conf" \
+    "$R/usr/lib/tmpfiles.d/sm8550-cpuidle-teo.conf" 0644
   install_file "$SM8550_OVL/usr/lib/udev/rules.d/72-sm8550-touch-inhibit.rules" \
     "$R/usr/lib/udev/rules.d/72-sm8550-touch-inhibit.rules" 0644
   mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
@@ -670,7 +673,8 @@ else
     "$R/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules" \
     "$R/usr/lib/udev/rules.d/74-sm8550-ufs-serial.rules" \
     "$R/usr/lib/udev/rules.d/99-zz-sm8550-backlight-nosystemd.rules" \
-    "$R/usr/lib/systemd/zram-generator.conf.d/60-sm8550-zram.conf"
+    "$R/usr/lib/systemd/zram-generator.conf.d/60-sm8550-zram.conf" \
+    "$R/usr/lib/tmpfiles.d/sm8550-cpuidle-teo.conf"
 fi
 
 # Temporary remote-test aid (BUNDLE_TAILSCALE=1); every other build removes it.
