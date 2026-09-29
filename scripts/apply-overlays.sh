@@ -611,7 +611,7 @@ fi
 # ---------------------------------------------------------------------------
 SM8550_OVL="${ROOT}/sm8550-overlay"
 if [[ "$SOC" == sm8550 ]]; then
-  log "== SM8550 overlay (fan curve, power button, steamos-manager devices, Thor touch)"
+  log "== SM8550 overlay (fan curve, power button, thread boost, steamos-manager devices, Thor touch)"
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-fand" \
     "$R/usr/lib/steamos-sm8550/sm8550-fand" 0755
   install_file "$SM8550_OVL/usr/share/sm8550-fand/fan.conf" \
@@ -633,12 +633,18 @@ if [[ "$SOC" == sm8550 ]]; then
     "$R/usr/lib/steamos-sm8550/sm8550-irq-affinity" 0755
   install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-irq-affinity.service" \
     "$R/usr/lib/systemd/system/sm8550-irq-affinity.service" 0644
+  # Game and Steam UI threads on the big cores with a uclamp boost.
+  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-boostd" \
+    "$R/usr/lib/steamos-sm8550/sm8550-boostd" 0755
+  install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-boostd.service" \
+    "$R/usr/lib/systemd/system/sm8550-boostd.service" 0644
   install_file "$SM8550_OVL/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules" \
     "$R/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules" 0644
   install_file "$SM8550_OVL/usr/lib/udev/rules.d/72-sm8550-touch-inhibit.rules" \
     "$R/usr/lib/udev/rules.d/72-sm8550-touch-inhibit.rules" 0644
   mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
-  for u in sm8550-fand.service sm8550-powerbuttond.service sm8550-irq-affinity.service; do
+  for u in sm8550-fand.service sm8550-powerbuttond.service sm8550-irq-affinity.service \
+           sm8550-boostd.service; do
     ln -sfn ../$u "$R/usr/lib/systemd/system/multi-user.target.wants/$u"
   done
 else
@@ -652,6 +658,8 @@ else
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-fand.service" \
     "$R/usr/lib/systemd/system/sm8550-irq-affinity.service" \
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-irq-affinity.service" \
+    "$R/usr/lib/systemd/system/sm8550-boostd.service" \
+    "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-boostd.service" \
     "$R/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules"
 fi
 

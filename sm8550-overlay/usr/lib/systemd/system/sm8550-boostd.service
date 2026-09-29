@@ -1,0 +1,13 @@
+[Unit]
+Description=SM8550 game and Steam UI threads on the big cores (uclamp boost)
+ConditionPathExists=/sys/firmware/devicetree/base/compatible
+
+[Service]
+Type=simple
+ExecCondition=/bin/sh -c 'grep -qa "qcom,sm8550" /sys/firmware/devicetree/base/compatible'
+ExecStart=/usr/lib/steamos-sm8550/sm8550-boostd
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
