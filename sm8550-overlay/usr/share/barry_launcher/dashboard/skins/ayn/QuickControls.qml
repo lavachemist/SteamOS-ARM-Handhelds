@@ -98,20 +98,13 @@ Rectangle {
             }
         }
 
-        // Stick lighting: on/off, colour, brightness
+        // Stick lighting: colour, on/off, brightness
         RowLayout {
             visible: !!qc.light
             Layout.fillWidth: true
             Layout.fillHeight: true
             spacing: 12 * qc.s
             Label { text: "LIGHTS" }
-            Choice {
-                Layout.fillWidth: false
-                Layout.preferredWidth: 100 * qc.s
-                label: qc.light && qc.light.enabled ? "On" : "Off"
-                active: !!qc.light && qc.light.enabled
-                onChosen: qc.dashboard.setControls({ lighting: { enabled: !qc.light.enabled } })
-            }
             Repeater {
                 model: qc.swatches
                 delegate: Rectangle {
@@ -129,6 +122,13 @@ Rectangle {
                         onTapped: qc.dashboard.setControls({ lighting: { enabled: true, color: sw.modelData } })
                     }
                 }
+            }
+            Choice {
+                Layout.fillWidth: false
+                Layout.preferredWidth: 100 * qc.s
+                label: qc.light && qc.light.enabled ? "On" : "Off"
+                active: !!qc.light && qc.light.enabled
+                onChosen: qc.dashboard.setControls({ lighting: { enabled: !qc.light.enabled } })
             }
             Item { Layout.fillWidth: true }
             Repeater {
