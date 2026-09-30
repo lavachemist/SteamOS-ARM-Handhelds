@@ -44,6 +44,7 @@ import os
 import shutil
 import subprocess
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import gi
@@ -99,7 +100,25 @@ FIREFOX_PREFS = {
     # Pop-ups become tabs: a second window would hide behind the others.
     "browser.link.open_newwindow": 3,
     "browser.link.open_newwindow.restriction": 0,
+    # A touch is a hover that never leaves: tab previews and tooltips would
+    # stay up, and a touch that lands on one as it closes leaves the browser
+    # deaf to touch until it restarts.
+    "browser.tabs.hoverPreview.enabled": False,
+    "browser.chrome.toolbar_tips": False,
+    # Gamescope makes every window full screen, so a Picture-in-Picture
+    # player would cover the browser, and there is no window manager to
+    # answer a full-screen request: video goes full screen inside the
+    # window instead.
+    "media.videocontrols.picture-in-picture.enabled": False,
+    "media.videocontrols.picture-in-picture.video-toggle.enabled": False,
+    "full-screen-api.ignore-widgets": True,
+    "full-screen-api.transition-duration.enter": "0 0",
+    "full-screen-api.transition-duration.leave": "0 0",
+    "full-screen-api.warning.timeout": 0,
 }
+# A new Firefox window puts the cursor in the address bar by itself; that
+# should not bring up the keyboard as the app opens.
+LAUNCH_QUIET_S = 3.0
 KEYS = {"BackSpace", "Return", "Tab", "Left", "Right", "Up", "Down", "Escape", "Delete", "space"}
 
 
@@ -116,6 +135,7 @@ class State:
         self.status: dict[str, str] = {}  # app -> what its tile says meanwhile
         self.overlay_marked = False
         self.input_focus: bool | None = None
+        self.quiet_until = 0.0  # monotonic time: no keyboard for text focus before it
 
     def keyboard(self) -> dict:
         with self.lock:
@@ -232,6 +252,7 @@ def start_flatpak(app: str, spec: dict) -> None:
             env=app_env(ACCESSIBILITY_ENABLED="1"),
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
+        STATE.quiet_until = time.monotonic() + LAUNCH_QUIET_S
         log(f"started {app} (pid {STATE.apps[app].pid})")
     finally:
         STATE.status.pop(app, None)
@@ -269,6 +290,7 @@ def launch(app: str) -> tuple[int, dict]:
         env=app_env(MOZ_USE_XINPUT2="1", MOZ_ENABLE_WAYLAND="0"),
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
+    STATE.quiet_until = time.monotonic() + LAUNCH_QUIET_S
     log(f"started {app} (pid {STATE.apps[app].pid})")
     return 200, {"ok": True, "running": False}
 
@@ -376,6 +398,9 @@ def on_focus(event) -> None:
             screen_h = int(os.environ.get("THOR_BOTTOM_HEIGHT", "1080"))
             top = ext.y + ext.height / 2 > screen_h * 0.5
     except GLib.Error:
+        return
+    if editable and time.monotonic() < STATE.quiet_until:
+        log("text focus in while the app opens: no keyboard")
         return
     if editable != STATE.keyboard()["visible"] or (editable and top != STATE.keyboard()["top"]):
         log(f"text focus {'in' if editable else 'out'}{' (lower half)' if editable and top else ''}")
