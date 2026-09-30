@@ -14,6 +14,22 @@ and its skins, so a skin is plain QML with no Python of its own:
   GET  /settings  {"skin": name, "idleSeconds": n}
   POST /settings  any of those keys; skin applies from the next opening,
                   idleSeconds 0 keeps the dashboard up until the next press
+  GET  /controls  the quick controls:
+                  {"fan": {"profile": "balanced", "profiles": [...]} or null,
+                   "lighting": {"enabled", "color": "rrggbb", "brightness"}
+                               or null,
+                   "refresh": {"hz": now, "choice": 60|120|0, "rates": [...]}}
+                  (choice 0: none made; games get the panel's highest)
+  POST /controls  {"fanProfile": name}, {"lighting": {...any of its keys}}
+                  or {"refreshHz": 60|120}; replies as GET
+
+A POST needs a JSON body, a Host of 127.0.0.1 or localhost and no Origin,
+so a web page cannot change the fan or the settings.
+
+Fan and lighting go through sm8550-thor-controlsd (root) on CONTROLS. The
+refresh rate is Game Mode's: GAMESCOPE_DYNAMIC_REFRESH on Steam's display,
+the property Steam's own refresh slider sets, so the two agree; Steam sets it
+again when a game with its own refresh setting starts.
 
 /stats, api 1 (fields may be added; skins should ignore unknown ones):
   api, time {text, hour, minute, utcOffset}, fps (null when no game frames
@@ -32,6 +48,9 @@ from __future__ import annotations
 import glob
 import json
 import os
+import re
+import socket
+import subprocess
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -42,6 +61,9 @@ GPU = "/sys/class/devfreq/3d00000.gpu"
 BATTERY = "/sys/class/power_supply/battery"
 WIFI = "wlan0"
 OVERLAY = "/run/sm8550-thor/overlay"
+CONTROLS = "/run/sm8550-thor/controls.sock"
+STEAM_DISPLAY = ":0"
+REFRESH_RATES = [60, 120]
 MIN_SAMPLE_S = 0.8
 HOME = os.path.expanduser("~")
 SKIN_DIRS = [
@@ -232,6 +254,66 @@ def clean(new: dict) -> dict:
     return out
 
 
+def controlsd(req: dict) -> dict | None:
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(3)
+            sock.connect(CONTROLS)
+            sock.sendall(json.dumps(req).encode() + b"\n")
+            data = b""
+            while not data.endswith(b"\n"):
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+        reply = json.loads(data)
+        return reply if isinstance(reply, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def root_prop(name: str) -> int:
+    r = subprocess.run(["xprop", "-display", STEAM_DISPLAY, "-root", name],
+                       capture_output=True, text=True, timeout=2)
+    m = re.search(r"=\s*(\d+)", r.stdout)
+    return int(m.group(1)) if m else 0
+
+
+def refresh() -> dict | None:
+    try:
+        return {"hz": root_prop("GAMESCOPE_DISPLAY_REFRESH_RATE_FEEDBACK"),
+                "choice": root_prop("GAMESCOPE_DYNAMIC_REFRESH"), "rates": REFRESH_RATES}
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def controls(fan_lights: dict | None = None) -> dict:
+    state = fan_lights or controlsd({"op": "get"}) or {}
+    return {"fan": state.get("fan"), "lighting": state.get("lighting"), "refresh": refresh()}
+
+
+def set_controls(body: dict) -> tuple[int, dict]:
+    known = {"fanProfile", "lighting", "refreshHz"}
+    if not body or set(body) - known:
+        return 400, {"error": f"known controls: {sorted(known)}"}
+    reply = None
+    if "fanProfile" in body or "lighting" in body:
+        reply = controlsd({"op": "set", **{k: body[k] for k in ("fanProfile", "lighting") if k in body}})
+        if reply is None:
+            return 503, {"error": "sm8550-thor-controlsd is not running"}
+        if "error" in reply:
+            return 400, reply
+    if "refreshHz" in body:
+        if body["refreshHz"] not in REFRESH_RATES:
+            return 400, {"error": f"refreshHz is one of {REFRESH_RATES}"}
+        r = subprocess.run(["xprop", "-display", STEAM_DISPLAY, "-root", "-f", "GAMESCOPE_DYNAMIC_REFRESH",
+                            "32c", "-set", "GAMESCOPE_DYNAMIC_REFRESH", str(body["refreshHz"])],
+                           capture_output=True, text=True, timeout=2)
+        if r.returncode != 0:
+            return 500, {"error": f"cannot set the refresh rate: {r.stderr.strip()}"}
+    return 200, controls(reply)
+
+
 class Handler(BaseHTTPRequestHandler):
     stats: Stats
 
@@ -264,13 +346,24 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"current": next((s for s in found if s["name"] == name), None), "skins": found})
         elif path == "/settings":
             self._json(200, settings())
+        elif path == "/controls":
+            self._json(200, controls())
         else:
             self._json(404, {"error": "not found"})
+
+    def _local(self) -> bool:
+        return (self.headers.get("Host", "") in (f"127.0.0.1:{PORT}", f"localhost:{PORT}")
+                and self.headers.get("Origin") is None
+                and self.headers.get("Content-Type", "").split(";")[0].strip() == "application/json")
 
     def do_POST(self) -> None:
         path = self.path.split("?", 1)[0]
         body = self._body()
-        if path == "/overlay":
+        if not self._local():
+            self._json(403, {"error": "local JSON requests only"})
+        elif path == "/controls":
+            self._json(*set_controls(body))
+        elif path == "/overlay":
             try:
                 with open(OVERLAY, "w", encoding="utf-8") as fh:
                     fh.write("1" if body.get("shown") else "0")

@@ -35,6 +35,8 @@ up until the next AYN press. Changes apply the next time the dashboard opens
 | `dashboard.stats` | the latest sample, updated once a second (below) |
 | `dashboard.shown` | true while on screen |
 | `dashboard.skinDir` | this skin's folder |
+| `dashboard.controls` | the quick controls (below), updated every 3 s |
+| `dashboard.setControls(body)` | change quick controls, e.g. `{fanProfile: "max"}` |
 | `dashboard.hide()` | dismiss, as a second AYN press would |
 | `dashboard.poke()` | count as activity for the idle timeout (touches count already) |
 | `dashboard.request(method, path, body, callback)` | raw call to the stats service |
@@ -66,6 +68,29 @@ the clock: it follows time-zone changes made after the dashboard started.
 Fields may be added in later versions, so ignore ones you don't know, and
 guard against missing ones (`stats` is `{}` for a moment at startup).
 
+### `dashboard.controls`
+
+```json
+{
+  "fan": {"profile": "balanced", "profiles": ["eco", "balanced", "performance", "max"]},
+  "refresh": {"hz": 120, "choice": 120, "rates": [60, 120]},
+  "lighting": {"enabled": true, "color": "ff8a00", "brightness": 50}
+}
+```
+
+Any of the three can be `null` when unavailable (no stick LEDs, Game Mode's
+display not reachable); leave that control out. Change them with
+`dashboard.setControls()`:
+
+- `{fanProfile: "eco"}`: one of `fan.profiles` (sm8550-fand's profiles;
+  `eco` is the quiet one, `max` runs the fan at full speed)
+- `{refreshHz: 60}`: the refresh rate games get on the top screen, the same
+  setting as Steam's refresh slider (Steam changes it again when a game with
+  its own setting starts). `hz` is the rate right now; `choice` is 0 while
+  none was made, and games then get the highest rate
+- `{lighting: {enabled, color, brightness}}`: any of the keys; `color` is
+  `rrggbb`, `brightness` 0-100. Kept across reboots
+
 ## Minimal skin
 
 ```qml
@@ -84,7 +109,8 @@ Rectangle {
 }
 ```
 
-The built-in `ayn` skin is a fuller example.
+The built-in `ayn` skin is a fuller example, with the quick controls in
+`QuickControls.qml`.
 
 If a skin fails to load, the dashboard falls back to the built-in one; the
 error is in the user journal (`journalctl --user -u barry_launcher_session`).

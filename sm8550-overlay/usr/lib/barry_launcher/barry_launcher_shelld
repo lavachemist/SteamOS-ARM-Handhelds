@@ -16,6 +16,9 @@ keyboard (shell/Keyboard.qml), which call it on 127.0.0.1:PORT:
   POST /keyboard  {"visible": bool}: show or hide by hand
   POST /type      {"text": "..."} or {"key": "BackSpace"|"Return"|...}
 
+A POST needs a JSON body, a Host of 127.0.0.1 or localhost and no Origin:
+the apps here include a web browser, and a web page must not type.
+
 The keyboard follows text focus through AT-SPI: Firefox reports focus
 changes on the accessibility bus, and an editable field gaining focus shows
 the keyboard; anything else gaining focus hides it. Keys go to the focused
@@ -31,6 +34,8 @@ Most apps are Firefox instances, each with its own profile under
 ~/.local/share/barry_launcher: the browser, and Discord's web app in kiosk
 mode (no address bar or tabs). Signal has no web app: it is
 Signal Desktop from Flathub, installed for the user on its first start.
+Trackpad and Keyboard drive the top screen instead (shell/TopInputApp.qml,
+through barry_launcher_inputd); each is a window of its own like the rest.
 Without Steam, gamescope treats every window
 as its own app and shows the most recently mapped one (stacking order does
 not count), so switching is unmapping and mapping the wanted window again.
@@ -45,6 +50,7 @@ import shutil
 import subprocess
 import threading
 import time
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import gi
@@ -81,7 +87,13 @@ APPS = {
     # accessibility tree on so text fields bring up the keyboard.
     "signal": {"flatpak": "org.signal.Signal", "window": "^signal$",
                "args": ["--force-device-scale-factor=1.75", "--force-renderer-accessibility"]},
+    # The top screen's trackpad and keyboard: QML windows by title.
+    "trackpad": {"qml": "trackpad", "window": "^Barry Launcher Trackpad$"},
+    "keyboard": {"qml": "keyboard", "window": "^Barry Launcher Top Keyboard$"},
 }
+TOP_INPUT_QML = "/usr/share/barry_launcher/shell/TopInputApp.qml"
+INPUTD = "http://127.0.0.1:47825"
+
 FLATHUB = "https://dl.flathub.org/repo/flathub.flatpakrepo"
 FIREFOX_PREFS = {
     "browser.shell.checkDefaultBrowser": False,
@@ -219,6 +231,9 @@ def activate(args: list[str]) -> bool:
 
 def go_home() -> None:
     STATE.set_keyboard(False)
+    # Leaving the trackpad mid-drag must not leave a button held on top.
+    if any(running(a) for a, spec in APPS.items() if "qml" in spec):
+        threading.Thread(target=release_top_input, daemon=True).start()
     if not activate(["--name", f"^{HOME_TITLE}$"]):
         log("cannot find the home screen window")
 
@@ -268,12 +283,22 @@ def launch(app: str) -> tuple[int, dict]:
     if proc:
         if "flatpak" in spec:
             activate(["--classname", spec["window"]])
+        elif "qml" in spec:
+            activate(["--pid", str(proc.pid), "--name", spec["window"]])
         else:
             activate(["--pid", str(proc.pid), "--classname", "Navigator"])
         return 200, {"ok": True, "running": True}
     if "flatpak" in spec:
         STATE.status[app] = "Starting…"
         threading.Thread(target=start_flatpak, args=(app, spec), daemon=True).start()
+        return 200, {"ok": True, "running": False}
+    if "qml" in spec:
+        STATE.apps[app] = subprocess.Popen(
+            ["qml6", TOP_INPUT_QML, "--", spec["qml"]],
+            env=app_env(),
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        log(f"started {app} (pid {STATE.apps[app].pid})")
         return 200, {"ok": True, "running": False}
     profile = os.path.join(DATA, spec["profile"])
     write_firefox_prefs(profile, spec["zoom"], spec.get("prefs", {}))
@@ -307,6 +332,15 @@ def close(app: str) -> tuple[int, dict]:
             proc.terminate()
         log(f"closing {app}")
     return 200, {"ok": True}
+
+
+def release_top_input() -> None:
+    """Let go of anything the trackpad or keyboard held on the top screen."""
+    req = urllib.request.Request(f"{INPUTD}/release", b"{}", {"Content-Type": "application/json"})
+    try:
+        urllib.request.urlopen(req, timeout=1).close()
+    except OSError:
+        pass
 
 
 def type_input(body: dict) -> tuple[int, dict]:
@@ -350,10 +384,17 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._json(404, {"error": "not found"})
 
+    def _local(self) -> bool:
+        return (self.headers.get("Host", "") in (f"127.0.0.1:{PORT}", f"localhost:{PORT}")
+                and self.headers.get("Origin") is None
+                and self.headers.get("Content-Type", "").split(";")[0].strip() == "application/json")
+
     def do_POST(self) -> None:
         path = self.path.split("?", 1)[0]
         body = self._body()
-        if path == "/launch":
+        if not self._local():
+            self._json(403, {"error": "local JSON requests only"})
+        elif path == "/launch":
             self._json(*launch(str(body.get("app", ""))))
         elif path == "/close":
             self._json(*close(str(body.get("app", ""))))
@@ -434,6 +475,8 @@ def main() -> None:
             if proc.poll() is not None:
                 log(f"{name} exited")
                 del STATE.apps[name]
+                if "qml" in APPS[name]:
+                    threading.Thread(target=release_top_input, daemon=True).start()
                 STATE.set_keyboard(False)
         # AYN held: home.
         stamp = home_request_stamp()

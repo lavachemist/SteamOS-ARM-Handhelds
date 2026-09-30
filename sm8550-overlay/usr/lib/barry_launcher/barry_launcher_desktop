@@ -1,0 +1,8 @@
+#!/bin/bash
+# barry_launcher_desktop: Barry Launcher's trackpad and keyboard for the AYN
+# Thor's top screen, on the bottom screen in Desktop Mode (Desktop.qml).
+# X11, where a window can refuse keyboard focus; the pointer and keys come
+# from barry_launcher_inputd, started here if it is not running yet.
+systemctl --user start barry_launcher_inputd.service
+export QT_QPA_PLATFORM=xcb
+exec qml6 /usr/share/barry_launcher/shell/Desktop.qml

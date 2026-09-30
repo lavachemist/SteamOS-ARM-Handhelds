@@ -645,7 +645,13 @@ remove_thor_bottom_screen() {
     "$R/etc/inputplumber/devices.d/50-ayn_thor.yaml" \
     "$R/var/lib/overlays/etc/upper/inputplumber/devices.d/50-ayn_thor.yaml" \
     "$R/usr/lib/systemd/system/sm8550-thor-backlightd.service" \
-    "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-thor-backlightd.service"
+    "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-thor-backlightd.service" \
+    "$R/usr/lib/steamos-sm8550/sm8550-thor-controlsd" \
+    "$R/usr/lib/systemd/system/sm8550-thor-controlsd.service" \
+    "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-thor-controlsd.service" \
+    "$R/usr/lib/systemd/user/barry_launcher_inputd.service" \
+    "$R/usr/lib/systemd/user/default.target.wants/barry_launcher_inputd.service" \
+    "$R/usr/share/applications/barry_launcher_desktop.desktop"
 }
 if [[ "$SOC" == sm8550 ]]; then
   log "== SM8550 overlay (fan curve, power button, thread boost, steamos-manager devices, Thor touch)"
@@ -666,7 +672,7 @@ if [[ "$SOC" == sm8550 ]]; then
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-touch-inhibit" \
     "$R/usr/lib/steamos-sm8550/sm8550-touch-inhibit" 0755
   if [[ "$DEVICE" == thor ]]; then
-    log "== AYN Thor bottom screen (lease helper, Barry Launcher, backlight daemon)"
+    log "== AYN Thor bottom screen (lease helper, Barry Launcher, backlight and controls daemons)"
     install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-run-bottom" \
       "$R/usr/lib/steamos-sm8550/sm8550-run-bottom" 0755
     # Barry Launcher: the AYN Thor bottom screen's home screen, apps, keyboard
@@ -675,7 +681,8 @@ if [[ "$SOC" == sm8550 ]]; then
     remove_old_bottom_session
     rm -rf "$R/usr/lib/barry_launcher" "$R/usr/share/barry_launcher"
     mkdir -p "$R/usr/lib/barry_launcher" "$R/usr/share"
-    for f in barry_launcher_session barry_launcher_dashboard barry_launcher_statsd barry_launcher_shelld; do
+    for f in barry_launcher_session barry_launcher_dashboard barry_launcher_statsd barry_launcher_shelld \
+      barry_launcher_inputd barry_launcher_desktop; do
       install_file "$SM8550_OVL/usr/lib/barry_launcher/$f" "$R/usr/lib/barry_launcher/$f" 0755
     done
     cp -r "$SM8550_OVL/usr/share/barry_launcher" "$R/usr/share/"
@@ -685,6 +692,15 @@ if [[ "$SOC" == sm8550 ]]; then
     mkdir -p "$R/usr/lib/systemd/user/gamescope-session.target.wants"
     ln -sfn ../barry_launcher.service \
       "$R/usr/lib/systemd/user/gamescope-session.target.wants/barry_launcher.service"
+    # The top screen's trackpad and keyboard (uinput), in Game Mode and
+    # Desktop Mode; the Desktop Mode window starts from the applications menu.
+    install_file "$SM8550_OVL/usr/lib/systemd/user/barry_launcher_inputd.service" \
+      "$R/usr/lib/systemd/user/barry_launcher_inputd.service" 0644
+    mkdir -p "$R/usr/lib/systemd/user/default.target.wants"
+    ln -sfn ../barry_launcher_inputd.service \
+      "$R/usr/lib/systemd/user/default.target.wants/barry_launcher_inputd.service"
+    install_file "$SM8550_OVL/usr/share/applications/barry_launcher_desktop.desktop" \
+      "$R/usr/share/applications/barry_launcher_desktop.desktop" 0644
     # AYN Thor: InputPlumber leaves the AYN button to sm8550-thor-backlightd,
     # which uses it to show the bottom-screen dashboard.
     ip_thor="$R/usr/share/inputplumber/devices/50-ayn_thor.yaml"
@@ -709,6 +725,13 @@ if [[ "$SOC" == sm8550 ]]; then
     mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
     ln -sfn ../sm8550-thor-backlightd.service \
       "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-thor-backlightd.service"
+    # Barry Launcher's quick controls: fan profile and stick lighting (root).
+    install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-thor-controlsd" \
+      "$R/usr/lib/steamos-sm8550/sm8550-thor-controlsd" 0755
+    install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-thor-controlsd.service" \
+      "$R/usr/lib/systemd/system/sm8550-thor-controlsd.service" 0644
+    ln -sfn ../sm8550-thor-controlsd.service \
+      "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-thor-controlsd.service"
   else
     remove_thor_bottom_screen
   fi

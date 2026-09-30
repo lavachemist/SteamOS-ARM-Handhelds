@@ -1,6 +1,6 @@
 // Line icons for the shell's buttons, drawn so they look the same whatever
 // fonts are installed. kind: back, forward, reload, stop, home, close, globe,
-// chat, signal, and the keyboard keys.
+// chat, signal, trackpad, keyboard, and the keyboard keys.
 import QtQuick
 import QtQuick.Shapes
 
@@ -66,6 +66,24 @@ Shape {
                     // round speech bubble with its tail at the lower left
                     return `M ${0.24 * w} ${0.8 * h} A ${0.4 * w} ${0.4 * h} 0 1 1 ${0.36 * w} ${0.86 * h}`
                          + ` L ${0.14 * w} ${0.92 * h} Z`
+                case "trackpad":
+                    // pad with a split button row along its bottom
+                    return `M ${0.12 * w} ${0.15 * h} L ${0.88 * w} ${0.15 * h} L ${0.88 * w} ${0.85 * h}`
+                         + ` L ${0.12 * w} ${0.85 * h} Z`
+                         + ` M ${0.12 * w} ${0.65 * h} L ${0.88 * w} ${0.65 * h}`
+                         + ` M ${0.5 * w} ${0.65 * h} L ${0.5 * w} ${0.85 * h}`
+                case "keyboard": {
+                    // outline, two rows of keys, a space bar
+                    let p = `M ${0.06 * w} ${0.25 * h} L ${0.94 * w} ${0.25 * h} L ${0.94 * w} ${0.75 * h}`
+                          + ` L ${0.06 * w} ${0.75 * h} Z`
+                          + ` M ${0.32 * w} ${0.62 * h} L ${0.68 * w} ${0.62 * h}`
+                    for (let r = 0; r < 2; r++)
+                        for (let c = 0; c < 5; c++) {
+                            const x = (0.2 + 0.15 * c) * w, y = (0.37 + 0.12 * r) * h
+                            p += ` M ${x} ${y} L ${x + 0.001 * w} ${y}`
+                        }
+                    return p
+                }
                 case "globe":
                     return `M ${0.05 * w} ${0.5 * h} A ${0.45 * w} ${0.45 * h} 0 1 1 ${0.95 * w} ${0.5 * h}`
                          + ` A ${0.45 * w} ${0.45 * h} 0 1 1 ${0.05 * w} ${0.5 * h}`

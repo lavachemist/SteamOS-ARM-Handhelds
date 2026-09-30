@@ -222,6 +222,11 @@ MAX_HZ=60
 if grep -qaE "KONKR Pocket FIT" /sys/firmware/devicetree/base/model 2>/dev/null; then
   MAX_HZ=144
 fi
+# AYN Thor top panel (Chipone ICNA35xx) lists 120 and 60 Hz; Barry Launcher's
+# dashboard switches between them the way Steam's slider does.
+if [[ "$OUTPUT" == DSI-2 ]] && grep -qa 'ayn,thor' /sys/firmware/devicetree/base/compatible 2>/dev/null; then
+  MAX_HZ=120
+fi
 # Start the Steam UI at 60 Hz: at 144 it redraws menus 144x/s, which roughly
 # doubles UI GPU/CPU load (heat, fan, sluggishness). Steam's refresh slider
 # (STEAM_DISPLAY_REFRESH_LIMITS) still reaches MAX_HZ per game.

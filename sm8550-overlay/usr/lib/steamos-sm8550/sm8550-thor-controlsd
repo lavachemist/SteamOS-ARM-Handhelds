@@ -1,0 +1,231 @@
+#!/usr/bin/env python3
+"""sm8550-thor-controlsd: the root half of Barry Launcher's quick controls on
+the AYN Thor: the fan profile and the stick lighting.
+
+Barry Launcher's dashboard runs as the user; its stats service
+(barry_launcher_statsd) asks this over SOCKET, which the input group (the
+session user) may use. One JSON object per connection, one reply line:
+
+  {"op": "get"}
+      {"fan": {"profile": "balanced", "profiles": ["eco", ...]},
+       "lighting": {"enabled": bool, "color": "rrggbb", "brightness": 0-100}
+                   or null when the device has no stick LEDs}
+  {"op": "set", "fanProfile": "performance"}
+  {"op": "set", "lighting": {"enabled": bool, "color": "rrggbb",
+                             "brightness": 0-100}}  (any of the keys)
+      the new state, as for get; {"error": "..."} on a bad request
+
+Fan: sm8550-fand's profile, written to FAN_QUICK (read after fand's own
+config files, so it wins) and applied with a reload. Lighting: the
+multicolor LEDs around the sticks (rgb:l1-l4 and rgb:r1-r4 on the Thor, as
+Armada's armada-rgb lists them), saved to LIGHT_STATE and set again at start.
+"""
+from __future__ import annotations
+
+import configparser
+import glob
+import grp
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+
+RUN_DIR = "/run/sm8550-thor"
+SOCKET = f"{RUN_DIR}/controls.sock"
+FAN_CONFS = ["/usr/share/sm8550-fand/fan.conf", "/etc/sm8550-fand.conf"]
+FAN_QUICK = "/var/lib/steamos-sm8550/fan-profile.conf"
+LIGHT_STATE = "/var/lib/steamos-sm8550/thor-lighting.json"
+LED_PREFIX = "rgb:"
+DEFAULT_LIGHT = {"enabled": True, "color": "ffffff", "brightness": 50}
+
+
+def log(msg: str) -> None:
+    print(msg, flush=True)
+
+
+def read(path: str, default: str = "") -> str:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return default
+
+
+def write(path: str, value: str) -> None:
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(value)
+
+
+def save(path: str, text: str) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    write(tmp, text)
+    os.replace(tmp, path)
+
+
+# --- fan -------------------------------------------------------------------
+
+def fan_state() -> dict:
+    parser = configparser.ConfigParser()
+    parser.read(FAN_CONFS + [FAN_QUICK])
+    profiles = [s.split(".", 1)[1] for s in parser.sections() if s.startswith("profile.")]
+    return {"profile": parser.get("general", "profile", fallback="balanced").strip().lower(),
+            "profiles": profiles}
+
+
+def set_fan(profile: str) -> None:
+    if profile not in fan_state()["profiles"]:
+        raise ValueError(f"no fan profile {profile!r}")
+    save(FAN_QUICK, "# Written by sm8550-thor-controlsd (Barry Launcher's quick controls).\n"
+                    f"[general]\nprofile={profile}\n")
+    subprocess.run(["systemctl", "reload", "sm8550-fand.service"], capture_output=True)
+    log(f"fan profile {profile}")
+
+
+# --- lighting --------------------------------------------------------------
+
+def leds() -> list[str]:
+    return sorted(d for d in glob.glob(f"/sys/class/leds/{LED_PREFIX}*")
+                  if os.path.exists(f"{d}/multi_intensity"))
+
+
+def light_state() -> dict | None:
+    found = leds()
+    if not found:
+        return None
+    try:
+        with open(LIGHT_STATE, encoding="utf-8") as fh:
+            saved = json.load(fh)
+        if isinstance(saved, dict):
+            return {**DEFAULT_LIGHT, **clean_light(saved)}
+    except (OSError, ValueError):
+        pass
+    # Nothing saved yet: describe what the first LED shows.
+    d = found[0]
+    top = int(read(f"{d}/max_brightness", "255") or 255)
+    order = read(f"{d}/multi_index").split()
+    values = [int(v) for v in read(f"{d}/multi_intensity").split()]
+    rgb = {c: v for c, v in zip(order, values)}
+    color = "".join(f"{min(255, round(rgb.get(c, 0) * 255 / top)):02x}" for c in ("red", "green", "blue"))
+    level = int(read(f"{d}/brightness", "0") or 0)
+    return {"enabled": level > 0, "color": color if color != "000000" else DEFAULT_LIGHT["color"],
+            "brightness": round(100 * level / top) if level else DEFAULT_LIGHT["brightness"]}
+
+
+def clean_light(new: dict) -> dict:
+    out = {}
+    if isinstance(new.get("enabled"), bool):
+        out["enabled"] = new["enabled"]
+    if isinstance(new.get("color"), str) and re.fullmatch(r"[0-9a-fA-F]{6}", new["color"]):
+        out["color"] = new["color"].lower()
+    b = new.get("brightness")
+    if isinstance(b, (int, float)) and not isinstance(b, bool) and 0 <= b <= 100:
+        out["brightness"] = int(b)
+    return out
+
+
+def apply_light(state: dict) -> None:
+    rgb = {"red": int(state["color"][0:2], 16), "green": int(state["color"][2:4], 16),
+           "blue": int(state["color"][4:6], 16)}
+    for d in leds():
+        top = int(read(f"{d}/max_brightness", "255") or 255)
+        if not state["enabled"] or state["brightness"] == 0:
+            write(f"{d}/brightness", "0")
+            continue
+        order = read(f"{d}/multi_index").split()
+        write(f"{d}/multi_intensity", " ".join(str(round(rgb.get(c, 0) * top / 255)) for c in order))
+        write(f"{d}/brightness", str(max(1, round(state["brightness"] * top / 100))))
+
+
+def set_light(new: dict) -> None:
+    current = light_state()
+    if current is None:
+        raise ValueError("no stick LEDs on this device")
+    change = clean_light(new)
+    if set(new) - set(change):
+        raise ValueError(f"bad lighting values: {sorted(set(new) - set(change))}")
+    state = {**current, **change}
+    apply_light(state)
+    save(LIGHT_STATE, json.dumps(state, indent=2) + "\n")
+    log(f"lighting {state}")
+
+
+# --- service ---------------------------------------------------------------
+
+def state() -> dict:
+    return {"fan": fan_state(), "lighting": light_state()}
+
+
+def handle(req: dict) -> dict:
+    op = req.get("op")
+    if op == "get":
+        return state()
+    if op != "set":
+        return {"error": "op is get or set"}
+    try:
+        if "fanProfile" in req:
+            if not isinstance(req["fanProfile"], str):
+                raise ValueError("fanProfile is a name")
+            set_fan(req["fanProfile"].lower())
+        if "lighting" in req:
+            if not isinstance(req["lighting"], dict):
+                raise ValueError("lighting is an object")
+            set_light(req["lighting"])
+    except (ValueError, OSError) as err:
+        return {"error": str(err)}
+    return state()
+
+
+def listen() -> socket.socket:
+    os.makedirs(RUN_DIR, exist_ok=True)
+    try:
+        gid = grp.getgrnam("input").gr_gid
+    except KeyError:
+        gid = -1
+    try:
+        os.unlink(SOCKET)
+    except FileNotFoundError:
+        pass
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    srv.bind(SOCKET)
+    os.chown(SOCKET, -1, gid)
+    os.chmod(SOCKET, 0o660)
+    srv.listen(8)
+    return srv
+
+
+def main() -> int:
+    saved = light_state() if os.path.exists(LIGHT_STATE) else None
+    if saved is not None:
+        try:
+            apply_light(saved)
+            log(f"lighting restored: {saved}")
+        except OSError as err:
+            log(f"cannot restore the lighting: {err}")
+    log(f"stick LEDs: {', '.join(os.path.basename(d) for d in leds()) or 'none'}")
+    srv = listen()
+    while True:
+        conn, _ = srv.accept()
+        with conn:
+            conn.settimeout(2)
+            try:
+                data = b""
+                while b"\n" not in data and len(data) < 4096:
+                    chunk = conn.recv(4096)
+                    if not chunk:
+                        break
+                    data += chunk
+                req = json.loads(data or b"{}")
+                reply = handle(req) if isinstance(req, dict) else {"error": "need a JSON object"}
+            except (OSError, ValueError) as err:
+                reply = {"error": str(err)}
+            try:
+                conn.sendall(json.dumps(reply).encode() + b"\n")
+            except OSError:
+                pass
+
+
+if __name__ == "__main__":
+    sys.exit(main())

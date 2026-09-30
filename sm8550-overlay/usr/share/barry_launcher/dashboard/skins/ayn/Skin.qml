@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 // Built-in skin, laid out like AYN's Android dashboard: status bar, current
-// FPS, temperature, fan, and gauges for CPU, GPU, power and memory.
+// FPS, temperature, fan, gauges for CPU, GPU, power and memory, and quick
+// controls (QuickControls.qml).
 import QtQuick
 import QtQuick.Layouts
 
@@ -184,11 +185,11 @@ Rectangle {
             }
         }
 
-        Label {
-            Layout.alignment: Qt.AlignHCenter
-            text: "Quick controls are coming in the next version."
-            opacity: 0.55
-            font.pixelSize: 20 * root.s
+        QuickControls {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 250 * root.s
+            dashboard: root.dashboard
+            s: root.s
         }
     }
 }

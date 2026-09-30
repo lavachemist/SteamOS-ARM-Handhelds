@@ -1,0 +1,327 @@
+#!/usr/bin/env python3
+"""barry_launcher_inputd: Barry Launcher's trackpad and keyboard for the AYN
+Thor's TOP screen, driven from the bottom one.
+
+Makes two uinput devices, a mouse ("Barry Launcher Trackpad") and a keyboard
+("Barry Launcher Keys"), and moves them for the bottom screen's trackpad and
+keyboard pages (shell/TopInput.qml), which call it on 127.0.0.1:PORT:
+
+  POST /pointer  {"dx": px, "dy": px}: move the pointer
+  POST /scroll   {"dx": notches, "dy": notches}: fractions add up; positive
+                 dy scrolls down
+  POST /button   {"button": "left"|"right"|"middle",
+                  "state": "click"|"down"|"up"}
+  POST /key      {"text": "..."}, {"key": "BackSpace"|"Return"|...} or
+                 {"combo": ["ctrl", "2"]}: US layout; characters it cannot
+                 type are skipped (the reply counts them)
+  POST /release  let go of every held button and key
+
+Game Mode: the bottom screen's gamescope takes no input devices of its own
+(its touches come over the lease socket), so these devices reach only the
+top screen's gamescope, which hands them to Steam or the game. Desktop Mode:
+KWin takes them like any mouse and keyboard.
+
+Only local, non-browser callers: a POST needs a JSON body, a Host of
+127.0.0.1 or localhost, and no Origin, so a web page (in the bottom screen's
+Firefox, say) cannot type on the top screen.
+
+/dev/uinput is open to the user at the seat (Steam's udev rules tag it
+uaccess).
+"""
+from __future__ import annotations
+
+import fcntl
+import json
+import os
+import signal
+import struct
+import sys
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+PORT = 47825
+UINPUT = "/dev/uinput"
+
+# linux/uinput.h, linux/input-event-codes.h
+UI_DEV_CREATE = 0x5501
+UI_DEV_DESTROY = 0x5502
+UI_DEV_SETUP = 0x405C5503  # _IOW('U', 3, struct uinput_setup)
+UI_SET_EVBIT = 0x40045564
+UI_SET_KEYBIT = 0x40045565
+UI_SET_RELBIT = 0x40045566
+EV_SYN, EV_KEY, EV_REL = 0, 1, 2
+SYN_REPORT = 0
+REL_X, REL_Y, REL_HWHEEL, REL_WHEEL = 0, 1, 6, 8
+REL_WHEEL_HI_RES, REL_HWHEEL_HI_RES = 11, 12
+BTN_LEFT, BTN_RIGHT, BTN_MIDDLE = 0x110, 0x111, 0x112
+BUS_VIRTUAL = 0x06
+EVENT = struct.Struct("llHHi")
+SETUP = struct.Struct("HHHH80sI")
+
+BUTTONS = {"left": BTN_LEFT, "right": BTN_RIGHT, "middle": BTN_MIDDLE}
+KEY_LEFTCTRL, KEY_LEFTSHIFT, KEY_LEFTALT, KEY_LEFTMETA = 29, 42, 56, 125
+MODIFIERS = {"ctrl": KEY_LEFTCTRL, "shift": KEY_LEFTSHIFT, "alt": KEY_LEFTALT, "super": KEY_LEFTMETA}
+NAMED = {
+    "Escape": 1, "BackSpace": 14, "Tab": 15, "Return": 28, "space": 57,
+    "Home": 102, "Up": 103, "Prior": 104, "Left": 105, "Right": 106, "End": 107,
+    "Down": 108, "Next": 109, "Delete": 111,
+    **{f"F{i}": 58 + i for i in range(1, 11)}, "F11": 87, "F12": 88,
+}
+# US layout: character -> (keycode, shift)
+CHARS: dict[str, tuple[int, bool]] = {}
+for _row, _first in (("1234567890", 2), ("qwertyuiop", 16), ("asdfghjkl", 30), ("zxcvbnm", 44)):
+    for _i, _c in enumerate(_row):
+        CHARS[_c] = (_first + _i, False)
+        if _c.isalpha():
+            CHARS[_c.upper()] = (_first + _i, True)
+for _plain, _shifted, _code in (
+    ("-", "_", 12), ("=", "+", 13), ("[", "{", 26), ("]", "}", 27), (";", ":", 39),
+    ("'", '"', 40), ("`", "~", 41), ("\\", "|", 43), (",", "<", 51), (".", ">", 52), ("/", "?", 53),
+):
+    CHARS[_plain] = (_code, False)
+    CHARS[_shifted] = (_code, True)
+for _c, _shifted in zip("1234567890", "!@#$%^&*()"):
+    CHARS[_shifted] = (CHARS[_c][0], True)
+CHARS[" "] = (57, False)
+CHARS["\n"] = (28, False)
+CHARS["\t"] = (15, False)
+# Scroll: one notch is 120 hi-res units.
+NOTCH = 120
+
+
+def log(msg: str) -> None:
+    print(msg, flush=True)
+
+
+class Device:
+    def __init__(self, name: str, keys: list[int], rels: list[int]) -> None:
+        self.fd = os.open(UINPUT, os.O_WRONLY | os.O_NONBLOCK)
+        if keys:
+            fcntl.ioctl(self.fd, UI_SET_EVBIT, EV_KEY)
+            for k in keys:
+                fcntl.ioctl(self.fd, UI_SET_KEYBIT, k)
+        if rels:
+            fcntl.ioctl(self.fd, UI_SET_EVBIT, EV_REL)
+            for r in rels:
+                fcntl.ioctl(self.fd, UI_SET_RELBIT, r)
+        fcntl.ioctl(self.fd, UI_DEV_SETUP, SETUP.pack(BUS_VIRTUAL, 0, 0, 1, name.encode(), 0))
+        fcntl.ioctl(self.fd, UI_DEV_CREATE)
+        self.held: set[int] = set()
+
+    def emit(self, events: list[tuple[int, int, int]]) -> None:
+        now = time.time()
+        sec, usec = int(now), int((now % 1) * 1e6)
+        data = b"".join(EVENT.pack(sec, usec, t, c, v) for t, c, v in events)
+        os.write(self.fd, data + EVENT.pack(sec, usec, EV_SYN, SYN_REPORT, 0))
+
+    def key(self, code: int, down: bool) -> None:
+        (self.held.add if down else self.held.discard)(code)
+        self.emit([(EV_KEY, code, 1 if down else 0)])
+
+    def release_all(self) -> None:
+        for code in list(self.held):
+            self.key(code, False)
+
+    def close(self) -> None:
+        try:
+            self.release_all()
+            fcntl.ioctl(self.fd, UI_DEV_DESTROY)
+        finally:
+            os.close(self.fd)
+
+
+class Input:
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.mouse = Device("Barry Launcher Trackpad", list(BUTTONS.values()),
+                            [REL_X, REL_Y, REL_WHEEL, REL_HWHEEL, REL_WHEEL_HI_RES, REL_HWHEEL_HI_RES])
+        keys = sorted({c for c, _ in CHARS.values()} | set(NAMED.values()) | set(MODIFIERS.values()))
+        self.keyboard = Device("Barry Launcher Keys", keys, [])
+        self.rest = [0.0, 0.0]  # sub-pixel motion carried to the next move
+        self.wheel = [0, 0]  # hi-res units sent since the last whole notch
+
+    def pointer(self, dx: float, dy: float) -> None:
+        with self.lock:
+            self.rest[0] += dx
+            self.rest[1] += dy
+            ix, iy = int(self.rest[0]), int(self.rest[1])
+            if not ix and not iy:
+                return
+            self.rest[0] -= ix
+            self.rest[1] -= iy
+            self.mouse.emit([(EV_REL, REL_X, ix), (EV_REL, REL_Y, iy)])
+
+    def scroll(self, dx: float, dy: float) -> None:
+        with self.lock:
+            events = []
+            # Wheel up is positive; a finger moving up scrolls the page down.
+            for i, (hi, lo, amount) in enumerate(((REL_HWHEEL_HI_RES, REL_HWHEEL, dx),
+                                                  (REL_WHEEL_HI_RES, REL_WHEEL, -dy))):
+                units = int(round(amount * NOTCH))
+                if not units:
+                    continue
+                events.append((EV_REL, hi, units))
+                # Clients without hi-res scrolling see whole notches.
+                self.wheel[i] += units
+                notches = int(self.wheel[i] / NOTCH)
+                if notches:
+                    self.wheel[i] -= notches * NOTCH
+                    events.append((EV_REL, lo, notches))
+            if events:
+                self.mouse.emit(events)
+
+    def button(self, name: str, state: str) -> None:
+        code = BUTTONS[name]
+        with self.lock:
+            if state in ("click", "down"):
+                self.mouse.key(code, True)
+            if state in ("click", "up"):
+                self.mouse.key(code, False)
+
+    def tap(self, code: int, mods: list[int]) -> None:
+        for m in mods:
+            self.keyboard.key(m, True)
+        self.keyboard.key(code, True)
+        self.keyboard.key(code, False)
+        for m in reversed(mods):
+            self.keyboard.key(m, False)
+
+    def text(self, text: str) -> int:
+        skipped = 0
+        with self.lock:
+            for ch in text:
+                if ch not in CHARS:
+                    skipped += 1
+                    continue
+                code, shift = CHARS[ch]
+                self.tap(code, [KEY_LEFTSHIFT] if shift else [])
+        return skipped
+
+    def named(self, name: str) -> None:
+        with self.lock:
+            self.tap(NAMED[name], [])
+
+    def combo(self, keys: list[str]) -> None:
+        *mods, last = keys
+        code = NAMED.get(last) or CHARS[last.lower()][0]
+        with self.lock:
+            self.tap(code, [MODIFIERS[m] for m in mods])
+
+    def release(self) -> None:
+        with self.lock:
+            self.mouse.release_all()
+            self.keyboard.release_all()
+
+
+INPUT: Input
+
+
+def number(value, limit: float) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return max(-limit, min(limit, float(value)))
+
+
+def handle(path: str, body: dict) -> tuple[int, dict]:
+    if path == "/pointer":
+        dx, dy = number(body.get("dx", 0), 4000), number(body.get("dy", 0), 4000)
+        if dx is None or dy is None:
+            return 400, {"error": "dx and dy are numbers"}
+        INPUT.pointer(dx, dy)
+    elif path == "/scroll":
+        dx, dy = number(body.get("dx", 0), 100), number(body.get("dy", 0), 100)
+        if dx is None or dy is None:
+            return 400, {"error": "dx and dy are numbers"}
+        INPUT.scroll(dx, dy)
+    elif path == "/button":
+        name, state = body.get("button", "left"), body.get("state", "click")
+        if name not in BUTTONS or state not in ("click", "down", "up"):
+            return 400, {"error": "bad button or state"}
+        INPUT.button(name, state)
+    elif path == "/key":
+        if isinstance(body.get("text"), str) and body["text"]:
+            return 200, {"ok": True, "skipped": INPUT.text(body["text"][:1000])}
+        if body.get("key") in NAMED:
+            INPUT.named(body["key"])
+        elif (isinstance(body.get("combo"), list) and 2 <= len(body["combo"]) <= 4
+              and all(isinstance(k, str) for k in body["combo"])
+              and all(k in MODIFIERS for k in body["combo"][:-1])
+              and (body["combo"][-1] in NAMED or body["combo"][-1].lower() in CHARS)):
+            INPUT.combo(body["combo"])
+        else:
+            return 400, {"error": "need text, a known key or a combo"}
+    elif path == "/release":
+        INPUT.release()
+    else:
+        return 404, {"error": "not found"}
+    return 200, {"ok": True}
+
+
+class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"  # keep-alive: one connection for a stream of moves
+
+    def _json(self, code: int, obj) -> None:
+        body = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _local(self) -> bool:
+        host = self.headers.get("Host", "")
+        return (host in (f"127.0.0.1:{PORT}", f"localhost:{PORT}")
+                and self.headers.get("Origin") is None
+                and self.headers.get("Content-Type", "").split(";")[0].strip() == "application/json")
+
+    def do_POST(self) -> None:
+        try:
+            n = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            n = 0
+        raw = self.rfile.read(n) if 0 < n <= 4096 else b""
+        if not self._local():
+            self._json(403, {"error": "local JSON requests only"})
+            return
+        try:
+            body = json.loads(raw or b"{}")
+        except ValueError:
+            body = None
+        if not isinstance(body, dict):
+            self._json(400, {"error": "need a JSON object"})
+            return
+        try:
+            self._json(*handle(self.path.split("?", 1)[0], body))
+        except OSError as err:
+            self._json(500, {"error": str(err)})
+
+    def do_GET(self) -> None:
+        self._json(200 if self.path == "/" else 404, {"ok": True} if self.path == "/" else {"error": "not found"})
+
+    def log_message(self, *_args) -> None:
+        pass
+
+
+def main() -> int:
+    global INPUT
+    try:
+        INPUT = Input()
+    except OSError as err:
+        log(f"cannot create the uinput devices: {err}")
+        return 1
+    log("trackpad and keyboard devices ready")
+    srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    srv.daemon_threads = True
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    try:
+        srv.serve_forever()
+    finally:
+        INPUT.mouse.close()
+        INPUT.keyboard.close()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

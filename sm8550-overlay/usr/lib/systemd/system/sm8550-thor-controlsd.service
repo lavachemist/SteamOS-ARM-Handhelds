@@ -1,0 +1,13 @@
+[Unit]
+Description=AYN Thor: fan profile and stick lighting for Barry Launcher's quick controls
+After=sm8550-fand.service
+
+[Service]
+Type=simple
+ExecCondition=/bin/sh -c 'grep -qa "ayn,thor" /sys/firmware/devicetree/base/compatible'
+ExecStart=/usr/lib/steamos-sm8550/sm8550-thor-controlsd
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

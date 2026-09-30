@@ -27,6 +27,13 @@ Window {
         id: dashboard
         readonly property int api: 1
         property var stats: ({})
+        // Quick controls (fan profile, lighting, refresh rate); see README.md.
+        property var controls: ({})
+        // Change controls, e.g. { fanProfile: "max" }; controls updates.
+        function setControls(body) {
+            win.request("POST", "/controls", body, function (c) { if (c) dashboard.controls = c })
+            dashboard.poke()
+        }
         readonly property bool shown: win.visible
         property string skinDir: ""
         // Dismiss the dashboard, as a second AYN press would.
@@ -69,6 +76,7 @@ Window {
                 dashboard.skinDir = current ? current.dir : ""
                 const url = current ? "file://" + current.dir + "/Skin.qml" : fallbackSkin
                 refresh()
+                refreshControls()
                 skin.setSource(url, { dashboard: dashboard })
                 if (skin.status === Loader.Error && url !== fallbackSkin) {
                     console.warn("skin", url, "failed to load; using the built-in one")
@@ -90,6 +98,11 @@ Window {
 
     function refresh() {
         request("GET", "/stats", null, function (s) { if (s) dashboard.stats = s })
+    }
+
+    // Controls change elsewhere too (Steam's refresh slider, a game).
+    function refreshControls() {
+        request("GET", "/controls", null, function (c) { if (c) dashboard.controls = c })
     }
 
     Loader {
@@ -137,5 +150,12 @@ Window {
         running: win.visible
         repeat: true
         onTriggered: win.refresh()
+    }
+
+    Timer {
+        interval: 3000
+        running: win.visible
+        repeat: true
+        onTriggered: win.refreshControls()
     }
 }

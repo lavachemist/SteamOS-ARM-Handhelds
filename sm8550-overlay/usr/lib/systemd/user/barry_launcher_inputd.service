@@ -1,0 +1,13 @@
+[Unit]
+Description=Barry Launcher: AYN Thor top-screen trackpad and keyboard (uinput)
+
+[Service]
+Type=simple
+ExecCondition=/bin/sh -c 'grep -qa "ayn,thor" /sys/firmware/devicetree/base/compatible'
+ExecStart=/usr/lib/barry_launcher/barry_launcher_inputd
+# /dev/uinput opens to the user once logind has made the seat theirs.
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

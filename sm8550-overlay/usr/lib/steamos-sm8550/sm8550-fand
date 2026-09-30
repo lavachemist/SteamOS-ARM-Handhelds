@@ -11,7 +11,8 @@ smoothing, linear curve interpolation quantised to pwm_quantum, ramp
 limits per 3 s tick, and a safe duty on any error.
 
 Config: /usr/share/sm8550-fand/fan.conf, overridden by /etc/sm8550-fand.conf
-(same keys). SIGHUP reloads. `sm8550-fand --dry-run` prints what it would do
+(same keys), then by QUICK_CONF, where the AYN Thor's quick controls
+(sm8550-thor-controlsd) keep the chosen profile. SIGHUP reloads. `sm8550-fand --dry-run` prints what it would do
 without touching the fan (works unprivileged).
 """
 from __future__ import annotations
@@ -24,6 +25,7 @@ import time
 
 FACTORY_CONF = "/usr/share/sm8550-fand/fan.conf"
 USER_CONF = "/etc/sm8550-fand.conf"
+QUICK_CONF = "/var/lib/steamos-sm8550/fan-profile.conf"
 TICK_S = 3
 FAN_SAFE_PWM = 128
 ZONE_KINDS = ("cpu", "gpu", "gpuss", "video", "mem")
@@ -96,7 +98,7 @@ def parse_curve(value: str) -> list[tuple[int, int]]:
 
 def load_conf() -> dict:
     parser = configparser.ConfigParser()
-    parser.read([FACTORY_CONF, USER_CONF])
+    parser.read([FACTORY_CONF, USER_CONF, QUICK_CONF])
     profile = parser.get("general", "profile", fallback="balanced").strip().lower()
     curve_name = parser.get(f"profile.{profile}", "fan_curve", fallback="").strip().lower()
     curve = parse_curve(parser.get(f"fan_curve.{curve_name}", "curve", fallback=""))

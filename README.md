@@ -22,6 +22,9 @@ Thor**. Detail is in each commit message.
   **Barry Launcher** (home screen, Firefox, Discord and Signal, an on-screen
   keyboard, and a performance dashboard on the AYN button) next to Game
   Mode, one brightness for both panels, and a Dual Screen Decky switch.
+  The bottom screen can also be the top screen's trackpad and keyboard, in
+  Game Mode and in Desktop Mode. The dashboard has quick controls for the
+  fan profile, a 60/120 Hz refresh rate and the stick lighting.
   Plain builds leave all of it out, so single-screen devices get none of it.
 - **Kernel:** Linux 7.2.8 on ROCKNIX's 20260901 recipe, built with GCC 15
   (`external-and-mods/kernel-sm8650/build-gcc15.sh`; the GCC 13 build does

@@ -1,7 +1,8 @@
 pragma ComponentBehavior: Bound
 // Home screen: app tiles. Black around them (pixels off on the AMOLED).
 // A running app's tile brings it forward and has a close badge; holding the
-// AYN button comes back here from any app.
+// AYN button comes back here from any app. Trackpad and Keyboard make the
+// bottom screen the top screen's trackpad and keyboard (TopInputApp.qml).
 import QtCore
 import QtQuick
 
@@ -108,9 +109,11 @@ Rectangle {
         }
     }
 
-    Row {
+    Grid {
         anchors.centerIn: parent
-        spacing: 60 * home.s
+        columns: 3
+        columnSpacing: 60 * home.s
+        rowSpacing: 30 * home.s
 
         Tile {
             app: "browser"
@@ -131,6 +134,16 @@ Rectangle {
             logo: StandardPaths.writableLocation(StandardPaths.GenericDataLocation)
                   + "/flatpak/exports/share/icons/hicolor/128x128/apps/org.signal.Signal.png"
             iconKind: "signal"
+        }
+        Tile {
+            app: "trackpad"
+            name: "Trackpad"
+            iconKind: "trackpad"
+        }
+        Tile {
+            app: "keyboard"
+            name: "Keyboard"
+            iconKind: "keyboard"
         }
     }
 
