@@ -9,10 +9,13 @@ utilization floor; this does the same:
   UI threads    (gamescope, Xwayland, Steam, its webhelper, mangoapp,
                  InputPlumber): uclamp.min 200
 
-No CPU affinity is set: the floor makes EAS pick a core with room and raises
-schedutil's clock, but placement stays the scheduler's. (An earlier version
-also moved these threads onto cpu3-7; the image no longer hard-pins games,
-see 70-sm8550-cpu-affinity.conf.)
+No CPU is picked for anyone: the floor makes EAS choose a core with room and
+raises schedutil's clock, but placement stays the scheduler's. The one
+affinity change undoes a pin: Steam holds its webhelper to cpu2-6 on its
+own (not via STEAM_DESKTOP_APP_AFFINITY_LIST), so UI threads narrower than
+all CPUs are widened back. Games' own thread pins are left alone. (An
+earlier version moved these threads onto cpu3-7; the image no longer
+hard-pins anything, see the sm8550 cpu-affinity drop-ins.)
 
 The uclamp.min values are konkrd's "balanced" profile (SM8650 overlay).
 Measured on the Retroid Pocket 6 in Easy Delivery Co. with the old big-core
@@ -112,6 +115,18 @@ def scan_procs() -> tuple[set[int], list[int]]:
     return games, [u for u in ui if u not in games]
 
 
+ALL_CPUS = set(range(os.cpu_count() or 1))
+
+
+def unpin(tid: int) -> None:
+    """Widen a thread that something narrowed to a CPU subset."""
+    try:
+        if os.sched_getaffinity(tid) != ALL_CPUS:
+            os.sched_setaffinity(tid, ALL_CPUS)
+    except OSError:
+        pass  # thread gone
+
+
 class Boost:
     def __init__(self) -> None:
         self.done: set[int] = set()
@@ -126,6 +141,8 @@ class Boost:
                     live.add(tid)
                     if tid not in self.done and set_uclamp_min(tid, value):
                         self.done.add(tid)
+                        if value == UI_UCLAMP:
+                            unpin(tid)
         self.done &= live
 
     def undo(self) -> None:
@@ -143,7 +160,7 @@ def scx_active() -> bool:
 
 def main() -> int:
     boost = Boost()
-    log(f"game uclamp.min {GAME_UCLAMP}, UI {UI_UCLAMP}, no affinity changes")
+    log(f"game uclamp.min {GAME_UCLAMP}, UI {UI_UCLAMP}; Steam UI pins widened to all CPUs")
     running = True
 
     def stop(*_):

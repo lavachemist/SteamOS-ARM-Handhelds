@@ -628,7 +628,7 @@ if [[ "$SOC" == sm8550 ]]; then
     "$R/usr/lib/systemd/system/sm8550-powerbuttond.service" 0644
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-touch-inhibit" \
     "$R/usr/lib/steamos-sm8550/sm8550-touch-inhibit" 0755
-  # Interrupts off the little cores: the A740's GMU wedges otherwise.
+  # GPU interrupts off the little cores: the A740's GMU wedges otherwise.
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-irq-affinity" \
     "$R/usr/lib/steamos-sm8550/sm8550-irq-affinity" 0755
   install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-irq-affinity.service" \
@@ -638,8 +638,10 @@ if [[ "$SOC" == sm8550 ]]; then
     "$R/usr/lib/steamos-sm8550/sm8550-boostd" 0755
   install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-boostd.service" \
     "$R/usr/lib/systemd/system/sm8550-boostd.service" 0644
-  # No hard CPU pins: the Frame keeps the session on cpu0-4 and games on
-  # cpu3-7. Give both every core and let EAS place them.
+  # No hard CPU pins: the Frame keeps system services on cpu1-4, the session
+  # on cpu0-4 and games on cpu3-7. Give all of them every core; EAS places.
+  install_file "$SM8550_OVL/usr/lib/systemd/system.conf.d/60-sm8550-cpu-affinity.conf" \
+    "$R/usr/lib/systemd/system.conf.d/60-sm8550-cpu-affinity.conf" 0644
   install_file "$SM8550_OVL/usr/lib/systemd/user.conf.d/60-sm8550-cpu-affinity.conf" \
     "$R/usr/lib/systemd/user.conf.d/60-sm8550-cpu-affinity.conf" 0644
   install_file "$SM8550_OVL/usr/lib/systemd/user/steam.service.d/70-sm8550-cpu-affinity.conf" \
@@ -691,6 +693,7 @@ else
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-irq-affinity.service" \
     "$R/usr/lib/systemd/system/sm8550-boostd.service" \
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-boostd.service" \
+    "$R/usr/lib/systemd/system.conf.d/60-sm8550-cpu-affinity.conf" \
     "$R/usr/lib/systemd/user.conf.d/60-sm8550-cpu-affinity.conf" \
     "$R/usr/lib/systemd/user/steam.service.d/70-sm8550-cpu-affinity.conf" \
     "$R/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules" \
