@@ -202,10 +202,14 @@ asx() { podman exec -i "$CTR" /system/bin/sh -c "$1" 2>/dev/null; }
 
 android_up() { [[ -f "$READY" ]] && systemctl --user -q is-active konkr-android.service; }
 
+# A compositor holds its socket's .lock while it runs; gamescope leaves the
+# socket itself behind when it exits.
+live_display() { [[ -S "${RUNDIR}/$1" ]] && ! flock -n "${RUNDIR}/$1.lock" true 2>/dev/null; }
+
 # Which Wayland display Android should draw on: gamescope in Game Mode,
 # KWin in Desktop Mode.
 current_display() {
-  if [[ -e "${RUNDIR}/gamescope-0" ]]; then echo gamescope-0; else echo "${WAYLAND_DISPLAY:-wayland-0}"; fi
+  if live_display gamescope-0; then echo gamescope-0; else echo "${WAYLAND_DISPLAY:-wayland-0}"; fi
 }
 
 ensure_android() {
