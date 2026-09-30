@@ -61,6 +61,16 @@ case "$SOC" in
   *) echo "unsupported SOC=${SOC} (sm8650, sm8550)" >&2; exit 1 ;;
 esac
 SOC_UC="${SOC^^}"
+# SM8550 on 7.2 only boots when built with GCC 15 (see build-gcc15.sh, which
+# runs this script in a Fedora 43 container). GCC 13's kernel dies before the
+# initramfs on the Retroid Pocket 6.
+if [[ "$SOC" == sm8550 && "${ALLOW_OLD_GCC:-0}" != 1 ]]; then
+  _gcc_major="$(${CC:-gcc} -dumpversion 2>/dev/null | cut -d. -f1)"
+  if [[ -z "$_gcc_major" || "$_gcc_major" -lt 15 ]]; then
+    echo "SOC=sm8550 needs GCC 15 (found ${_gcc_major:-none}): use build-gcc15.sh" >&2
+    exit 1
+  fi
+fi
 # Adreno 740 microcode + zap for SM8550 (the Frame rootfs only has A750's).
 # a740_sqe.fw here is the one MaSi's SM8550 build verified (md5 0211fdf6…);
 # Armbian's copy glitches RPCS3.

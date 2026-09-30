@@ -119,6 +119,10 @@ this tree inside `/work` (normalised to root-owned 0644/0755):
 
 ```bash
 bash external-and-mods/kernel-sm8650/build.sh                      # kernel
+# SM8550 (Retroid Pocket 6, AYN Thor): the 7.2.8 kernel only boots when
+# built with GCC 15, so it builds in a Fedora 43 container (needs Docker):
+#   SOC=sm8550 WORK=/work/kernel-sm8550 ROCKNIX_DIR=/work/rocknix-20260901 \
+#     bash external-and-mods/kernel-sm8650/build-gcc15.sh
 sudo bash scripts/build-gamescope-in-rootfs.sh /work/rootfs        # gamescope
 sudo STEAMOS_WORK=/work BOX64_SRC=/work/box64 \
      STEAM_ARM_SEED=/work/steam-seed-home/.local/share/Steam \
