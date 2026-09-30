@@ -1,8 +1,3 @@
-Taken from Armada (armada-os/armada@939fb84, packages/kernel/patches/0513-PCI-qcom-honour-an-opp-suspend-opp-as-the-non-s2ram-memory-floor.patch).
-Part of Armada's SM8550 s2idle set: the Retroid Pocket 6 never woke from sleep without it.
-Rebased for Linux 7.1.2: 7.1.2 drops the OPP at one site (non-S2RAM only), 7.2 at two;
-the helper is unchanged and replaces that one call.
-
 From: Armada <noreply@armada.local>
 Subject: [PATCH] PCI: qcom: honour an opp-suspend OPP as the non-S2RAM memory floor
 
@@ -71,7 +66,7 @@ this is an independent implementation for Linux 7.2.
  static int qcom_pcie_suspend_noirq(struct device *dev)
  {
  	struct qcom_pcie *pcie;
-@@ -2155,8 +2184,11 @@
+@@ -2182,8 +2217,11 @@
  		if (ret)
  			dev_err(dev, "Failed to disable CPU-PCIe interconnect path: %d\n", ret);
  
@@ -82,6 +77,21 @@ this is an independent implementation for Linux 7.2.
 +			if (ret)
 +				dev_err(dev, "Failed to set suspend OPP: %d\n", ret);
 +		}
+ 	} else {
+ 		/*
+ 		 * Set minimum bandwidth required to keep data path
+@@ -2211,8 +2249,12 @@
+ 				dev_err(dev, "Failed to disable CPU-PCIe interconnect path: %d\n",
+ 					ret);
+ 
+-			if (pcie->use_pm_opp)
+-				dev_pm_opp_set_opp(pcie->pci->dev, NULL);
++			if (pcie->use_pm_opp) {
++				ret = qcom_pcie_set_suspend_opp(pcie);
++				if (ret)
++					dev_err(dev, "Failed to set suspend OPP: %d\n",
++						ret);
++			}
+ 		}
  	}
  	return ret;
- }

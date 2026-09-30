@@ -24,15 +24,22 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PORT_ROOT="$(cd "${HERE}/../.." && pwd)"
 
-# ROCKNIX's released SM8650 recipe (tag 20260801: Linux 7.1.2). Their
-# development branch (7.2 + extra SM8650 power-domain/GPU patches) does not
-# boot on the Pocket FIT — black screen before the console, verified on
-# hardware 2026-09-23 — so builds pin the release.
-KVER="${KVER:-7.1.2}"
 SOC="${SOC:-sm8650}"
+# ROCKNIX's released recipes, pinned per SoC:
+# - SM8650: tag 20260801, Linux 7.1.2. Their 7.2 development branch (with
+#   extra SM8650 power-domain/GPU patches) does not boot on the Pocket FIT:
+#   black screen before the console, verified on hardware 2026-09-23.
+# - SM8550: tag 20260901 (their 7.2 recipe) on the newest 7.2 stable release.
+case "$SOC" in
+  sm8550) _kver=7.2.8 _rocknix_ref=20260901 ;;
+  *)      _kver=7.1.2 _rocknix_ref=20260801 ;;
+esac
+KVER="${KVER:-$_kver}"
+# ROCKNIX's version patch dir is named after the series (patches/7.2).
+KSERIES="${KVER%.*}"
 LOCALVERSION="${LOCALVERSION:--${SOC}-steamos}"
-ROCKNIX_DIR="${ROCKNIX_DIR:-${PORT_ROOT}/../rocknix-20260801}"
-ROCKNIX_REF="${ROCKNIX_REF:-20260801}"
+ROCKNIX_REF="${ROCKNIX_REF:-$_rocknix_ref}"
+ROCKNIX_DIR="${ROCKNIX_DIR:-${PORT_ROOT}/../rocknix-${ROCKNIX_REF}}"
 EXTRA_FW_REF="${EXTRA_FW_REF:-88b363e67d4f730feb2c3124724d26dfaa88ce76}"
 TDDI_REF="${TDDI_REF:-af27029fa2b27c4a77d16809298ed5d03c9da5a6}"
 # DTBs to append to KERNEL (ABL shows one menu entry per DTB model).
@@ -54,6 +61,16 @@ case "$SOC" in
   *) echo "unsupported SOC=${SOC} (sm8650, sm8550)" >&2; exit 1 ;;
 esac
 SOC_UC="${SOC^^}"
+# SM8550 on 7.2 only boots when built with GCC 15 (see build-gcc15.sh, which
+# runs this script in a Fedora 43 container). GCC 13's kernel dies before the
+# initramfs on the Retroid Pocket 6.
+if [[ "$SOC" == sm8550 && "${ALLOW_OLD_GCC:-0}" != 1 ]]; then
+  _gcc_major="$(${CC:-gcc} -dumpversion 2>/dev/null | cut -d. -f1)"
+  if [[ -z "$_gcc_major" || "$_gcc_major" -lt 15 ]]; then
+    echo "SOC=sm8550 needs GCC 15 (found ${_gcc_major:-none}): use build-gcc15.sh" >&2
+    exit 1
+  fi
+fi
 # Adreno 740 microcode + zap for SM8550 (the Frame rootfs only has A750's).
 # a740_sqe.fw here is the one MaSi's SM8550 build verified (md5 0211fdf6…);
 # Armbian's copy glitches RPCS3.
@@ -126,7 +143,7 @@ prepare_source() {
   tar -C "$WORK" -xf "$tarball"
 
   # Same order ROCKNIX uses: PKG_PATCH_DIRS="${LINUX} mainline ${DEVICE} default"
-  # (${LINUX}=7.2 is the version dir).
+  # (${LINUX} is the series dir, e.g. 7.2).
   # ROCKNIX patches this port leaves out (rocknix-skip: one basename per line).
   local -A skip=()
   local line
@@ -138,7 +155,7 @@ prepare_source() {
   fi
   local d p
   local -a dirs=(
-    "projects/ROCKNIX/packages/linux/patches/${KVER}"
+    "projects/ROCKNIX/packages/linux/patches/${KSERIES}"
     "projects/ROCKNIX/packages/linux/patches/mainline"
     "projects/ROCKNIX/devices/${SOC_UC}/patches/linux"
     "packages/linux/patches/default"
@@ -152,6 +169,8 @@ prepare_source() {
       [[ -e "$p" ]] || continue
       case "$(basename "$p")" in
         9900-i915-10bit-hack.patch) continue ;;  # x86 only
+        # perf's Rust target names for ROCKNIX's toolchain; we don't build perf
+        9999-fix-rust-build-error.patch) continue ;;
       esac
       if [[ "$d" != "@port" && -n "${skip[$(basename "$p")]:-}" ]]; then
         log "skip $(basename "$d")/$(basename "$p") (rocknix-skip)"

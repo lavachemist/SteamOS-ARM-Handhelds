@@ -142,8 +142,11 @@ if download_db "${extra_server}/extra.db" "$WORKDIR/extra.db"; then
   index_db "$WORKDIR/extra.db" "$extra_server"
 fi
 
-hf_server="$(repo_url deckard-arch-hotfixes)"
-if [[ -n "$hf_server" ]] && download_db "${hf_server}/deckard-arch-hotfixes.db" "$WORKDIR/hf.db"; then
+# main builds call it deckard-arch-hotfixes, stable deckard-arch-hotfixes-release-0.3.
+hf_repo="$(sed -n 's/^\[\(deckard-arch-hotfixes[^]]*\)\]$/\1/p' "$CONF" | head -1)"
+hf_server=""
+[[ -n "$hf_repo" ]] && hf_server="$(repo_url "$hf_repo")"
+if [[ -n "$hf_server" ]] && download_db "${hf_server}/${hf_repo}.db" "$WORKDIR/hf.db"; then
   index_db "$WORKDIR/hf.db" "$hf_server"
 fi
 
