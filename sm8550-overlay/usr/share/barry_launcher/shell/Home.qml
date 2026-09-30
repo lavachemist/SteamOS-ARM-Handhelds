@@ -2,12 +2,14 @@ pragma ComponentBehavior: Bound
 // Home screen: app tiles. Black around them (pixels off on the AMOLED).
 // A running app's tile brings it forward and has a close badge; holding the
 // AYN button comes back here from any app.
+import QtCore
 import QtQuick
 
 Rectangle {
     id: home
     property real s: 1
     property var running: ({})
+    property var status: ({})  // app -> "Installing…" etc. while it gets ready
     signal launch(string app)
     signal close(string app)
 
@@ -20,6 +22,7 @@ Rectangle {
         property url logo
         property string iconKind
         readonly property bool isRunning: home.running[app] === true
+        readonly property string statusText: home.status[app] || ""
 
         width: 300 * home.s
         height: 340 * home.s
@@ -31,8 +34,16 @@ Rectangle {
             height: 260 * home.s
             radius: 56 * home.s
             color: tap.pressed ? "#2d3140" : "#1b1d24"
-            border.color: tile.isRunning ? "#8a5cf0" : "#3a3e4d"
+            border.color: tile.isRunning || tile.statusText ? "#8a5cf0" : "#3a3e4d"
             border.width: 3 * home.s
+
+            SequentialAnimation on opacity {
+                running: tile.statusText !== ""
+                loops: Animation.Infinite
+                alwaysRunToEnd: true
+                NumberAnimation { to: 0.45; duration: 700; easing.type: Easing.InOutQuad }
+                NumberAnimation { to: 1; duration: 700; easing.type: Easing.InOutQuad }
+            }
 
             Image {
                 id: img
@@ -91,7 +102,7 @@ Rectangle {
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.top: face.bottom
             anchors.topMargin: 24 * home.s
-            text: tile.name
+            text: tile.statusText || tile.name
             color: "#eef0f4"
             font { family: "Noto Sans"; pixelSize: 40 * home.s; weight: Font.DemiBold }
         }
@@ -112,6 +123,14 @@ Rectangle {
             app: "discord"
             name: "Discord"
             iconKind: "chat"
+        }
+        Tile {
+            app: "signal"
+            name: "Signal"
+            // Signal's own icon, once Flatpak installed it for the user.
+            logo: StandardPaths.writableLocation(StandardPaths.GenericDataLocation)
+                  + "/flatpak/exports/share/icons/hicolor/128x128/apps/org.signal.Signal.png"
+            iconKind: "signal"
         }
     }
 

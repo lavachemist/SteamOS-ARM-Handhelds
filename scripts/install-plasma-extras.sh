@@ -158,9 +158,9 @@ fi
 WANT_STEAMOS=(kate networkmanager-qt modemmanager-qt extra-cmake-modules)
 WANT_GEAR=(ark kcalc gwenview okular filelight)
 WANT_OPTIONAL=(p7zip 7zip unrar unzip zip kdialog unarchiver lrzip yyjson fastfetch)
-# Per-device additions from the caller (space-separated), e.g. Firefox on SM8550.
+# Per-device additions from the caller (space-separated), e.g. xdotool on SM8550.
 # "alarm-core:<name>" replaces an installed package with Arch Linux ARM core's
-# newer build (Valve's Firefox needs a newer nss than the Frame snapshot).
+# newer build, when a package needs something newer than the Frame snapshot.
 WANT_EXTRA=()
 WANT_ALARM_CORE=()
 for p in ${EXTRA_PKGS:-}; do

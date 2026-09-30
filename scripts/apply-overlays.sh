@@ -939,12 +939,48 @@ rm -f "$HOME_DST/Desktop/Decky Loader.desktop" "$HOME_DST/Desktop/install-decky.
 # Plasma extras + ARM-Manager + LSFG/Thor/Decky plugins
 # ---------------------------------------------------------------------------
 log "== plasma extras (holo kate/ark/networkmanager-qt/…)"
-# SM8550: Firefox for the AYN Thor's bottom screen (Valve's build; it needs
-# nss/nspr newer than the Frame snapshot's), xdotool for its keyboard.
+# SM8550: xdotool for the AYN Thor's bottom-screen keyboard (Firefox below).
 extra_pkgs=""
-[[ "$SOC" == sm8550 ]] && extra_pkgs="alarm-core:nspr alarm-core:nss firefox libxss xdotool"
+[[ "$SOC" == sm8550 ]] && extra_pkgs="libxss xdotool"
 STEAMOS_HOME="$HOME_DST" EXTRA_PKGS="$extra_pkgs" "${SCRIPT_DIR}/install-plasma-extras.sh" "$R" \
   || log "WARN: plasma extras incomplete"
+
+# SM8550: Firefox for the AYN Thor's bottom screen (Barry Launcher's browser
+# and Discord). Mozilla's own Linux ARM64 build: self-contained (its own
+# NSS; needs glibc 2.28) and current, where the arm64 build in Valve's
+# repos lags behind (152). Its updater is off: updates come with our images.
+FIREFOX_VERSION=157.0
+FIREFOX_SHA256=73fc3d6f6f4d3fcdeee59db90156568af9959405120ad686e535f572995074d0
+if [[ "$SOC" == sm8550 ]]; then
+  log "== Firefox ${FIREFOX_VERSION} (Mozilla, linux-aarch64)"
+  ff_tar="${WORKDIR}/cache/firefox-${FIREFOX_VERSION}-linux-aarch64.tar.xz"
+  if [[ ! -s "$ff_tar" ]]; then
+    mkdir -p "${ff_tar%/*}"
+    curl -fL -o "$ff_tar.part" \
+      "https://archive.mozilla.org/pub/firefox/releases/${FIREFOX_VERSION}/linux-aarch64/en-US/firefox-${FIREFOX_VERSION}.tar.xz" &&
+      mv "$ff_tar.part" "$ff_tar"
+  fi
+  [[ -s "$ff_tar" && $(sha256sum "$ff_tar" | awk '{print $1}') == "$FIREFOX_SHA256" ]] \
+    || die "Firefox ${FIREFOX_VERSION} missing, or its checksum does not match"
+  # Replaces Valve's package from earlier images (same path: Barry Launcher
+  # takes the Firefox logo from it).
+  rm -rf "$R/usr/lib/firefox" "$R/usr/bin/firefox"
+  tar -xJf "$ff_tar" -C "$R/usr/lib"
+  mkdir -p "$R/usr/lib/firefox/distribution"
+  printf '{"policies": {"DisableAppUpdate": true}}\n' >"$R/usr/lib/firefox/distribution/policies.json"
+  ln -sfn ../lib/firefox/firefox "$R/usr/bin/firefox"
+  install -D -m0644 /dev/stdin "$R/usr/share/applications/firefox.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Firefox
+GenericName=Web Browser
+Exec=firefox %u
+Icon=/usr/lib/firefox/browser/chrome/icons/default/default128.png
+Categories=Network;WebBrowser;
+MimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;
+StartupWMClass=firefox
+EOF
+fi
 if [[ ! -f "$R/usr/lib/qt6/plugins/plasma/kcms/systemsettings/kcm_kscreen.so" ]]; then
   log "== official Plasma kscreen 6.2.5 KCM"
   "${SCRIPT_DIR}/build-kscreen-6.2.5.sh" "$R" \

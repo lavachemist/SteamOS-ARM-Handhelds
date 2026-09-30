@@ -5,7 +5,8 @@ the AYN Thor's bottom screen.
 Runs in barry_launcher_session next to the shell (shell/Shell.qml) and the
 keyboard (shell/Keyboard.qml), which call it on 127.0.0.1:PORT:
 
-  GET  /apps      {"browser": {"running": bool}, "discord": {...}}
+  GET  /apps      {"browser": {"running": bool, "status": str}, ...}: status
+                  is what a tile says while an app installs ("" otherwise)
   POST /launch    {"app": name}: start the app, or bring the running one
                   forward
   POST /close     {"app": name}: quit it
@@ -26,9 +27,11 @@ gamescope stops watching a window's properties once it is unmapped, so a
 hidden overlay's marks could never be cleared. It also hides while the AYN
 dashboard is up, since overlays are drawn above it.
 
-Apps are Firefox instances, each with its own profile under
+Most apps are Firefox instances, each with its own profile under
 ~/.local/share/barry_launcher: the browser, and Discord's web app in kiosk
-mode (no address bar or tabs). Without Steam, gamescope treats every window
+mode (no address bar or tabs). Signal has no web app: it is
+Signal Desktop from Flathub, installed for the user on its first start.
+Without Steam, gamescope treats every window
 as its own app and shows the most recently mapped one (stacking order does
 not count), so switching is unmapping and mapping the wanted window again.
 Holding the AYN button (sm8550-thor-backlightd) writes HOME_REQUEST, and any
@@ -73,7 +76,12 @@ APPS = {
                           "media.autoplay.default": 0,
                           "media.autoplay.blocking_policy": 0,
                           "media.peerconnection.ice.default_address_only": True}},
+    # Electron: X11 like the rest, scaled for the panel, with its
+    # accessibility tree on so text fields bring up the keyboard.
+    "signal": {"flatpak": "org.signal.Signal", "window": "^signal$",
+               "args": ["--force-device-scale-factor=1.75", "--force-renderer-accessibility"]},
 }
+FLATHUB = "https://dl.flathub.org/repo/flathub.flatpakrepo"
 FIREFOX_PREFS = {
     "browser.shell.checkDefaultBrowser": False,
     "browser.aboutwelcome.enabled": False,
@@ -88,6 +96,9 @@ FIREFOX_PREFS = {
     "ui.osk.enabled": False,
     "accessibility.force_disabled": 0,
     "media.autoplay.default": 1,
+    # Pop-ups become tabs: a second window would hide behind the others.
+    "browser.link.open_newwindow": 3,
+    "browser.link.open_newwindow.restriction": 0,
 }
 KEYS = {"BackSpace", "Return", "Tab", "Left", "Right", "Up", "Down", "Escape", "Delete", "space"}
 
@@ -102,6 +113,7 @@ class State:
         self.visible = False
         self.top = False
         self.apps: dict[str, subprocess.Popen] = {}
+        self.status: dict[str, str] = {}  # app -> what its tile says meanwhile
         self.overlay_marked = False
         self.input_focus: bool | None = None
 
@@ -191,14 +203,57 @@ def go_home() -> None:
         log("cannot find the home screen window")
 
 
+def app_env(**extra: str) -> dict:
+    env = dict(os.environ, GNOME_ACCESSIBILITY="1", **extra)
+    env.pop("WAYLAND_DISPLAY", None)  # X11, where gamescope's stacking applies
+    return env
+
+
+def flatpak_installed(ref: str) -> bool:
+    return subprocess.run(["flatpak", "info", ref], capture_output=True).returncode == 0
+
+
+def start_flatpak(app: str, spec: dict) -> None:
+    """Install the app from Flathub for this user if needed, then start it."""
+    ref = spec["flatpak"]
+    try:
+        if not flatpak_installed(ref):
+            STATE.status[app] = "Installing…"
+            log(f"installing {ref} from Flathub")
+            subprocess.run(["flatpak", "remote-add", "--user", "--if-not-exists", "flathub", FLATHUB],
+                           capture_output=True)
+            r = subprocess.run(["flatpak", "install", "--user", "-y", "--noninteractive", "flathub", ref],
+                               capture_output=True, text=True)
+            if r.returncode != 0:
+                log(f"cannot install {ref}: {r.stderr.strip()[-300:]}")
+                return
+        STATE.apps[app] = subprocess.Popen(
+            ["flatpak", "run", ref, *spec.get("args", [])],
+            env=app_env(ACCESSIBILITY_ENABLED="1"),
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        log(f"started {app} (pid {STATE.apps[app].pid})")
+    finally:
+        STATE.status.pop(app, None)
+
+
 def launch(app: str) -> tuple[int, dict]:
     spec = APPS.get(app)
     if spec is None:
         return 404, {"error": f"no app {app!r}"}
+    if app in STATE.status:
+        return 200, {"ok": True, "running": False}
     proc = running(app)
     if proc:
-        activate(["--pid", str(proc.pid), "--classname", "Navigator"])
+        if "flatpak" in spec:
+            activate(["--classname", spec["window"]])
+        else:
+            activate(["--pid", str(proc.pid), "--classname", "Navigator"])
         return 200, {"ok": True, "running": True}
+    if "flatpak" in spec:
+        STATE.status[app] = "Starting…"
+        threading.Thread(target=start_flatpak, args=(app, spec), daemon=True).start()
+        return 200, {"ok": True, "running": False}
     profile = os.path.join(DATA, spec["profile"])
     write_firefox_prefs(profile, spec["zoom"], spec.get("prefs", {}))
     # Start clean: a session left by a killed instance makes Firefox offer
@@ -209,11 +264,10 @@ def launch(app: str) -> tuple[int, dict]:
             shutil.rmtree(path, ignore_errors=True)
         elif os.path.exists(path):
             os.remove(path)
-    env = dict(os.environ, MOZ_USE_XINPUT2="1", MOZ_ENABLE_WAYLAND="0", GNOME_ACCESSIBILITY="1")
-    env.pop("WAYLAND_DISPLAY", None)
     STATE.apps[app] = subprocess.Popen(
         ["firefox", "--no-remote", "--profile", profile, *spec["args"]],
-        env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        env=app_env(MOZ_USE_XINPUT2="1", MOZ_ENABLE_WAYLAND="0"),
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     log(f"started {app} (pid {STATE.apps[app].pid})")
     return 200, {"ok": True, "running": False}
@@ -224,7 +278,11 @@ def close(app: str) -> tuple[int, dict]:
         return 404, {"error": f"no app {app!r}"}
     proc = running(app)
     if proc:
-        proc.terminate()
+        if "flatpak" in APPS[app]:
+            # The app runs in flatpak's sandbox, not as our child.
+            subprocess.run(["flatpak", "kill", APPS[app]["flatpak"]], capture_output=True)
+        else:
+            proc.terminate()
         log(f"closing {app}")
     return 200, {"ok": True}
 
@@ -265,7 +323,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/keyboard":
             self._json(200, STATE.keyboard())
         elif path == "/apps":
-            self._json(200, {name: {"running": running(name) is not None} for name in APPS})
+            self._json(200, {name: {"running": running(name) is not None,
+                                    "status": STATE.status.get(name, "")} for name in APPS})
         else:
             self._json(404, {"error": "not found"})
 

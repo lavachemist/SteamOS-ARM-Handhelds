@@ -1,10 +1,10 @@
 // Barry Launcher's home screen on the AYN Thor's bottom screen during Game
 // Mode: the first window of barry_launcher_session, under everything else.
-// Tiles start the bottom screen's apps (Firefox, Discord) through
-// barry_launcher_shelld, or bring a running one forward; holding the AYN
-// button, or an app ending, comes back here. Because this window is always shown, gamescope falls back
-// to it when an overlay such as the dashboard hides, instead of freezing on
-// the overlay's last frame.
+// Tiles start the bottom screen's apps (Firefox, Discord, Signal) through
+// barry_launcher_shelld, or bring a running one forward; holding the
+// AYN button, or an app ending, comes back here. Because this window is
+// always shown, gamescope falls back to it when an overlay such as the
+// dashboard hides, instead of freezing on the overlay's last frame.
 import QtQuick
 import QtQuick.Window
 
@@ -36,10 +36,13 @@ Window {
                 return
             try {
                 const apps = JSON.parse(x.responseText)
-                const r = {}
-                for (const name in apps)
+                const r = {}, st = {}
+                for (const name in apps) {
                     r[name] = apps[name].running
+                    st[name] = apps[name].status || ""
+                }
                 home.running = r
+                home.status = st
             } catch (e) {}
         }
         x.open("GET", api + "/apps")
