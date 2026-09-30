@@ -672,16 +672,24 @@ if [[ "$SOC" == sm8550 ]]; then
       "$R/usr/bin/steamos-polkit-helpers/steamos-priv-write" \
       "$SM8550_OVL/usr/share/steamos-sm8550/priv-write-backlight.inc"
   fi
-  # Interrupts off the little cores: the A740's GMU wedges otherwise.
+  # GPU interrupts off the little cores: the A740's GMU wedges otherwise.
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-irq-affinity" \
     "$R/usr/lib/steamos-sm8550/sm8550-irq-affinity" 0755
   install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-irq-affinity.service" \
     "$R/usr/lib/systemd/system/sm8550-irq-affinity.service" 0644
-  # Game and Steam UI threads on the big cores with a uclamp boost.
+  # uclamp boost for game and Steam UI threads (no affinity).
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-boostd" \
     "$R/usr/lib/steamos-sm8550/sm8550-boostd" 0755
   install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-boostd.service" \
     "$R/usr/lib/systemd/system/sm8550-boostd.service" 0644
+  # No hard CPU pins: the Frame keeps system services on cpu1-4, the session
+  # on cpu0-4 and games on cpu3-7. Give all of them every core; EAS places.
+  install_file "$SM8550_OVL/usr/lib/systemd/system.conf.d/60-sm8550-cpu-affinity.conf" \
+    "$R/usr/lib/systemd/system.conf.d/60-sm8550-cpu-affinity.conf" 0644
+  install_file "$SM8550_OVL/usr/lib/systemd/user.conf.d/60-sm8550-cpu-affinity.conf" \
+    "$R/usr/lib/systemd/user.conf.d/60-sm8550-cpu-affinity.conf" 0644
+  install_file "$SM8550_OVL/usr/lib/systemd/user/steam.service.d/70-sm8550-cpu-affinity.conf" \
+    "$R/usr/lib/systemd/user/steam.service.d/70-sm8550-cpu-affinity.conf" 0644
   install_file "$SM8550_OVL/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules" \
     "$R/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules" 0644
   install_file "$SM8550_OVL/usr/lib/udev/rules.d/74-sm8550-ufs-serial.rules" \
@@ -717,6 +725,13 @@ if [[ "$SOC" == sm8550 ]]; then
            sm8550-irq-affinity.service sm8550-boostd.service; do
     ln -sfn ../$u "$R/usr/lib/systemd/system/multi-user.target.wants/$u"
   done
+  # Default CPU scheduler: EAS (sm8550-boostd steps in), not LAVD. On 7.2,
+  # LAVD 1.1.2 pins the little and mid cores at max clock in games for no
+  # gain: EDC 58.5 fps at 7.4 W on EAS vs 58.1 fps at 8.5 W on LAVD.
+  for f in "$R/etc/default/steamos-scheduler" \
+           "$R/var/lib/overlays/etc/upper/default/steamos-scheduler"; do
+    if [[ -f "$f" ]]; then sed -i 's/^SCHEDULER=.*/SCHEDULER=none/' "$f"; fi
+  done
 else
   remove_old_bottom_session
   rm -rf "$R/usr/lib/steamos-sm8550" "$R/usr/share/sm8550-fand" \
@@ -739,12 +754,20 @@ else
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-irq-affinity.service" \
     "$R/usr/lib/systemd/system/sm8550-boostd.service" \
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-boostd.service" \
+    "$R/usr/lib/systemd/system.conf.d/60-sm8550-cpu-affinity.conf" \
+    "$R/usr/lib/systemd/user.conf.d/60-sm8550-cpu-affinity.conf" \
+    "$R/usr/lib/systemd/user/steam.service.d/70-sm8550-cpu-affinity.conf" \
     "$R/usr/lib/udev/rules.d/74-sm8550-ufs-serial.rules" \
     "$R/usr/lib/udev/rules.d/99-zz-sm8550-backlight-nosystemd.rules" \
     "$R/usr/lib/systemd/zram-generator.conf.d/60-sm8550-zram.conf" \
     "$R/usr/lib/tmpfiles.d/sm8550-cpuidle-teo.conf" \
     "$R/usr/lib/systemd/user/sm8550-volume-keeper.service" \
     "$R/usr/lib/systemd/user/default.target.wants/sm8550-volume-keeper.service"
+  # Back to the package default (the build rootfs is reused across SoCs).
+  for f in "$R/etc/default/steamos-scheduler" \
+           "$R/var/lib/overlays/etc/upper/default/steamos-scheduler"; do
+    if [[ -f "$f" ]]; then sed -i 's/^SCHEDULER=.*/SCHEDULER=lavd/' "$f"; fi
+  done
 fi
 
 # Tailscale: in every image but off, with no account or keys (see the

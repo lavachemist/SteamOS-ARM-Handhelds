@@ -1,5 +1,5 @@
 [Unit]
-Description=SM8550 interrupts on the big cores (Adreno 740 GMU hang)
+Description=SM8550 GPU interrupts off the little cores (Adreno 740 GMU hang)
 ConditionPathExists=/sys/firmware/devicetree/base/compatible
 # Before anything starts rendering.
 Before=display-manager.service

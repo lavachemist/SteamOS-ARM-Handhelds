@@ -1,34 +1,35 @@
 #!/usr/bin/env python3
-"""sm8550-boostd — keep the game and the Steam UI on the big cores (SM8550).
+"""sm8550-boostd — uclamp boost for the game and the Steam UI (SM8550).
 
-SteamOS partitions the CPUs for the Steam Frame: the user session
-(gamescope, Xwayland, Steam) runs on cpu0-4 (systemd user.conf) and games on
-cpu3-7 (steam.service). On SM8550 cpu0-2 are the Cortex-A510s, so the
-compositor and the Steam client share three little cores and two mid cores,
-and with mainline EAS/schedutil the frame-critical threads also run at low
-clocks. Android's game mode / WALT does what this does:
+With mainline EAS/schedutil the frame-critical threads run at low clocks and
+land on the Cortex-A510s (cpu0-2). Android's game mode / WALT raises their
+utilization floor; this does the same:
 
   game threads  (descendants of Steam's `reaper SteamLaunch`): uclamp.min 256
   UI threads    (gamescope, Xwayland, Steam, its webhelper, mangoapp,
                  InputPlumber): uclamp.min 200
-  both          moved onto the big cores (cpu3-7) unless already pinned
-                inside them (a game's own per-thread pins stay)
+
+No CPU is picked for anyone: the floor makes EAS choose a core with room and
+raises schedutil's clock, but placement stays the scheduler's. The one
+affinity change undoes a pin: Steam holds its webhelper to cpu2-6 on its
+own (not via STEAM_DESKTOP_APP_AFFINITY_LIST), so UI threads narrower than
+all CPUs are widened back. Games' own thread pins are left alone. (An
+earlier version moved these threads onto cpu3-7; the image no longer
+hard-pins anything, see the sm8550 cpu-affinity drop-ins.)
 
 The uclamp.min values are konkrd's "balanced" profile (SM8650 overlay).
-Measured on the Retroid Pocket 6 in Easy Delivery Co. (90 s runs, against
-the mean of the runs before and after without it): 45.3 -> 49.2 fps average,
-1 % low 25.6 -> 29.9 fps, frame-time SD 5.5 -> 4.3 ms, 5.1 -> 6.1 W.
-Only narrowing the UI threads to the big cores they already had (cpu3-4)
-did worse (1 % low 28.4, 7.0 W). Also measured and left out: GPU devfreq
+Measured on the Retroid Pocket 6 in Easy Delivery Co. with the old big-core
+pin included (90 s runs, against the mean of the runs before and after
+without it): 45.3 -> 49.2 fps average, 1 % low 25.6 -> 29.9 fps, frame-time
+SD 5.5 -> 4.3 ms, 5.1 -> 6.1 W. Also measured and left out: GPU devfreq
 polling 16 ms (1 % low -20 %), schedutil rate_limit_us 500 (+1 % fps, +0.3 W).
 
-When a sched_ext scheduler runs (SteamOS starts scx_lavd by default once the
-kernel has sched_ext), this stands aside and restores the threads: LAVD alone
-measured better (52.5 vs 48.8 fps, 1 % low 31.6 vs 28.9, +0.9 W) and LAVD
-plus this slightly worse than LAVD alone. It takes over again if the
+The image defaults to EAS. If a sched_ext scheduler is picked anyway
+(steamosctl set-cpu-scheduler lavd), this stands aside and clears the
+floors, since sched_ext ignores uclamp. It takes over again when the
 scheduler is switched back to the kernel default.
 
-Stopping the service puts every thread it touched back (affinity, uclamp).
+Stopping the service clears every floor it set.
 """
 from __future__ import annotations
 
@@ -79,20 +80,6 @@ def set_uclamp_min(tid: int, value: int) -> bool:
     return _libc.syscall(SYS_SCHED_SETATTR, tid, ctypes.byref(attr), 0) == 0
 
 
-def big_cpus() -> set[int]:
-    """CPUs outside the lowest-capacity cluster (the A510s on SM8550)."""
-    caps = {}
-    for c in glob.glob("/sys/devices/system/cpu/cpu[0-9]*"):
-        try:
-            caps[int(os.path.basename(c)[3:])] = int(rd(f"{c}/cpu_capacity", "0"))
-        except ValueError:
-            pass
-    if not caps:
-        return set()
-    low = min(caps.values())
-    return {n for n, v in caps.items() if v > low}
-
-
 def scan_procs() -> tuple[set[int], list[int]]:
     """One /proc pass: (game pids, UI pids). comm comes from stat; cmdline is
     read only for `reaper` (runs every second, so stay cheap)."""
@@ -128,23 +115,21 @@ def scan_procs() -> tuple[set[int], list[int]]:
     return games, [u for u in ui if u not in games]
 
 
+ALL_CPUS = set(range(os.cpu_count() or 1))
+
+
+def unpin(tid: int) -> None:
+    """Widen a thread that something narrowed to a CPU subset."""
+    try:
+        if os.sched_getaffinity(tid) != ALL_CPUS:
+            os.sched_setaffinity(tid, ALL_CPUS)
+    except OSError:
+        pass  # thread gone
+
+
 class Boost:
     def __init__(self) -> None:
-        self.big = big_cpus()
-        # tid -> original affinity (None when we left it alone)
-        self.done: dict[int, set[int] | None] = {}
-
-    def apply(self, tid: int, value: int) -> None:
-        orig = None
-        try:
-            cur = os.sched_getaffinity(tid)
-            if not cur <= self.big:
-                os.sched_setaffinity(tid, self.big)
-                orig = cur
-        except OSError:
-            return  # thread gone
-        set_uclamp_min(tid, value)
-        self.done[tid] = orig
+        self.done: set[int] = set()
 
     def tick(self) -> None:
         games, ui = scan_procs()
@@ -154,35 +139,28 @@ class Boost:
                 for t in glob.glob(f"/proc/{pid}/task/*"):
                     tid = int(os.path.basename(t))
                     live.add(tid)
-                    if tid not in self.done:
-                        self.apply(tid, value)
-        for tid in [t for t in self.done if t not in live]:
-            del self.done[tid]
+                    if tid not in self.done and set_uclamp_min(tid, value):
+                        self.done.add(tid)
+                        if value == UI_UCLAMP:
+                            unpin(tid)
+        self.done &= live
 
     def undo(self) -> None:
-        for tid, orig in self.done.items():
-            try:
-                if orig is not None:
-                    os.sched_setaffinity(tid, orig)
-                set_uclamp_min(tid, 0)
-            except OSError:
-                pass
+        for tid in self.done:
+            set_uclamp_min(tid, 0)
         self.done.clear()
 
 
 def scx_active() -> bool:
-    """A sched_ext scheduler (SteamOS starts scx_lavd by default) is running.
-    It ignores uclamp and does its own placement; our pins only get in its
-    way (LAVD + boost measured slightly worse than LAVD alone)."""
+    """A sched_ext scheduler (e.g. scx_lavd) is running. It ignores uclamp
+    and does its own placement (LAVD + boost measured slightly worse than
+    LAVD alone)."""
     return rd("/sys/kernel/sched_ext/state") == "enabled"
 
 
 def main() -> int:
     boost = Boost()
-    if not boost.big or len(boost.big) == os.cpu_count():
-        log("no big/little split found, nothing to do")
-        return 0
-    log(f"big cores {sorted(boost.big)}; game uclamp.min {GAME_UCLAMP}, UI {UI_UCLAMP}")
+    log(f"game uclamp.min {GAME_UCLAMP}, UI {UI_UCLAMP}; Steam UI pins widened to all CPUs")
     running = True
 
     def stop(*_):
@@ -204,7 +182,7 @@ def main() -> int:
             boost.tick()
         time.sleep(TICK_S)
     boost.undo()
-    log("stopped, threads restored")
+    log("stopped, uclamp floors cleared")
     return 0
 
 
