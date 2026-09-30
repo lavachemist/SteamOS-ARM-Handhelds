@@ -665,6 +665,13 @@ if [[ "$SOC" == sm8550 ]]; then
            sm8550-boostd.service; do
     ln -sfn ../$u "$R/usr/lib/systemd/system/multi-user.target.wants/$u"
   done
+  # Default CPU scheduler: EAS (sm8550-boostd steps in), not LAVD. On 7.2,
+  # LAVD 1.1.2 pins the little and mid cores at max clock in games for no
+  # gain: EDC 58.5 fps at 7.4 W on EAS vs 58.1 fps at 8.5 W on LAVD.
+  for f in "$R/etc/default/steamos-scheduler" \
+           "$R/var/lib/overlays/etc/upper/default/steamos-scheduler"; do
+    if [[ -f "$f" ]]; then sed -i 's/^SCHEDULER=.*/SCHEDULER=none/' "$f"; fi
+  done
 else
   rm -rf "$R/usr/lib/steamos-sm8550" "$R/usr/share/sm8550-fand"
   rm -f "$R/usr/share/steamos-manager/devices/retroid-pocket6.toml" \
@@ -685,6 +692,11 @@ else
     "$R/usr/lib/tmpfiles.d/sm8550-cpuidle-teo.conf" \
     "$R/usr/lib/systemd/user/sm8550-volume-keeper.service" \
     "$R/usr/lib/systemd/user/default.target.wants/sm8550-volume-keeper.service"
+  # Back to the package default (the build rootfs is reused across SoCs).
+  for f in "$R/etc/default/steamos-scheduler" \
+           "$R/var/lib/overlays/etc/upper/default/steamos-scheduler"; do
+    if [[ -f "$f" ]]; then sed -i 's/^SCHEDULER=.*/SCHEDULER=lavd/' "$f"; fi
+  done
 fi
 
 # Tailscale: in every image but off, with no account or keys (see the
