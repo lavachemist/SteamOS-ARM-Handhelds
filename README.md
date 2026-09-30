@@ -12,12 +12,17 @@ The kernel and device support come from [ROCKNIX](https://github.com/ROCKNIX/dis
 
 This fork (by lavachemist) adds the Snapdragon 8 Gen 2 (SM8550): the
 **Retroid Pocket 6**, tested on one device from microSD, and the **AYN
-Thor**, whose dual-screen extras live on the `thor-fixes` branch. Detail is
-in each commit message.
+Thor**. Detail is in each commit message.
 
-- **One SM8550 image** for the RP6 and the Thor: ROCKNIX's device trees,
+- **One SM8550 base** for the RP6 and the Thor: ROCKNIX's device trees,
   panel, RSInput pad, LED and haptics drivers, Adreno 740 firmware, Thor
   touch mapping and mic, and the UFS installer allowed on SM8550.
+- **AYN Thor image** (`make-steamos-sm8650.sh --device thor`, with a
+  gamescope built with the DRM lease patches): the bottom screen runs
+  **Barry Launcher** (home screen, Firefox, Discord and Signal, an on-screen
+  keyboard, and a performance dashboard on the AYN button) next to Game
+  Mode, one brightness for both panels, and a Dual Screen Decky switch.
+  Plain builds leave all of it out, so single-screen devices get none of it.
 - **Kernel:** Linux 7.2.8 on ROCKNIX's 20260901 recipe, built with GCC 15
   (`external-and-mods/kernel-sm8650/build-gcc15.sh`; the GCC 13 build does
   not boot on the RP6). sched_ext, BTF, tracing and the TEO idle governor

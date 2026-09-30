@@ -21,6 +21,17 @@ if [[ -z "${SOC:-}" ]]; then
   esac
 fi
 export SOC
+# Device-only extras on top of the SoC's (make-steamos-sm8650.sh --device).
+# Empty = none: the image suits every device of the SoC. thor = the AYN
+# Thor's bottom screen (Barry Launcher, Firefox, Dual Screen plugin), which
+# also needs a gamescope built with the DRM lease patches.
+DEVICE="${DEVICE:-}"
+case "$DEVICE" in
+  "") ;;
+  thor) [[ "$SOC" == sm8550 ]] || { echo "ERROR: DEVICE=thor needs SOC=sm8550 (have ${SOC})" >&2; exit 1; } ;;
+  *) echo "ERROR: unknown DEVICE ${DEVICE}" >&2; exit 1 ;;
+esac
+export DEVICE
 SM8650_OVL="${ROOT}/sm8650-overlay"
 STOCK="${R}/opt/stock-steamos"
 GSBUILD="${GAMESCOPE_BUILD:-${WORKDIR}/gamescope-build}"
@@ -34,11 +45,14 @@ log() { echo "$*" | tee -a "$LOG"; }
 [[ -d "$R/usr/bin" ]] || die "missing rootfs at $R"
 [[ -f "$KOUT/boot/KERNEL" ]] || die "missing kernel $KOUT"
 [[ -x "$GSBUILD/src/gamescope" ]] || die "missing built gamescope"
+if [[ "$DEVICE" == thor ]] && ! grep -qa -- '--lease-connector' "$GSBUILD/src/gamescope"; then
+  die "DEVICE=thor needs a gamescope with the DRM lease patches (GAMESCOPE_BUILD=$GSBUILD has none)"
+fi
 [[ -z "$MESA_SO" || -f "$MESA_SO" ]] || die "missing Mesa $MESA_SO"
 [[ -d "$KOUT/modules/$KREL" ]] || die "missing modules $KOUT/modules/$KREL"
 
 : >"$LOG"
-log "== $(date -Iseconds) apply Odin mods into $R (SOC=${SOC})"
+log "== $(date -Iseconds) apply Odin mods into $R (SOC=${SOC} DEVICE=${DEVICE:-none})"
 
 backup() {
   local src="$1" dest="$2"
@@ -619,6 +633,20 @@ remove_old_bottom_session() {
     "$R/usr/lib/systemd/user/sm8550-bottom-session.service" \
     "$R/usr/lib/systemd/user/gamescope-session.target.wants/sm8550-bottom-session.service"
 }
+# The AYN Thor's bottom-screen extras (DEVICE=thor), gone from any other
+# build, so a rootfs reused from a Thor build keeps none of them.
+remove_thor_bottom_screen() {
+  remove_old_bottom_session
+  rm -rf "$R/usr/lib/barry_launcher" "$R/usr/share/barry_launcher"
+  rm -f "$R/usr/lib/steamos-sm8550/sm8550-run-bottom" \
+    "$R/usr/lib/steamos-sm8550/sm8550-thor-backlightd" \
+    "$R/usr/lib/systemd/user/barry_launcher.service" \
+    "$R/usr/lib/systemd/user/gamescope-session.target.wants/barry_launcher.service" \
+    "$R/etc/inputplumber/devices.d/50-ayn_thor.yaml" \
+    "$R/var/lib/overlays/etc/upper/inputplumber/devices.d/50-ayn_thor.yaml" \
+    "$R/usr/lib/systemd/system/sm8550-thor-backlightd.service" \
+    "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-thor-backlightd.service"
+}
 if [[ "$SOC" == sm8550 ]]; then
   log "== SM8550 overlay (fan curve, power button, thread boost, steamos-manager devices, Thor touch)"
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-fand" \
@@ -637,40 +665,52 @@ if [[ "$SOC" == sm8550 ]]; then
     "$R/usr/lib/systemd/system/sm8550-powerbuttond.service" 0644
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-touch-inhibit" \
     "$R/usr/lib/steamos-sm8550/sm8550-touch-inhibit" 0755
-  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-run-bottom" \
-    "$R/usr/lib/steamos-sm8550/sm8550-run-bottom" 0755
-  # Barry Launcher: the AYN Thor bottom screen's home screen, apps, keyboard
-  # and performance dashboard. Replaced whole, so removed files do not
-  # linger; earlier builds' names (thor-*, sm8550-bottom-session) go.
-  remove_old_bottom_session
-  rm -rf "$R/usr/lib/barry_launcher" "$R/usr/share/barry_launcher"
-  mkdir -p "$R/usr/lib/barry_launcher" "$R/usr/share"
-  for f in barry_launcher_session barry_launcher_dashboard barry_launcher_statsd barry_launcher_shelld; do
-    install_file "$SM8550_OVL/usr/lib/barry_launcher/$f" "$R/usr/lib/barry_launcher/$f" 0755
-  done
-  cp -r "$SM8550_OVL/usr/share/barry_launcher" "$R/usr/share/"
-  chmod -R u=rwX,go=rX "$R/usr/share/barry_launcher"
-  install_file "$SM8550_OVL/usr/lib/systemd/user/barry_launcher.service" \
-    "$R/usr/lib/systemd/user/barry_launcher.service" 0644
-  mkdir -p "$R/usr/lib/systemd/user/gamescope-session.target.wants"
-  ln -sfn ../barry_launcher.service \
-    "$R/usr/lib/systemd/user/gamescope-session.target.wants/barry_launcher.service"
-  # AYN Thor: InputPlumber leaves the AYN button to sm8550-thor-backlightd,
-  # which uses it to show the bottom-screen dashboard.
-  ip_thor="$R/usr/share/inputplumber/devices/50-ayn_thor.yaml"
-  if [[ -f "$ip_thor" ]]; then
-    for etc in "$R/etc" "$R/var/lib/overlays/etc/upper"; do
-      [[ "$etc" == "$R/etc" || -d "$etc" ]] || continue
-      mkdir -p "$etc/inputplumber/devices.d"
-      python3 "$SM8550_OVL/usr/share/steamos-sm8550/ip-thor-without-ayn-key.py" \
-        "$ip_thor" "$etc/inputplumber/devices.d/50-ayn_thor.yaml"
+  if [[ "$DEVICE" == thor ]]; then
+    log "== AYN Thor bottom screen (lease helper, Barry Launcher, backlight daemon)"
+    install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-run-bottom" \
+      "$R/usr/lib/steamos-sm8550/sm8550-run-bottom" 0755
+    # Barry Launcher: the AYN Thor bottom screen's home screen, apps, keyboard
+    # and performance dashboard. Replaced whole, so removed files do not
+    # linger; earlier builds' names (thor-*, sm8550-bottom-session) go.
+    remove_old_bottom_session
+    rm -rf "$R/usr/lib/barry_launcher" "$R/usr/share/barry_launcher"
+    mkdir -p "$R/usr/lib/barry_launcher" "$R/usr/share"
+    for f in barry_launcher_session barry_launcher_dashboard barry_launcher_statsd barry_launcher_shelld; do
+      install_file "$SM8550_OVL/usr/lib/barry_launcher/$f" "$R/usr/lib/barry_launcher/$f" 0755
     done
-  fi
-  # Steer Steam's brightness writes to the Thor's top panel (see the .inc).
-  if [[ -f "$R/usr/bin/steamos-polkit-helpers/steamos-priv-write" ]]; then
-    python3 "$SM8550_OVL/usr/share/steamos-sm8550/insert-priv-write-backlight.py" \
-      "$R/usr/bin/steamos-polkit-helpers/steamos-priv-write" \
-      "$SM8550_OVL/usr/share/steamos-sm8550/priv-write-backlight.inc"
+    cp -r "$SM8550_OVL/usr/share/barry_launcher" "$R/usr/share/"
+    chmod -R u=rwX,go=rX "$R/usr/share/barry_launcher"
+    install_file "$SM8550_OVL/usr/lib/systemd/user/barry_launcher.service" \
+      "$R/usr/lib/systemd/user/barry_launcher.service" 0644
+    mkdir -p "$R/usr/lib/systemd/user/gamescope-session.target.wants"
+    ln -sfn ../barry_launcher.service \
+      "$R/usr/lib/systemd/user/gamescope-session.target.wants/barry_launcher.service"
+    # AYN Thor: InputPlumber leaves the AYN button to sm8550-thor-backlightd,
+    # which uses it to show the bottom-screen dashboard.
+    ip_thor="$R/usr/share/inputplumber/devices/50-ayn_thor.yaml"
+    if [[ -f "$ip_thor" ]]; then
+      for etc in "$R/etc" "$R/var/lib/overlays/etc/upper"; do
+        [[ "$etc" == "$R/etc" || -d "$etc" ]] || continue
+        mkdir -p "$etc/inputplumber/devices.d"
+        python3 "$SM8550_OVL/usr/share/steamos-sm8550/ip-thor-without-ayn-key.py" \
+          "$ip_thor" "$etc/inputplumber/devices.d/50-ayn_thor.yaml"
+      done
+    fi
+    # Steer Steam's brightness writes to the Thor's top panel (see the .inc).
+    if [[ -f "$R/usr/bin/steamos-polkit-helpers/steamos-priv-write" ]]; then
+      python3 "$SM8550_OVL/usr/share/steamos-sm8550/insert-priv-write-backlight.py" \
+        "$R/usr/bin/steamos-polkit-helpers/steamos-priv-write" \
+        "$SM8550_OVL/usr/share/steamos-sm8550/priv-write-backlight.inc"
+    fi
+    install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-thor-backlightd" \
+      "$R/usr/lib/steamos-sm8550/sm8550-thor-backlightd" 0755
+    install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-thor-backlightd.service" \
+      "$R/usr/lib/systemd/system/sm8550-thor-backlightd.service" 0644
+    mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
+    ln -sfn ../sm8550-thor-backlightd.service \
+      "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-thor-backlightd.service"
+  else
+    remove_thor_bottom_screen
   fi
   # GPU interrupts off the little cores: the A740's GMU wedges otherwise.
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-irq-affinity" \
@@ -710,10 +750,6 @@ if [[ "$SOC" == sm8550 ]]; then
   mkdir -p "$R/usr/lib/systemd/user/default.target.wants"
   ln -sfn ../sm8550-volume-keeper.service \
     "$R/usr/lib/systemd/user/default.target.wants/sm8550-volume-keeper.service"
-  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-thor-backlightd" \
-    "$R/usr/lib/steamos-sm8550/sm8550-thor-backlightd" 0755
-  install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-thor-backlightd.service" \
-    "$R/usr/lib/systemd/system/sm8550-thor-backlightd.service" 0644
   # Earlier Thor builds kept the bottom backlight root-only; the backlight
   # daemon needs Steam to write it directly again.
   rm -f "$R/usr/lib/udev/rules.d/74-sm8550-thor-backlight.rules" \
@@ -721,7 +757,7 @@ if [[ "$SOC" == sm8550 ]]; then
   install_file "$SM8550_OVL/usr/lib/udev/rules.d/72-sm8550-touch-inhibit.rules" \
     "$R/usr/lib/udev/rules.d/72-sm8550-touch-inhibit.rules" 0644
   mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
-  for u in sm8550-fand.service sm8550-powerbuttond.service sm8550-thor-backlightd.service \
+  for u in sm8550-fand.service sm8550-powerbuttond.service \
            sm8550-irq-affinity.service sm8550-boostd.service; do
     ln -sfn ../$u "$R/usr/lib/systemd/system/multi-user.target.wants/$u"
   done
@@ -939,19 +975,19 @@ rm -f "$HOME_DST/Desktop/Decky Loader.desktop" "$HOME_DST/Desktop/install-decky.
 # Plasma extras + ARM-Manager + LSFG/Thor/Decky plugins
 # ---------------------------------------------------------------------------
 log "== plasma extras (holo kate/ark/networkmanager-qt/…)"
-# SM8550: xdotool for the AYN Thor's bottom-screen keyboard (Firefox below).
+# AYN Thor: xdotool for the bottom-screen keyboard (Firefox below).
 extra_pkgs=""
-[[ "$SOC" == sm8550 ]] && extra_pkgs="libxss xdotool"
+[[ "$DEVICE" == thor ]] && extra_pkgs="libxss xdotool"
 STEAMOS_HOME="$HOME_DST" EXTRA_PKGS="$extra_pkgs" "${SCRIPT_DIR}/install-plasma-extras.sh" "$R" \
   || log "WARN: plasma extras incomplete"
 
-# SM8550: Firefox for the AYN Thor's bottom screen (Barry Launcher's browser
+# AYN Thor: Firefox for the bottom screen (Barry Launcher's browser
 # and Discord). Mozilla's own Linux ARM64 build: self-contained (its own
 # NSS; needs glibc 2.28) and current, where the arm64 build in Valve's
 # repos lags behind (152). Its updater is off: updates come with our images.
 FIREFOX_VERSION=157.0
 FIREFOX_SHA256=73fc3d6f6f4d3fcdeee59db90156568af9959405120ad686e535f572995074d0
-if [[ "$SOC" == sm8550 ]]; then
+if [[ "$DEVICE" == thor ]]; then
   log "== Firefox ${FIREFOX_VERSION} (Mozilla, linux-aarch64)"
   ff_tar="${WORKDIR}/cache/firefox-${FIREFOX_VERSION}-linux-aarch64.tar.xz"
   if [[ ! -s "$ff_tar" ]]; then
@@ -980,6 +1016,11 @@ Categories=Network;WebBrowser;
 MimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;
 StartupWMClass=firefox
 EOF
+elif [[ -f "$R/usr/lib/firefox/distribution/policies.json" ]] \
+  && ! grep -qsx 'usr/lib/firefox/' "$R"/var/lib/pacman/local/*/files; then
+  # Our Mozilla build in a rootfs reused from a Thor build (no package owns it).
+  log "== remove the Thor build's Firefox"
+  rm -rf "$R/usr/lib/firefox" "$R/usr/bin/firefox" "$R/usr/share/applications/firefox.desktop"
 fi
 if [[ ! -f "$R/usr/lib/qt6/plugins/plasma/kcms/systemsettings/kcm_kscreen.so" ]]; then
   log "== official Plasma kscreen 6.2.5 KCM"

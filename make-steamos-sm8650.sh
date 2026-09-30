@@ -64,8 +64,12 @@ Usage: $0 [options]
   --skip-box64      Do not rebuild Box64
   --image-only      Only pack the .img from the current rootfs
   --img PATH        Output image (default: ${IMG})
+  --device NAME     Device-only extras: thor (AYN Thor bottom screen: Barry
+                    Launcher, Firefox, Dual Screen plugin; needs a lease
+                    gamescope in GAMESCOPE_BUILD). Default: none, for
+                    single-screen devices.
 
-Env: BOOT_MIB ROOT_MIB HOME_MIB STEAMOS_SM8650_IMG STEAMOS_ROOTFS KERNEL_OUT
+Env: BOOT_MIB ROOT_MIB HOME_MIB STEAMOS_SM8650_IMG STEAMOS_ROOTFS KERNEL_OUT DEVICE
      empty ROOT_MIB/HOME_MIB = auto (tight pack; home grows on first boot)
 EOF
 }
@@ -77,11 +81,18 @@ while [[ $# -gt 0 ]]; do
     --skip-box64) SKIP_BOX64=1 ;;
     --image-only) IMAGE_ONLY=1; SKIP_DOWNLOAD=1; SKIP_APPLY=1; SKIP_BOX64=1 ;;
     --img) IMG="$2"; shift ;;
+    --device) DEVICE="$2"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
   shift
 done
+DEVICE="${DEVICE:-}"
+case "$DEVICE" in
+  ""|thor) ;;
+  *) die "unknown device: $DEVICE (known: thor)" ;;
+esac
+export DEVICE
 
 # Base: the Steam Frame's stable channel (what atomupd offers on "stable").
 # Other channels drop the prefix: deckard-<build>-<version> (e.g. main 0.5.0).
