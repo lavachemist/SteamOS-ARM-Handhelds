@@ -49,6 +49,7 @@ up until the next AYN press. Changes apply the next time the dashboard opens
   "cpu": {"ghz": 2.36, "load": 41},
   "gpu": {"mhz": 680, "maxMhz": 719},
   "tempC": 52,
+  "hotC": 61,
   "fanPct": 40,
   "powerW": -7.51,
   "memory": {"usedGb": 5.12, "totalGb": 15.2},
@@ -57,7 +58,9 @@ up until the next AYN press. Changes apply the next time the dashboard opens
 }
 ```
 
-`fps` is the game's frame rate, or `null` when no game is drawing. `powerW`
+`fps` is the game's frame rate, or `null` when no game is drawing. `tempC`
+is the CPU's temperature (the average of its sensors); `hotC` is the hottest
+sensor on the chip, which can run 10-20 °C higher under load. `powerW`
 is negative while on battery. Use `time` rather than JavaScript's `Date` for
 the clock: it follows time-zone changes made after the dashboard started.
 Fields may be added in later versions, so ignore ones you don't know, and

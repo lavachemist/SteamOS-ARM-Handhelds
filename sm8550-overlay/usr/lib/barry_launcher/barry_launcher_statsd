@@ -17,7 +17,8 @@ and its skins, so a skin is plain QML with no Python of its own:
 
 /stats, api 1 (fields may be added; skins should ignore unknown ones):
   api, time {text, hour, minute, utcOffset}, fps (null when no game frames
-  for 3 s), cpu {ghz, load}, gpu {mhz, maxMhz}, tempC, fanPct, powerW
+  for 3 s), cpu {ghz, load}, gpu {mhz, maxMhz}, tempC (CPU, the average of
+  its sensors), hotC (the hottest sensor), fanPct, powerW
   (negative while discharging), memory {usedGb, totalGb}, battery {percent,
   status}, net {bytesPerSec}
 
@@ -81,6 +82,10 @@ class Stats:
             z for z in glob.glob("/sys/class/thermal/thermal_zone*")
             if read(f"{z}/type").startswith(("cpu", "gpu", "mem", "video"))
         ]
+        # The CPU's temperature is the average of its sensors: the hottest
+        # one (usually a prime-core hot spot) runs 10-20 °C above the rest
+        # under load, more than people expect a CPU reading to show.
+        self.cpu_zones = [z for z in self.zones if read(f"{z}/type").startswith("cpu")]
         self.fan = next(
             (h for h in glob.glob("/sys/class/hwmon/hwmon*") if read(f"{h}/name") == "pwmfan"),
             None,
@@ -159,13 +164,18 @@ class Stats:
                 "mhz": read_int(f"{GPU}/cur_freq") // 1_000_000,
                 "maxMhz": read_int(f"{GPU}/max_freq") // 1_000_000,
             },
-            "tempC": max((read_int(f"{z}/temp") for z in self.zones), default=0) // 1000,
+            "tempC": self._cpu_temp(),
+            "hotC": max((read_int(f"{z}/temp") for z in self.zones), default=0) // 1000,
             "fanPct": round(100 * read_int(f"{self.fan}/pwm1") / 255) if self.fan else 0,
             "powerW": round(watts, 2),
             "memory": self._memory(),
             "battery": {"percent": read_int(f"{BATTERY}/capacity"), "status": read(f"{BATTERY}/status")},
             "net": self._net(),
         }
+
+    def _cpu_temp(self) -> int:
+        temps = [read_int(f"{z}/temp") for z in self.cpu_zones]
+        return round(sum(temps) / len(temps) / 1000) if temps else 0
 
     def get(self) -> dict:
         with self._lock:
