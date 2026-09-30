@@ -1,17 +1,19 @@
 #!/bin/sh
-# sm8550-irq-affinity: keep interrupts off the SM8550's little cores (0-2).
-# The Adreno 740's GMU wedges when a GPU interrupt wakes one of them out of
+# sm8550-irq-affinity: keep only the GPU's interrupts off the SM8550's little
+# cores (0-2); every other interrupt stays at the kernel default (all CPUs).
+# The Adreno 740's GMU wedges when a GPU interrupt wakes a little core out of
 # power collapse: GMU HFI replies arrive late, then "OOB set GPU_SET"
-# timeouts and a GPU hang that recovery never clears (Armada e2d9802 routes
-# SM8550 interrupts the same way). The kernel cmdline alone cannot do this:
-# irqaffinity= always adds the boot CPU (0), so the GPU interrupt landed
-# there anyway. Interrupts requested later get the new default. Per-CPU and
-# chained interrupts refuse the write; that is expected.
-mask=f8 # CPUs 3-7
+# timeouts and a GPU hang that recovery never clears (Armada e2d9802).
+# Older images also carry irqaffinity=3-7 on the cmdline; undo that here.
+all=ff    # CPUs 0-7
+gpu=f8    # CPUs 3-7
 
-echo "$mask" >/proc/irq/default_smp_affinity
-moved=0
+echo "$all" >/proc/irq/default_smp_affinity
 for f in /proc/irq/*/smp_affinity; do
-  echo "$mask" 2>/dev/null >"$f" && moved=$((moved + 1))
+  echo "$all" 2>/dev/null >"$f"
 done
-echo "sm8550-irq-affinity: interrupts on CPUs 3-7 (${moved} moved)"
+moved=""
+for irq in $(awk '$NF ~ /^(gpu-irq|hfi|gmu)$/ { sub(":", "", $1); print $1 }' /proc/interrupts); do
+  echo "$gpu" >"/proc/irq/$irq/smp_affinity" && moved="$moved $irq"
+done
+echo "sm8550-irq-affinity: GPU interrupts on CPUs 3-7 (irq${moved:- none found}), rest on all CPUs"
