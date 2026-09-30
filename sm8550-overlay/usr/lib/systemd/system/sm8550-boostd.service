@@ -1,5 +1,5 @@
 [Unit]
-Description=SM8550 game and Steam UI threads on the big cores (uclamp boost)
+Description=SM8550 uclamp boost for game and Steam UI threads
 ConditionPathExists=/sys/firmware/devicetree/base/compatible
 
 [Service]
