@@ -8,6 +8,48 @@ The kernel and device support come from [ROCKNIX](https://github.com/ROCKNIX/dis
 > Initial support for the AYANEO Pocket S2 and S2 Pro is in (same chip and screen, so they share a setup). I don't have one myself, so if you do, please tell me what works and what doesn't. On the S2 Pro, pick AYANEO Pocket S2 as the device model in the ABL menu.
 > First boot takes a couple of minutes, don't panic.
 
+## Changes in this fork
+
+This fork (by lavachemist) adds the Snapdragon 8 Gen 2 (SM8550): the
+**Retroid Pocket 6**, tested on one device from microSD, and the **AYN
+Thor**, whose dual-screen extras live on the `thor-fixes` branch. Detail is
+in each commit message.
+
+- **One SM8550 image** for the RP6 and the Thor: ROCKNIX's device trees,
+  panel, RSInput pad, LED and haptics drivers, Adreno 740 firmware, Thor
+  touch mapping and mic, and the UFS installer allowed on SM8550.
+- **Kernel:** Linux 7.2.8 on ROCKNIX's 20260901 recipe, built with GCC 15
+  (`external-and-mods/kernel-sm8650/build-gcc15.sh`; the GCC 13 build does
+  not boot on the RP6). sched_ext, BTF, tracing and the TEO idle governor
+  are built in.
+- **Base:** the Steam Frame's stable channel (SteamOS 0.3.0).
+- **Scheduling:** EAS with schedutil, no LAVD, and no hard CPU pinning of
+  games, the session or system services. Only the GPU's interrupts stay off
+  the little cores (an Adreno 740 GMU hang). `sm8550-boostd` sets a uclamp
+  floor for game and Steam UI threads.
+- **Fixes:** a GPU hang (bounded fence wait on VM close), UFS kept in
+  hibernate across sleep, fan curves (`sm8550-fand`, from Armada), zram with
+  zstd sized to RAM, output volume kept across reboots, udisks and
+  brightness fixes.
+- **Tailscale** installed but off (see [Tailscale](#tailscale)).
+
+### How AI was used
+
+These changes were developed by lavachemist working with **Claude**, an AI
+model made by [Anthropic](https://www.anthropic.com/), in **Claude Code**.
+The model was **Claude Opus 5.5** (`claude-opus-5-5`), in September 2026.
+Claude read the code and upstream projects, diagnosed problems on the
+devices over SSH, wrote the code and documentation, and ran the benchmarks.
+lavachemist set the goals, made the design and risk decisions, and did the
+hands-on hardware testing. Commits Claude helped write carry a
+`Co-Authored-By: Claude Opus 5.5` trailer. Review the code before relying
+on it.
+
+### Credits for this fork
+
+The projects this fork uses (ROCKNIX SM8550, linux-firmware, Armada,
+thorch and others) are listed in [CREDITS.md](CREDITS.md).
+
 ## What's working
 
 Pretty much everything you'd expect:
