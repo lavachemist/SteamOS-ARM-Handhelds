@@ -633,11 +633,17 @@ if [[ "$SOC" == sm8550 ]]; then
     "$R/usr/lib/steamos-sm8550/sm8550-irq-affinity" 0755
   install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-irq-affinity.service" \
     "$R/usr/lib/systemd/system/sm8550-irq-affinity.service" 0644
-  # Game and Steam UI threads on the big cores with a uclamp boost.
+  # uclamp boost for game and Steam UI threads (no affinity).
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-boostd" \
     "$R/usr/lib/steamos-sm8550/sm8550-boostd" 0755
   install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-boostd.service" \
     "$R/usr/lib/systemd/system/sm8550-boostd.service" 0644
+  # No hard CPU pins: the Frame keeps the session on cpu0-4 and games on
+  # cpu3-7. Give both every core and let EAS place them.
+  install_file "$SM8550_OVL/usr/lib/systemd/user.conf.d/60-sm8550-cpu-affinity.conf" \
+    "$R/usr/lib/systemd/user.conf.d/60-sm8550-cpu-affinity.conf" 0644
+  install_file "$SM8550_OVL/usr/lib/systemd/user/steam.service.d/70-sm8550-cpu-affinity.conf" \
+    "$R/usr/lib/systemd/user/steam.service.d/70-sm8550-cpu-affinity.conf" 0644
   install_file "$SM8550_OVL/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules" \
     "$R/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules" 0644
   install_file "$SM8550_OVL/usr/lib/udev/rules.d/74-sm8550-ufs-serial.rules" \
@@ -685,6 +691,8 @@ else
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-irq-affinity.service" \
     "$R/usr/lib/systemd/system/sm8550-boostd.service" \
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-boostd.service" \
+    "$R/usr/lib/systemd/user.conf.d/60-sm8550-cpu-affinity.conf" \
+    "$R/usr/lib/systemd/user/steam.service.d/70-sm8550-cpu-affinity.conf" \
     "$R/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules" \
     "$R/usr/lib/udev/rules.d/74-sm8550-ufs-serial.rules" \
     "$R/usr/lib/udev/rules.d/99-zz-sm8550-backlight-nosystemd.rules" \
