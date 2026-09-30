@@ -16,7 +16,20 @@ Rectangle {
     radius: 28 * s
 
     readonly property var fanNames: ({ eco: "Quiet", balanced: "Balanced", performance: "Performance", max: "Max" })
-    readonly property var swatches: ["ffffff", "ff2d2d", "ff8a00", "ffd400", "36e05a", "00c8ff", "b04dff"]
+    // Colour slider: white at its left end, then the hues round to red again.
+    readonly property real whiteEnd: 0.07
+
+    function colorAt(p) {
+        if (p < whiteEnd)
+            return "ffffff"
+        return Qt.hsva(Math.min(1, (p - whiteEnd) / (1 - whiteEnd)) * 0.999, 1, 1, 1).toString().substring(1)
+    }
+    function positionOf(hex) {
+        const c = Qt.color("#" + hex)
+        if (c.hsvSaturation < 0.25)
+            return whiteEnd / 2
+        return whiteEnd + Math.max(0, c.hsvHue) * (1 - whiteEnd)
+    }
 
     component Label: Text {
         color: "#eef0f4"
@@ -98,29 +111,78 @@ Rectangle {
             }
         }
 
-        // Stick lighting: colour, on/off, brightness
+        // Stick lighting: colour slider, on/off, brightness
         RowLayout {
             visible: !!qc.light
             Layout.fillWidth: true
             Layout.fillHeight: true
             spacing: 12 * qc.s
             Label { text: "LIGHTS" }
-            Repeater {
-                model: qc.swatches
-                delegate: Rectangle {
-                    id: sw
-                    required property string modelData
-                    Layout.fillHeight: true
-                    Layout.preferredWidth: height
-                    radius: height / 2
-                    color: "#" + modelData
-                    opacity: qc.light && qc.light.enabled ? 1 : 0.35
-                    border.color: "white"
-                    border.width: qc.light && qc.light.color === modelData ? 4 * qc.s : 0
-                    TapHandler {
-                        gesturePolicy: TapHandler.ReleaseWithinBounds
-                        onTapped: qc.dashboard.setControls({ lighting: { enabled: true, color: sw.modelData } })
+            Item {
+                id: spectrum
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                property bool dragging: false
+                property real dragPos: 0
+                property string sent: ""
+                readonly property real pos: dragging ? dragPos : (qc.light ? qc.positionOf(qc.light.color) : 0)
+                opacity: qc.light && qc.light.enabled ? 1 : 0.35
+
+                function send() {
+                    const hex = qc.colorAt(dragPos)
+                    if (hex !== sent) {
+                        sent = hex
+                        qc.dashboard.setControls({ lighting: { enabled: true, color: hex } })
                     }
+                }
+
+                Rectangle {
+                    id: track
+                    anchors.verticalCenter: parent.verticalCenter
+                    x: knob.width / 2
+                    width: parent.width - knob.width
+                    height: parent.height * 0.45
+                    radius: height / 2
+                    gradient: Gradient {
+                        orientation: Gradient.Horizontal
+                        GradientStop { position: 0; color: "white" }
+                        GradientStop { position: qc.whiteEnd; color: "white" }
+                        GradientStop { position: qc.whiteEnd + 0.001; color: "#ff0000" }
+                        GradientStop { position: qc.whiteEnd + (1 - qc.whiteEnd) / 6; color: "#ffff00" }
+                        GradientStop { position: qc.whiteEnd + (1 - qc.whiteEnd) * 2 / 6; color: "#00ff00" }
+                        GradientStop { position: qc.whiteEnd + (1 - qc.whiteEnd) * 3 / 6; color: "#00ffff" }
+                        GradientStop { position: qc.whiteEnd + (1 - qc.whiteEnd) * 4 / 6; color: "#0000ff" }
+                        GradientStop { position: qc.whiteEnd + (1 - qc.whiteEnd) * 5 / 6; color: "#ff00ff" }
+                        GradientStop { position: 1; color: "#ff0000" }
+                    }
+                }
+                Rectangle {
+                    id: knob
+                    width: parent.height
+                    height: width
+                    radius: width / 2
+                    x: spectrum.pos * (parent.width - width)
+                    color: "#" + qc.colorAt(spectrum.pos)
+                    border.color: "white"
+                    border.width: 4 * qc.s
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    preventStealing: true
+                    function place(mx) {
+                        spectrum.dragPos = Math.max(0, Math.min(1, (mx - knob.width / 2) / track.width))
+                    }
+                    onPressed: function (e) { place(e.x); spectrum.dragging = true }
+                    onPositionChanged: function (e) { place(e.x) }
+                    onReleased: function (e) { place(e.x); spectrum.send(); spectrum.dragging = false }
+                    onCanceled: spectrum.dragging = false
+                }
+                // The lights follow the finger, a few times a second.
+                Timer {
+                    interval: 150
+                    repeat: true
+                    running: spectrum.dragging
+                    onTriggered: spectrum.send()
                 }
             }
             Choice {
@@ -130,7 +192,6 @@ Rectangle {
                 active: !!qc.light && qc.light.enabled
                 onChosen: qc.dashboard.setControls({ lighting: { enabled: !qc.light.enabled } })
             }
-            Item { Layout.fillWidth: true }
             Repeater {
                 model: [25, 50, 100]
                 delegate: Choice {
