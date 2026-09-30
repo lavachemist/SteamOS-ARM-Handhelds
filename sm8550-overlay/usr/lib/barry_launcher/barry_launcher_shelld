@@ -115,6 +115,11 @@ FIREFOX_PREFS = {
     "full-screen-api.transition-duration.enter": "0 0",
     "full-screen-api.transition-duration.leave": "0 0",
     "full-screen-api.warning.timeout": 0,
+    # Video is decoded in software, next to a game: without AV1 and VP9 for
+    # streaming, YouTube sends H.264 (the cheapest to decode, through the
+    # system's FFmpeg), which it offers up to 1080p, plenty for this panel.
+    "media.av1.enabled": False,
+    "media.mediasource.vp9.enabled": False,
 }
 # A new Firefox window puts the cursor in the address bar by itself; that
 # should not bring up the keyboard as the app opens.
