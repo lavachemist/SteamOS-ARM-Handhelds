@@ -24,6 +24,52 @@ const jsxs = SP_JSX.jsxs;
 // Decky callable(): arguments are passed positionally to the Python method.
 const getState = callable("get_state");
 const setBottomScreen = callable("set_bottom_screen");
+const barryKeyboardOpen = callable("barry_keyboard_open");
+
+// While Barry Launcher's Keyboard app is open on the bottom screen, Steam's
+// own on-screen keyboard stays down on the top one: every way Steam opens it
+// goes through its keyboard manager's SetVirtualKeyboardShownInternal(show),
+// which this wraps. A keyboard already up when the app opens is put away.
+let barryKeys = false;
+let unhookKeyboard = null;
+
+function keyboardManager() {
+    const inst = window.SteamUIStore && window.SteamUIStore.ActiveWindowInstance;
+    return inst ? inst.VirtualKeyboardManager || inst.m_VirtualKeyboardManager : null;
+}
+
+function hookKeyboard() {
+    const mgr = keyboardManager();
+    if (!mgr) return null;
+    const proto = Object.getPrototypeOf(mgr);
+    const orig = proto.SetVirtualKeyboardShownInternal;
+    if (typeof orig !== "function" || orig.barryWrapped) return null;
+    const wrapped = function (show, ...rest) {
+        if (show && barryKeys) return;
+        return orig.call(this, show, ...rest);
+    };
+    wrapped.barryWrapped = true;
+    proto.SetVirtualKeyboardShownInternal = wrapped;
+    return () => { proto.SetVirtualKeyboardShownInternal = orig; };
+}
+
+function steamKeyboardShowing(mgr) {
+    // A subscribable value ({ Value, m_currentValue }) in current Steam builds.
+    const v = mgr.IsShowingVirtualKeyboard;
+    if (typeof v === "function") return !!v.call(mgr);
+    if (v && typeof v === "object") return !!(v.Value !== undefined ? v.Value : v.m_currentValue);
+    return !!v;
+}
+
+async function watchBarryKeyboard() {
+    if (!unhookKeyboard) unhookKeyboard = hookKeyboard();
+    const open = await barryKeyboardOpen().catch(() => false);
+    if (open && !barryKeys) {
+        const mgr = keyboardManager();
+        if (mgr && steamKeyboardShowing(mgr)) mgr.SetVirtualKeyboardHidden();
+    }
+    barryKeys = open;
+}
 
 const row = (child) => jsx(DFL.PanelSectionRow, { children: child });
 const note = (text) => row(jsx("div", { style: { fontSize: "12px", opacity: 0.75 }, children: text }));
@@ -59,11 +105,19 @@ function Content() {
 }
 
 var index = definePlugin(() => {
+    const timer = setInterval(watchBarryKeyboard, 500);
+    watchBarryKeyboard();
     return {
         name: "Dual Screen",
         content: jsx(Content, {}),
         icon: jsx("div", { style: { fontWeight: 800 }, children: "☀" }),
         alwaysRender: false,
+        onDismount() {
+            clearInterval(timer);
+            if (unhookKeyboard) unhookKeyboard();
+            unhookKeyboard = null;
+            barryKeys = false;
+        },
     };
 });
 
