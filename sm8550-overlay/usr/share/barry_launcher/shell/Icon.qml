@@ -2,7 +2,7 @@
 // fonts are installed. kind: back, forward, reload, stop, home, close, globe,
 // chat, trackpad, keyboard, the keyboard keys, and the apps' logos as line
 // art in the same style: firefox, discord, signal (outlines from Tabler
-// Icons, MIT, drawn on a 24-unit grid and scaled).
+// Icons, MIT), and dino; all drawn on a 24-unit grid and scaled.
 import QtQuick
 import QtQuick.Shapes
 
@@ -46,6 +46,10 @@ Shape {
               + "c-1.447 -1.447 -3.447 -2.342 -5.657 -2.342c-2.21 0 -4.21 .895 -5.657 2.342"
               + "c-1.447 1.447 -2.342 3.447 -2.342 5.657c0 .666 .075 1.308 .223 1.909c.156 .637 .383 1.244 .676 1.805"
               + "l.519 .993l-.571 2.445",
+        // Head with an open jaw, back, tail, belly; legs, arm and eye apart.
+        dino: "M15.5 9.5H19.5V8.5H16.5V7H21V4Q21 2.5 19.5 2.5H13.5Q12 2.5 12 4V10"
+            + "L9 12L6 13.2L2 10.5L3 14.8Q6 17.5 9.5 17H13L15.5 13.5Z"
+            + "M9.5 17V21.5H11M13 17V21.5H14.5M15.5 12.5H17.5V13.7M14.5 4.7H14.51",
     })[kind] || ""
 
     // The logos, on their 24-unit grid; the line keeps the same width.

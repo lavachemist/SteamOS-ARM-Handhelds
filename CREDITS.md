@@ -104,6 +104,7 @@ Inherited from **SteamOS-Ubuntu**. See
 | **ptitSeb / box64** | https://github.com/ptitSeb/box64 | x86_64 for Decky PluginLoader |
 | **thorch-os/thorch** | https://github.com/thorch-os/thorch | AYN Thor dual-screen / touch extras |
 | **Tabler Icons** (MIT) | https://github.com/tabler/tabler-icons | Outline Firefox, Discord and Signal logos on Barry Launcher's home screen (`shell/Icon.qml`) |
+| **Chrome Dinosaur Game (Google)**: Sebastien Gabriel, Alan Bettes, Edward Jung | https://source.chromium.org/chromium/chromium/src/+/main:components/neterror/resources/dino_game/ | The original of Barry Launcher's Dino app (`shell/Dino.qml`), a new QML version drawn after it; no Chromium code or sprites |
 
 ---
 
