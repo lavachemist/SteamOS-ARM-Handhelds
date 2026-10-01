@@ -23,5 +23,8 @@ Window {
         s: win.s
         mode: win.mode
         showTabs: false
+        // The ⌄ button: quit, and the bottom screen goes back to what was
+        // there before.
+        onCloseRequested: Qt.quit()
     }
 }

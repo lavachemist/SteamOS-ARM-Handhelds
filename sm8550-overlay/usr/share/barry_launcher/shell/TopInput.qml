@@ -274,19 +274,33 @@ Rectangle {
         anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 20 * ti.s }
         height: visible ? 150 * ti.s : 0
         spacing: 20 * ti.s
+        // Apps: a dismiss button between the two, as on the keyboard.
+        readonly property real dismissWidth: ti.showTabs ? 0 : 160 * ti.s
         Repeater {
-            model: ["left", "right"]
+            model: ti.showTabs ? ["left", "right"] : ["left", "dismiss", "right"]
             delegate: Rectangle {
                 id: mb
                 required property string modelData
-                width: (buttons.width - buttons.spacing) / 2
+                readonly property bool dismiss: modelData === "dismiss"
+                width: dismiss ? buttons.dismissWidth
+                     : (buttons.width - buttons.dismissWidth - (ti.showTabs ? 1 : 2) * buttons.spacing) / 2
                 height: buttons.height
                 radius: 36 * ti.s
                 color: hold.pressed ? "#4a4f60" : "#1b1d24"
                 border.color: "#3a3e4d"
                 border.width: 2 * ti.s
+                Icon {
+                    anchors.centerIn: parent
+                    visible: mb.dismiss
+                    width: 64 * ti.s
+                    height: 64 * ti.s
+                    kind: "hide"
+                    color: "#eef0f4"
+                    lineWidth: 6 * ti.s
+                }
                 Text {
                     anchors.centerIn: parent
+                    visible: !mb.dismiss
                     text: mb.modelData === "left" ? "Left click" : "Right click"
                     color: "#eef0f4"
                     opacity: 0.8
@@ -294,8 +308,9 @@ Rectangle {
                 }
                 TapHandler {
                     id: hold
-                    gesturePolicy: TapHandler.WithinBounds
-                    onPressedChanged: ti.post("/button", { button: mb.modelData, state: pressed ? "down" : "up" })
+                    gesturePolicy: mb.dismiss ? TapHandler.ReleaseWithinBounds : TapHandler.WithinBounds
+                    onPressedChanged: if (!mb.dismiss) ti.post("/button", { button: mb.modelData, state: pressed ? "down" : "up" })
+                    onTapped: if (mb.dismiss) ti.closeRequested()
                 }
             }
         }
@@ -308,9 +323,10 @@ Rectangle {
         height: visible ? implicitHeight : 0
         s: ti.s
         asciiOnly: true
-        hideKey: ti.showTabs  // alone in its app, the keyboard stays
         onTyped: function (text) { ti.post("/key", { text: text }) }
         onKey: function (name) { ti.post("/key", { key: name }) }
-        onHideRequested: ti.mode = "trackpad"
+        // Desktop Mode: back to the trackpad. Apps: dismissed, so nothing
+        // stays running behind.
+        onHideRequested: ti.showTabs ? ti.mode = "trackpad" : ti.closeRequested()
     }
 }
