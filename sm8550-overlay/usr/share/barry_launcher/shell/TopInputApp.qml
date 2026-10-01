@@ -23,6 +23,5 @@ Window {
         s: win.s
         mode: win.mode
         showTabs: false
-        steamKeys: true
     }
 }

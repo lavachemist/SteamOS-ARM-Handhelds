@@ -15,7 +15,6 @@ Rectangle {
     id: ti
     property real s: 1
     property string mode: "trackpad"  // or "keyboard"
-    property bool steamKeys: false  // Game Mode: buttons for Steam's menus
     property bool showTabs: true  // switch between trackpad and keyboard here
     property string closeLabel: ""  // a close button, when set
     // Pointer speed: pixels on the top screen per pixel on the pad, before
@@ -101,12 +100,14 @@ Rectangle {
         }
     }
 
-    // Top bar: close, the two modes, Steam's menus.
+    // Top bar (Desktop Mode): close, the two modes. The apps have none, so
+    // the pad starts at the top.
     Row {
         id: bar
+        visible: ti.showTabs || ti.closeLabel !== ""
         x: 20 * ti.s
         y: 20 * ti.s
-        height: 96 * ti.s
+        height: visible ? 96 * ti.s : 0
         spacing: 16 * ti.s
         Button {
             visible: ti.closeLabel !== ""
@@ -126,22 +127,12 @@ Rectangle {
             onClicked: ti.mode = "keyboard"
         }
     }
-    Row {
-        anchors.right: parent.right
-        anchors.rightMargin: 20 * ti.s
-        y: 20 * ti.s
-        spacing: 16 * ti.s
-        visible: ti.steamKeys
-        // Steam's keyboard shortcuts in Game Mode.
-        Button { label: "Steam"; onClicked: ti.post("/key", { combo: ["ctrl", "1"] }) }
-        Button { label: "•••"; onClicked: ti.post("/key", { combo: ["ctrl", "2"] }) }
-    }
 
     Rectangle {
         id: padFace
         anchors {
             left: parent.left; right: parent.right
-            top: bar.bottom; bottom: ti.mode === "keyboard" ? keys.top : buttons.top
+            top: bar.visible ? bar.bottom : parent.top; bottom: ti.mode === "keyboard" ? keys.top : buttons.top
             margins: 20 * ti.s
         }
         radius: 36 * ti.s
