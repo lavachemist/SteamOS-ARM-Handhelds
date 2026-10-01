@@ -74,7 +74,7 @@ guard against missing ones (`stats` is `{}` for a moment at startup).
 {
   "fan": {"profile": "balanced", "profiles": ["eco", "balanced", "performance", "max"]},
   "refresh": {"hz": 120, "choice": 120, "rates": [60, 120]},
-  "lighting": {"enabled": true, "color": "ff8a00", "brightness": 50}
+  "lighting": {"enabled": true, "color": "ff8a00", "brightness": 50, "dimmer": 100}
 }
 ```
 
@@ -89,7 +89,9 @@ display not reachable); leave that control out. Change them with
   its own setting starts). `hz` is the rate right now; `choice` is 0 while
   none was made, and games then get the highest rate
 - `{lighting: {enabled, color, brightness}}`: any of the keys; `color` is
-  `rrggbb`, `brightness` 0-100. Kept across reboots
+  `rrggbb`, `brightness` 0-100. Kept across reboots. The LEDs shine at
+  `brightness` x `dimmer` (20-100, set by the Dual Screen plugin) on a
+  perceptual curve, so brightness 100 is as bright as the dimmer allows
 
 ## Minimal skin
 

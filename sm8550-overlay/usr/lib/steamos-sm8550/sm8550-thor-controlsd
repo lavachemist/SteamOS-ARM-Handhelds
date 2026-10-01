@@ -8,17 +8,23 @@ session user) may use. One JSON object per connection, one reply line:
 
   {"op": "get"}
       {"fan": {"profile": "balanced", "profiles": ["eco", ...]},
-       "lighting": {"enabled": bool, "color": "rrggbb", "brightness": 0-100}
+       "lighting": {"enabled": bool, "color": "rrggbb", "brightness": 0-100,
+                    "dimmer": 20-100}
                    or null when the device has no stick LEDs}
   {"op": "set", "fanProfile": "performance"}
   {"op": "set", "lighting": {"enabled": bool, "color": "rrggbb",
-                             "brightness": 0-100}}  (any of the keys)
+                             "brightness": 0-100, "dimmer": 20-100}}
+                                                    (any of the keys)
       the new state, as for get; {"error": "..."} on a bad request
 
 Fan: sm8550-fand's profile, written to FAN_QUICK (read after fand's own
 config files, so it wins) and applied with a reload. Lighting: the
 multicolor LEDs around the sticks (rgb:l1-l4 and rgb:r1-r4 on the Thor, as
 Armada's armada-rgb lists them), saved to LIGHT_STATE and set again at start.
+The LEDs shine at brightness x dimmer: the dashboard's brightness buttons
+are shares of the dimmer, which the Dual Screen plugin sets. The LEDs' PWM
+level is that to the power LED_GAMMA, so 25% looks about a quarter as bright
+(light output is linear; the eye is not).
 """
 from __future__ import annotations
 
@@ -38,7 +44,9 @@ FAN_CONFS = ["/usr/share/sm8550-fand/fan.conf", "/etc/sm8550-fand.conf"]
 FAN_QUICK = "/var/lib/steamos-sm8550/fan-profile.conf"
 LIGHT_STATE = "/var/lib/steamos-sm8550/thor-lighting.json"
 LED_PREFIX = "rgb:"
-DEFAULT_LIGHT = {"enabled": True, "color": "ffffff", "brightness": 50}
+DEFAULT_LIGHT = {"enabled": True, "color": "ffffff", "brightness": 50, "dimmer": 100}
+DIMMER_MIN = 20
+LED_GAMMA = 2.2
 
 
 def log(msg: str) -> None:
@@ -111,7 +119,8 @@ def light_state() -> dict | None:
     color = "".join(f"{min(255, round(rgb.get(c, 0) * 255 / top)):02x}" for c in ("red", "green", "blue"))
     level = int(read(f"{d}/brightness", "0") or 0)
     return {"enabled": level > 0, "color": color if color != "000000" else DEFAULT_LIGHT["color"],
-            "brightness": round(100 * level / top) if level else DEFAULT_LIGHT["brightness"]}
+            "brightness": round(100 * (level / top) ** (1 / LED_GAMMA)) if level else DEFAULT_LIGHT["brightness"],
+            "dimmer": DEFAULT_LIGHT["dimmer"]}
 
 
 def clean_light(new: dict) -> dict:
@@ -123,6 +132,9 @@ def clean_light(new: dict) -> dict:
     b = new.get("brightness")
     if isinstance(b, (int, float)) and not isinstance(b, bool) and 0 <= b <= 100:
         out["brightness"] = int(b)
+    m = new.get("dimmer")
+    if isinstance(m, (int, float)) and not isinstance(m, bool) and DIMMER_MIN <= m <= 100:
+        out["dimmer"] = int(m)
     return out
 
 
@@ -136,7 +148,8 @@ def apply_light(state: dict) -> None:
             continue
         order = read(f"{d}/multi_index").split()
         write(f"{d}/multi_intensity", " ".join(str(round(rgb.get(c, 0) * top / 255)) for c in order))
-        write(f"{d}/brightness", str(max(1, round(state["brightness"] * top / 100))))
+        level = state["brightness"] / 100 * state["dimmer"] / 100
+        write(f"{d}/brightness", str(max(1, round(level ** LED_GAMMA * top))))
 
 
 def set_light(new: dict) -> None:

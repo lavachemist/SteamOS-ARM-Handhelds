@@ -4,10 +4,21 @@ panels, the Dual Screen switch, and the AYN button's dashboard overlay.
 
 Brightness: Steam's Game Mode slider adjusts the first backlight it finds,
 the bottom panel's (ae94000.dsi.0), and writes it directly (the video group
-may). Game Mode shows the top panel (ae96000.dsi.0). This follows every
-change of the bottom backlight and sets the top one to the same fraction of
-its range straight away. (A steamos-priv-write redirect alone ran pkexec for
-every slider step and lagged; it stays as a fallback.)
+may), about ten times a second while the slider moves, from a file it keeps
+open. Game Mode shows the top panel (ae96000.dsi.0). So that Steam's writes
+never reach the bottom panel, this opens the panel's brightness file and
+then bind-mounts STEAM_BOTTOM, a plain file, over it before Game Mode starts
+(the unit runs before the display manager); Steam writes its level there and
+this is the only writer of the bottom panel. Steam's level, a fraction of
+the range (from STEAM_BOTTOM, or from the top panel should gamescope write
+that), is kept in LEVEL. Each panel gets Steam's level times its own dimmer
+from DIMMERS (percent, set by the Dual Screen plugin; 100 when unset), so
+Steam's slider moves both screens together. Steam's slider puts out its
+position to the power STEAM_GAMMA (30% writes 7%): right for the top LCD, but
+the bottom AMOLED is close to black that low, so the bottom panel gets the
+slider's position itself. (A
+steamos-priv-write redirect alone ran pkexec for every slider step and
+lagged; it stays as a fallback.)
 
 Dual Screen switch: the Decky plugin writes "off" or "on" to STATE. While the
 bottom screen is off its backlight is powered down (bl_power; the brightness
@@ -40,10 +51,13 @@ from __future__ import annotations
 
 import fcntl
 import glob
+import ctypes
 import grp
+import json
 import os
 import pwd
 import select
+import signal
 import struct
 import subprocess
 import sys
@@ -52,7 +66,12 @@ import time
 BOTTOM = "/sys/class/backlight/ae94000.dsi.0"
 TOP = "/sys/class/backlight/ae96000.dsi.0"
 STATE = "/var/lib/steamos-sm8550/thor-bottom-screen"
+DIMMERS = "/var/lib/steamos-sm8550/thor-screen-dimmers.json"
 RUN_DIR = "/run/sm8550-thor"
+LEVEL = f"{RUN_DIR}/steam-brightness"
+STEAM_BOTTOM = f"{RUN_DIR}/steam-bottom-brightness"
+IN_MODIFY = 0x2
+STEAM_GAMMA = 2.2
 OVERLAY = f"{RUN_DIR}/overlay"
 HOME = f"{RUN_DIR}/home"  # a request counter; any change means "go home"
 LONG_PRESS_S = 0.6
@@ -94,6 +113,80 @@ def write(path: str, value: str) -> bool:
     except OSError as err:
         log(f"cannot write {value} to {path}: {err}")
         return False
+
+
+def read_dimmers(cache: dict) -> tuple[int, int]:
+    """(top, bottom) percent; reread only when the file changes."""
+    try:
+        mtime = os.stat(DIMMERS).st_mtime_ns
+    except OSError:
+        return 100, 100
+    if cache.get("mtime") != mtime:
+        top = bottom = 100
+        try:
+            with open(DIMMERS, encoding="utf-8") as fh:
+                d = json.load(fh)
+            top = max(1, min(100, int(d.get("top", 100))))
+            bottom = max(1, min(100, int(d.get("bottom", 100))))
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
+        cache.update(mtime=mtime, value=(top, bottom))
+    return cache["value"]
+
+
+def mounted(path: str) -> bool:
+    try:
+        with open("/proc/self/mountinfo", encoding="utf-8") as fh:
+            return any(line.split()[4] == path for line in fh)
+    except OSError:
+        return False
+
+
+def unshadow(path: str) -> None:
+    # Lazily: Steam keeps STEAM_BOTTOM open through the mount, and goes on
+    # writing to it once a new mount is in place.
+    while mounted(path):
+        if subprocess.run(["umount", "-l", path], capture_output=True).returncode != 0:
+            log(f"cannot unmount {path}")
+            return
+
+
+def shadow_bottom(path: str, value: int) -> None:
+    """Steam's writes to the bottom panel go to STEAM_BOTTOM from now on."""
+    with open(STEAM_BOTTOM, "w", encoding="utf-8") as fh:
+        fh.write(f"{value}\n")
+    try:
+        gid = grp.getgrnam("video").gr_gid
+    except KeyError:
+        gid = -1
+    os.chown(STEAM_BOTTOM, -1, gid)
+    os.chmod(STEAM_BOTTOM, 0o664)
+    subprocess.run(["mount", "--bind", STEAM_BOTTOM, path], check=True, capture_output=True)
+
+
+def steam_bottom() -> int | None:
+    """The last value Steam wrote. It may write at a growing offset without
+    truncating, so take the last number and trim the file now and then."""
+    try:
+        with open(STEAM_BOTTOM, "rb") as fh:
+            data = fh.read()
+    except OSError:
+        return None
+    if len(data) > 4096:
+        os.truncate(STEAM_BOTTOM, 0)
+    for word in reversed(data.replace(b"\0", b" ").split()):
+        if word.isdigit():
+            return int(word)
+    return None
+
+
+def watch(path: str) -> int | None:
+    libc = ctypes.CDLL(None, use_errno=True)
+    fd = libc.inotify_init1(os.O_NONBLOCK | os.O_CLOEXEC)
+    if fd < 0 or libc.inotify_add_watch(fd, path.encode(), IN_MODIFY) < 0:
+        log("cannot watch Steam's brightness file; checking it every pass")
+        return None
+    return fd
 
 
 def input_dirs(name: str) -> list[str]:
@@ -184,7 +277,21 @@ def main() -> int:
         return 1
     setup_overlay()
 
-    bl_fd = os.open(f"{BOTTOM}/actual_brightness", os.O_RDONLY)
+    # The real bottom panel, opened before Steam's file goes over it.
+    bottom_path = os.path.realpath(f"{BOTTOM}/brightness")
+    unshadow(bottom_path)
+    if mounted(bottom_path):
+        log("Steam's file is still over the bottom panel; cannot reach the panel")
+        return 1
+    bl_fd = os.open(bottom_path, os.O_RDWR)
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    try:
+        return run(bl_fd, bottom_path, bottom_max, top_max)
+    finally:
+        unshadow(bottom_path)
+
+
+def run(bl_fd: int, bottom_path: str, bottom_max: int, top_max: int) -> int:
     key_fd = open_ayn_key()
     key_retry = 0
     touch_fd = open_touch()
@@ -193,11 +300,41 @@ def main() -> int:
     nudge: subprocess.Popen | None = None
 
     def bottom_set() -> int:
-        # actual_brightness reads 0 while bl_power is off; follow the value
-        # Steam set instead.
-        return int(read(f"{BOTTOM}/brightness", "0") or 0)
+        # Not actual_brightness: that reads 0 while bl_power is off.
+        try:
+            return int(os.pread(bl_fd, 32, 0).strip() or 0)
+        except (OSError, ValueError):
+            return 0
 
-    last = bottom_set()  # leave the top panel alone until something changes
+    def set_bottom(value: int) -> bool:
+        try:
+            os.pwrite(bl_fd, str(value).encode(), 0)
+            return True
+        except OSError as err:
+            log(f"cannot write {value} to {bottom_path}: {err}")
+            return False
+
+    def top_set() -> int:
+        return int(read(f"{TOP}/brightness", "0") or 0)
+
+    def level_of(value: int, maximum: int) -> float:
+        return max(0.0, min(1.0, value / maximum))
+
+    def target(level: float, dim: int, maximum: int) -> int:
+        return max(1, min(maximum, round(level * dim / 100 * maximum)))
+
+    dim_cache: dict = {}
+    try:
+        level = float(read(LEVEL))
+    except ValueError:
+        level = level_of(bottom_set(), bottom_max)
+    write(LEVEL, f"{level:.5f}")
+    steam_value = max(1, round(level * bottom_max))
+    shadow_bottom(bottom_path, steam_value)
+    steam_fd = watch(STEAM_BOTTOM)
+    # What the top panel held after this last wrote it (or found it), so a
+    # different value there is a change from gamescope.
+    wrote_top = top_set()
     was_on = None
     overlay_since: float | None = None
     pressed_at: float | None = None  # AYN held down since, until handled
@@ -205,14 +342,18 @@ def main() -> int:
     log(f"following {BOTTOM} (max {bottom_max}) -> {TOP} (max {top_max})")
     while True:
         poller = select.poll()
-        poller.register(bl_fd, select.POLLPRI | select.POLLERR)
+        if steam_fd is not None:
+            poller.register(steam_fd, select.POLLIN)
         if key_fd is not None:
             poller.register(key_fd, select.POLLIN | select.POLLERR)
         if touch_fd is not None:
             poller.register(touch_fd, select.POLLIN | select.POLLERR)
         events = dict(poller.poll(POLL_MS))
-        os.lseek(bl_fd, 0, os.SEEK_SET)
-        os.read(bl_fd, 32)  # consume the notification
+        if steam_fd is not None and steam_fd in events:
+            try:
+                os.read(steam_fd, 4096)  # consume the notification
+            except BlockingIOError:
+                pass
 
         # AYN button: a short press toggles the dashboard, a long one goes
         # home. Decided on release, or once held long enough.
@@ -288,11 +429,8 @@ def main() -> int:
                 if read(p) != "1":
                     write(p, "1")
         elif was_on is False:
-            # Back on: match the top panel, then power up and allow touch.
-            top_now = int(read(f"{TOP}/brightness", "0") or 0)
-            match = max(1, min(bottom_max, round(top_now * bottom_max / top_max)))
-            write(f"{BOTTOM}/brightness", str(match))
-            last = match
+            # Back on: at its level, then power up and allow touch.
+            set_bottom(target(level ** (1 / STEAM_GAMMA), read_dimmers(dim_cache)[1], bottom_max))
             write(f"{BOTTOM}/bl_power", BL_ON)
             for p in touch_inhibited_paths():
                 write(p, "0")
@@ -300,14 +438,24 @@ def main() -> int:
             log(f"bottom screen {'on' if on else 'off'}")
         was_on = on
 
-        value = bottom_set()
-        if value == last:
-            continue
-        top = max(1, min(top_max, round(value * top_max / bottom_max)))
+        # Steam's level: a new value in Steam's file (or on the top panel).
+        steam_now, top_now = steam_bottom(), top_set()
+        if steam_now is not None and steam_now != steam_value:
+            steam_value = steam_now
+            level = level_of(steam_now, bottom_max)
+            write(LEVEL, f"{level:.5f}")
+        elif top_now != wrote_top and top_now > 0:
+            level, wrote_top = level_of(top_now, top_max), top_now
+            write(LEVEL, f"{level:.5f}")
+        dims = read_dimmers(dim_cache)
+        want_bottom = target(level ** (1 / STEAM_GAMMA), dims[1], bottom_max)
+        if bottom_set() != want_bottom:
+            set_bottom(want_bottom)
         # The top panel refuses writes (EINVAL) while Game Mode is bringing
-        # it up; leave last unchanged so the next pass tries again.
-        if write(f"{TOP}/brightness", str(top)):
-            last = value
+        # it up; the next pass tries again.
+        want_top = target(level, dims[0], top_max)
+        if top_now != want_top and write(f"{TOP}/brightness", str(want_top)):
+            wrote_top = want_top
 
 
 if __name__ == "__main__":

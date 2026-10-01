@@ -16,7 +16,8 @@ and its skins, so a skin is plain QML with no Python of its own:
                   idleSeconds 0 keeps the dashboard up until the next press
   GET  /controls  the quick controls:
                   {"fan": {"profile": "balanced", "profiles": [...]} or null,
-                   "lighting": {"enabled", "color": "rrggbb", "brightness"}
+                   "lighting": {"enabled", "color": "rrggbb", "brightness",
+                                "dimmer"}
                                or null,
                    "refresh": {"hz": now, "choice": 60|120|0, "rates": [...]}}
                   (choice 0: none made; games get the panel's highest)

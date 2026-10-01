@@ -21,7 +21,9 @@ Thor**. Detail is in each commit message.
   gamescope built with the DRM lease patches): the bottom screen runs
   **Barry Launcher** (home screen, Firefox, Discord and Signal, an on-screen
   keyboard, and a performance dashboard on the AYN button) next to Game
-  Mode, one brightness for both panels, and a Dual Screen Decky switch.
+  Mode, one brightness for both panels, and a Dual Screen Decky plugin (bottom
+  screen on/off, a dimmer per screen, the stick lights' dimmer). A kernel
+  patch fixes the bottom AMOLED's brightness, which barely dimmed before.
   The bottom screen can also be the top screen's trackpad and keyboard, in
   Game Mode and in Desktop Mode. The dashboard has quick controls for the
   fan profile, a 60/120 Hz refresh rate and the stick lighting.

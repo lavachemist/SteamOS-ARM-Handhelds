@@ -1,7 +1,7 @@
 {
   "name": "dual-screen",
-  "version": "1.4.0",
-  "description": "Decky plugin \u2014 AYN Thor bottom screen on/off (dist/index.js is hand-written, no build step)",
+  "version": "1.5.0",
+  "description": "Decky plugin \u2014 AYN Thor bottom screen on/off and dimmers (dist/index.js is hand-written, no build step)",
   "private": true,
   "license": "GPL-3.0-or-later",
   "type": "module"
