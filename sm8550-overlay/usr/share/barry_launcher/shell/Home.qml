@@ -3,7 +3,6 @@ pragma ComponentBehavior: Bound
 // A running app's tile brings it forward and has a close badge; holding the
 // AYN button comes back here from any app. Trackpad and Keyboard make the
 // bottom screen the top screen's trackpad and keyboard (TopInputApp.qml).
-import QtCore
 import QtQuick
 
 Rectangle {
@@ -20,7 +19,6 @@ Rectangle {
         id: tile
         property string app
         property string name
-        property url logo
         property string iconKind
         readonly property bool isRunning: home.running[app] === true
         readonly property string statusText: home.status[app] || ""
@@ -46,23 +44,10 @@ Rectangle {
                 NumberAnimation { to: 1; duration: 700; easing.type: Easing.InOutQuad }
             }
 
-            Image {
-                id: img
-                anchors.centerIn: parent
-                width: 160 * home.s
-                height: 160 * home.s
-                visible: tile.logo.toString() !== "" && status === Image.Ready
-                source: tile.logo
-                sourceSize: Qt.size(128, 128)
-                fillMode: Image.PreserveAspectFit
-                smooth: true
-                mipmap: true
-            }
             Icon {
                 anchors.centerIn: parent
                 width: 150 * home.s
                 height: 150 * home.s
-                visible: !img.visible
                 kind: tile.iconKind
                 color: "#cfe0ff"
                 lineWidth: 9 * home.s
@@ -118,21 +103,16 @@ Rectangle {
         Tile {
             app: "browser"
             name: "Firefox"
-            // Firefox's own logo, as installed with it (not copied here).
-            logo: "file:///usr/lib/firefox/browser/chrome/icons/default/default128.png"
-            iconKind: "globe"
+            iconKind: "firefox"
         }
         Tile {
             app: "discord"
             name: "Discord"
-            iconKind: "chat"
+            iconKind: "discord"
         }
         Tile {
             app: "signal"
             name: "Signal"
-            // Signal's own icon, once Flatpak installed it for the user.
-            logo: StandardPaths.writableLocation(StandardPaths.GenericDataLocation)
-                  + "/flatpak/exports/share/icons/hicolor/128x128/apps/org.signal.Signal.png"
             iconKind: "signal"
         }
         Tile {

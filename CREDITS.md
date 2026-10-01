@@ -103,6 +103,7 @@ Inherited from **SteamOS-Ubuntu**. See
 | **lsfg-vk** | https://github.com/PancakeTAS/lsfg-vk | Vulkan frame generation |
 | **ptitSeb / box64** | https://github.com/ptitSeb/box64 | x86_64 for Decky PluginLoader |
 | **thorch-os/thorch** | https://github.com/thorch-os/thorch | AYN Thor dual-screen / touch extras |
+| **Tabler Icons** (MIT) | https://github.com/tabler/tabler-icons | Outline Firefox, Discord and Signal logos on Barry Launcher's home screen (`shell/Icon.qml`) |
 
 ---
 
