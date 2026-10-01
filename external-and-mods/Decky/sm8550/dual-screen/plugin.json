@@ -5,7 +5,7 @@
   "flags": [
     "root"
   ],
-  "version": "1.3.0",
+  "version": "1.4.0",
   "publish": {
     "tags": [
       "ayn",
@@ -14,7 +14,7 @@
       "dual-screen",
       "bottom-screen"
     ],
-    "description": "Turn the AYN Thor's bottom screen and its touch off and on; keeps Steam's keyboard down while Barry Launcher's Keyboard app is open.",
+    "description": "Turn the AYN Thor's bottom screen and its touch off and on; opens Barry Launcher's keyboard on the bottom screen in place of Steam's.",
     "image": "https://opengraph.githubassets.com/1/SteamDeckHomebrew/decky-loader"
   }
 }

@@ -24,18 +24,32 @@ const jsxs = SP_JSX.jsxs;
 // Decky callable(): arguments are passed positionally to the Python method.
 const getState = callable("get_state");
 const setBottomScreen = callable("set_bottom_screen");
-const barryKeyboardOpen = callable("barry_keyboard_open");
+const barryKeyboardAvailable = callable("barry_keyboard_available");
+const openBarryKeyboard = callable("open_barry_keyboard");
 
-// While Barry Launcher's Keyboard app is open on the bottom screen, Steam's
-// own on-screen keyboard stays down on the top one: every way Steam opens it
-// goes through its keyboard manager's SetVirtualKeyboardShownInternal(show),
-// which this wraps. A keyboard already up when the app opens is put away.
-let barryKeys = false;
+// Steam's on-screen keyboard never shows on the top screen: whenever Steam
+// would open it (a text field tapped or picked with the controller, Steam+X),
+// Barry Launcher's Keyboard app opens on the bottom screen instead, and
+// typing there goes to the field. Every way Steam opens its keyboard goes
+// through its keyboard manager's SetVirtualKeyboardShownInternal(show), which
+// this wraps. While the bottom screen is off or Barry Launcher is not
+// running, Steam's keyboard works as before.
+let barryAvailable = false;
+let lastOpen = 0;
 let unhookKeyboard = null;
 
 function keyboardManager() {
     const inst = window.SteamUIStore && window.SteamUIStore.ActiveWindowInstance;
     return inst ? inst.VirtualKeyboardManager || inst.m_VirtualKeyboardManager : null;
+}
+
+function showBarryKeyboard() {
+    // Steam may ask several times for one tap; bringing the app forward
+    // again remaps its window, so once is enough.
+    const now = Date.now();
+    if (now - lastOpen < 1500) return;
+    lastOpen = now;
+    openBarryKeyboard().catch(() => {});
 }
 
 function hookKeyboard() {
@@ -45,7 +59,10 @@ function hookKeyboard() {
     const orig = proto.SetVirtualKeyboardShownInternal;
     if (typeof orig !== "function" || orig.barryWrapped) return null;
     const wrapped = function (show, ...rest) {
-        if (show && barryKeys) return;
+        if (show && barryAvailable) {
+            showBarryKeyboard();
+            return;
+        }
         return orig.call(this, show, ...rest);
     };
     wrapped.barryWrapped = true;
@@ -63,12 +80,13 @@ function steamKeyboardShowing(mgr) {
 
 async function watchBarryKeyboard() {
     if (!unhookKeyboard) unhookKeyboard = hookKeyboard();
-    const open = await barryKeyboardOpen().catch(() => false);
-    if (open && !barryKeys) {
+    const available = await barryKeyboardAvailable().catch(() => false);
+    if (available && !barryAvailable) {
+        // A Steam keyboard left up from before goes away.
         const mgr = keyboardManager();
         if (mgr && steamKeyboardShowing(mgr)) mgr.SetVirtualKeyboardHidden();
     }
-    barryKeys = open;
+    barryAvailable = available;
 }
 
 const row = (child) => jsx(DFL.PanelSectionRow, { children: child });
@@ -105,7 +123,7 @@ function Content() {
 }
 
 var index = definePlugin(() => {
-    const timer = setInterval(watchBarryKeyboard, 500);
+    const timer = setInterval(watchBarryKeyboard, 2000);
     watchBarryKeyboard();
     return {
         name: "Dual Screen",
@@ -116,7 +134,7 @@ var index = definePlugin(() => {
             clearInterval(timer);
             if (unhookKeyboard) unhookKeyboard();
             unhookKeyboard = null;
-            barryKeys = false;
+            barryAvailable = false;
         },
     };
 });

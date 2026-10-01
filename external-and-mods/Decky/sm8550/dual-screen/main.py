@@ -8,9 +8,10 @@ disables its touchscreen until it is turned back on, when it comes back at
 the top panel's brightness. The daemon applies and enforces the state in
 STATE; this only records it.
 
-Also tells the frontend whether Barry Launcher's Keyboard app is open on the
-bottom screen (barry_launcher_shelld's /apps), so Steam's own on-screen
-keyboard stays down on the top screen meanwhile.
+Also stands in Barry Launcher's Keyboard app for Steam's on-screen keyboard:
+the frontend asks whether it can (the bottom screen is on and Barry
+Launcher's barry_launcher_shelld answers), and opens it there instead of
+Steam's.
 """
 from __future__ import annotations
 
@@ -24,7 +25,7 @@ import decky
 TOP = "/sys/class/backlight/ae96000.dsi.0"
 BOTTOM = "/sys/class/backlight/ae94000.dsi.0"
 STATE = "/var/lib/steamos-sm8550/thor-bottom-screen"
-SHELLD_APPS = "http://127.0.0.1:47824/apps"
+SHELLD = "http://127.0.0.1:47824"
 
 
 def _is_on() -> bool:
@@ -55,10 +56,22 @@ class Plugin:
         decky.logger.info(f"bottom screen {'on' if on else 'off'}")
         return _is_on()
 
-    async def barry_keyboard_open(self, **_: Any) -> bool:
+    async def barry_keyboard_available(self, **_: Any) -> bool:
+        """The bottom screen is on and Barry Launcher can open its keyboard."""
+        if not _is_on():
+            return False
         try:
-            with urllib.request.urlopen(SHELLD_APPS, timeout=0.5) as r:
-                apps = json.load(r)
-            return bool(apps.get("keyboard", {}).get("running"))
-        except (OSError, ValueError, AttributeError):
+            with urllib.request.urlopen(f"{SHELLD}/apps", timeout=0.5) as r:
+                return "keyboard" in json.load(r)
+        except (OSError, ValueError, TypeError):
+            return False
+
+    async def open_barry_keyboard(self, **_: Any) -> bool:
+        req = urllib.request.Request(f"{SHELLD}/launch", json.dumps({"app": "keyboard"}).encode(),
+                                     {"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=2) as r:
+                return bool(json.load(r).get("ok"))
+        except (OSError, ValueError, AttributeError) as err:
+            decky.logger.warning(f"cannot open Barry Launcher's keyboard: {err}")
             return False
