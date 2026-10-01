@@ -9,10 +9,17 @@
  * to the window gamescope has focused (a game, not Steam), repeats what a
  * window manager would do for a WM_TAKE_FOCUS client: send it WM_TAKE_FOCUS.
  *
+ * Games in exclusive fullscreen also minimize themselves when the overlay
+ * takes focus (as on Windows): Wine marks the window Iconic, gamescope stops
+ * showing it, and the screen stays black after the overlay closes until
+ * Steam's "resume game". So when focus comes back to an Iconic game, its
+ * WM_STATE goes back to Normal first, which Wine takes as "restore".
+ *
  *   konkr-focusfix [:0]
  * Build: cc -O2 -o konkr-focusfix konkr-focusfix.c -lX11
  */
 #include <X11/Xlib.h>
+#include <X11/Xutil.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -44,6 +51,7 @@ int main(int argc, char **argv)
 	Atom gs_app = XInternAtom(d, "GAMESCOPE_FOCUSED_APP", False);
 	Atom proto = XInternAtom(d, "WM_PROTOCOLS", False);
 	Atom take = XInternAtom(d, "WM_TAKE_FOCUS", False);
+	Atom wm_state = XInternAtom(d, "WM_STATE", False);
 	Window last = None;
 
 	for (;;) {
@@ -55,6 +63,12 @@ int main(int argc, char **argv)
 		if (game && focus == game && last != game && last != None
 		    && app && app != STEAM_APPID) {
 			usleep(100 * 1000);   /* let Steam finish handing focus back */
+			if (card(d, game, wm_state) == IconicState) {
+				long normal[2] = { NormalState, None };
+				XChangeProperty(d, game, wm_state, wm_state, 32, PropModeReplace,
+				                (unsigned char *)normal, 2);
+				fprintf(stderr, "konkr-focusfix: restored minimized 0x%lx (app %lu)\n", game, app);
+			}
 			/* WM_TAKE_FOCUS only: Wine then activates the window and sets X focus
 			 * itself. Also forcing XSetInputFocus + _NET_ACTIVE_WINDOW made Wine
 			 * re-grab/warp the pointer -> endless camera spin in Dying Light. */
