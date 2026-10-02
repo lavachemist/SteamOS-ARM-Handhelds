@@ -25,15 +25,12 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PORT_ROOT="$(cd "${HERE}/../.." && pwd)"
 
 SOC="${SOC:-sm8650}"
-# ROCKNIX's released recipes, pinned per SoC:
-# - SM8650: tag 20260801, Linux 7.1.2. Their 7.2 development branch (with
-#   extra SM8650 power-domain/GPU patches) does not boot on the Pocket FIT:
-#   black screen before the console, verified on hardware 2026-09-23.
-# - SM8550: tag 20260901 (their 7.2 recipe) on the newest 7.2 stable release.
-case "$SOC" in
-  sm8550) _kver=7.2.8 _rocknix_ref=20260901 ;;
-  *)      _kver=7.1.2 _rocknix_ref=20260801 ;;
-esac
+# ROCKNIX's released 7.2 recipe (tag 20260901) on the newest 7.2 stable
+# release, for both SoCs. Their 7.2 development branch black-screened the
+# Pocket FIT before the console on 2026-09-23; a GCC 13 build of 7.2 fails
+# the same way on the RP6, so 7.2 is built with GCC 15 (see below).
+# The previous SM8650 kernel: KVER=7.1.2 ROCKNIX_REF=20260801.
+_kver=7.2.8 _rocknix_ref=20260901
 KVER="${KVER:-$_kver}"
 # ROCKNIX's version patch dir is named after the series (patches/7.2).
 KSERIES="${KVER%.*}"
@@ -61,13 +58,13 @@ case "$SOC" in
   *) echo "unsupported SOC=${SOC} (sm8650, sm8550)" >&2; exit 1 ;;
 esac
 SOC_UC="${SOC^^}"
-# SM8550 on 7.2 only boots when built with GCC 15 (see build-gcc15.sh, which
-# runs this script in a Fedora 43 container). GCC 13's kernel dies before the
-# initramfs on the Retroid Pocket 6.
-if [[ "$SOC" == sm8550 && "${ALLOW_OLD_GCC:-0}" != 1 ]]; then
+# 7.2 only boots when built with GCC 15 (see build-gcc15.sh, which runs this
+# script in a Fedora 43 container). GCC 13's kernel dies before the initramfs
+# on the Retroid Pocket 6.
+if [[ "$KSERIES" != 7.1 && "${ALLOW_OLD_GCC:-0}" != 1 ]]; then
   _gcc_major="$(${CC:-gcc} -dumpversion 2>/dev/null | cut -d. -f1)"
   if [[ -z "$_gcc_major" || "$_gcc_major" -lt 15 ]]; then
-    echo "SOC=sm8550 needs GCC 15 (found ${_gcc_major:-none}): use build-gcc15.sh" >&2
+    echo "Linux ${KVER} needs GCC 15 (found ${_gcc_major:-none}): use build-gcc15.sh" >&2
     exit 1
   fi
 fi

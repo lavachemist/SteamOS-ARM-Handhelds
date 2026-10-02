@@ -66,8 +66,8 @@ Everything below is on `main`. Each commit message explains its change.
   GCC 15 in a Fedora 43 container
   (`external-and-mods/kernel-sm8650/build-gcc15.sh`). The same recipe built
   with GCC 13 does not boot on the RP6. sched_ext, BTF, function tracing and
-  the TEO idle governor are built in. The Pocket FIT kernel stays on 7.1.2,
-  because ROCKNIX's 7.2 kernel left its screen black.
+  the TEO idle governor are built in. The Pocket FIT runs the same 7.2.8
+  kernel on ROCKNIX's 20260901 SM8650 recipe, also built with GCC 15.
 - **Device support from ROCKNIX:** device trees, the panel, the RSInput
   controller, the LED and haptics drivers, and AYN-signed firmware. The
   Adreno 740 firmware comes from linux-firmware, pinned by tag and SHA-256.

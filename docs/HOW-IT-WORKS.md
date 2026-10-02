@@ -98,7 +98,7 @@ which would fight `konkrd` over the fan and drive AYN-only LEDs.
 
 | Area | SM8550 (MaSi) | Pocket FIT (this project) |
 |------|---------------|--------------------|
-| Kernel | 7.0.14 + Armbian sm8550 | **7.1.2** (ROCKNIX 20260801 SM8650 recipe) + Pocket FIT patches (`external-and-mods/kernel-sm8650/`) |
+| Kernel | 7.0.14 + Armbian sm8550 | **7.2.8** (ROCKNIX 20260901 SM8650 recipe, GCC 15) + Pocket FIT patches (`external-and-mods/kernel-sm8650/`) |
 | DTB selection | 14-slot index chain | ROCKNIX ABL ≥ 1.1.8 matches the DTB `model` string |
 | Root | initramfs + `root=UUID=` | tiny busybox initramfs (writes `bootlog.txt` to the FAT partition), `root=PARTUUID=` patched at image pack |
 | GPU userspace | patched A740 Turnip | Frame's stock Turnip/zink (A750) |
@@ -118,11 +118,11 @@ symlinks need a Linux filesystem, which exFAT is not. Build from a copy of
 this tree inside `/work` (normalised to root-owned 0644/0755):
 
 ```bash
-bash external-and-mods/kernel-sm8650/build.sh                      # kernel
-# SM8550 (Retroid Pocket 6, AYN Thor): the 7.2.8 kernel only boots when
-# built with GCC 15, so it builds in a Fedora 43 container (needs Docker):
-#   SOC=sm8550 WORK=/work/kernel-sm8550 ROCKNIX_DIR=/work/rocknix-20260901 \
-#     bash external-and-mods/kernel-sm8650/build-gcc15.sh
+# Kernel: 7.2.8 only boots when built with GCC 15, so it builds in a
+# Fedora 43 container (needs Docker). SOC=sm8650 for the Pocket FIT,
+# SOC=sm8550 for the Retroid Pocket 6 and AYN Thor:
+SOC=sm8650 WORK=/work/kernel-sm8650 ROCKNIX_DIR=/work/rocknix-20260901 \
+  bash external-and-mods/kernel-sm8650/build-gcc15.sh
 sudo bash scripts/build-gamescope-in-rootfs.sh /work/rootfs        # gamescope
 sudo STEAMOS_WORK=/work BOX64_SRC=/work/box64 \
      STEAM_ARM_SEED=/work/steam-seed-home/.local/share/Steam \
