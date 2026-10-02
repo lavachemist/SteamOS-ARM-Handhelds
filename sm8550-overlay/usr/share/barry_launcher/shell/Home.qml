@@ -125,6 +125,11 @@ Rectangle {
             name: "Keyboard"
             iconKind: "keyboard"
         }
+        Tile {
+            app: "dino"
+            name: "Dino"
+            iconKind: "dino"
+        }
     }
 
     Text {

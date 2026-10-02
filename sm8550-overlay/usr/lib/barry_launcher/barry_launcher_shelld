@@ -95,8 +95,11 @@ APPS = {
     # The top screen's trackpad and keyboard: QML windows by title.
     "trackpad": {"qml": "trackpad", "window": "^Barry Launcher Trackpad$"},
     "keyboard": {"qml": "keyboard", "window": "^Barry Launcher Top Keyboard$"},
+    # Plain QML apps of the shell's own.
+    "dino": {"qmlfile": "Dino.qml", "window": "^Barry Launcher Dino$"},
 }
-TOP_INPUT_QML = "/usr/share/barry_launcher/shell/TopInputApp.qml"
+SHELL_DIR = "/usr/share/barry_launcher/shell"
+TOP_INPUT_QML = f"{SHELL_DIR}/TopInputApp.qml"
 INPUTD = "http://127.0.0.1:47825"
 
 FLATHUB = "https://dl.flathub.org/repo/flathub.flatpakrepo"
@@ -327,7 +330,7 @@ def launch(app: str) -> tuple[int, dict]:
             # Its window, or a launch dialog still waiting for an answer.
             if not activate(["--classname", spec["window"]]):
                 activate(["--classname", DIALOG_CLASS])
-        elif "qml" in spec:
+        elif "qml" in spec or "qmlfile" in spec:
             activate(["--pid", str(proc.pid), "--name", spec["window"]])
         else:
             activate(["--pid", str(proc.pid), "--classname", "Navigator"])
@@ -336,9 +339,11 @@ def launch(app: str) -> tuple[int, dict]:
         STATE.status[app] = "Starting…"
         threading.Thread(target=start_flatpak, args=(app, spec), daemon=True).start()
         return 200, {"ok": True, "running": False}
-    if "qml" in spec:
+    if "qml" in spec or "qmlfile" in spec:
+        cmd = (["qml6", TOP_INPUT_QML, "--", spec["qml"]] if "qml" in spec
+               else ["qml6", os.path.join(SHELL_DIR, spec["qmlfile"])])
         STATE.apps[app] = subprocess.Popen(
-            ["qml6", TOP_INPUT_QML, "--", spec["qml"]],
+            cmd,
             env=app_env(),
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )

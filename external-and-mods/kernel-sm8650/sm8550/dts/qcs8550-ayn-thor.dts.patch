@@ -1,16 +1,45 @@
-Touch orientation hunks from Armada (armada-os/armada@939fb84,
+Touch orientation and lid-wake hunks from Armada (armada-os/armada@939fb84,
 packages/kernel/dts/qcs8550-ayn-thor.dts.patch), regenerated for this tree.
 Both touchscreens report in panel-native (portrait) coordinates, like the RP6's;
 gamescope and KWin rotate them with the panel. With the kernel swapping and
-inverting as well, taps were rotated twice. Armada's hall-wake and DPU dither
-hunks are not taken (dither needs Armada's DPU patch).
+inverting as well, taps were rotated twice.
+
+The hall sensor woke the Thor on both edges, so closing the lid after putting
+it to sleep with the power button woke it again. Only the lid-open edge wakes
+now, and the open-drain hall output gets the pull-up it needs to read "open"
+reliably. Armada's DPU dither hunk is not taken (it needs Armada's DPU patch).
 
 From: Armada <noreply@armada.local>
-Subject: [PATCH] arm64: dts: qcom: thor: touch orientation
+Subject: [PATCH] arm64: dts: qcom: thor: hall wake, touch orientation
 
 --- a/arch/arm64/boot/dts/qcom/qcs8550-ayn-thor.dts
 +++ b/arch/arm64/boot/dts/qcom/qcs8550-ayn-thor.dts
-@@ -275,8 +275,6 @@
+@@ -5,6 +5,7 @@
+ 
+ /dts-v1/;
+ 
++#include <dt-bindings/input/gpio-keys.h>
+ #include "qcs8550-ayn-common.dtsi"
+ 
+ / {
+@@ -30,6 +31,8 @@
+ 
+ 	gpio-keys-lid {
+ 		compatible = "gpio-keys";
++		pinctrl-0 = <&hall_lid_n>;
++		pinctrl-names = "default";
+ 
+ 		hall-lid-sensor {
+ 			label = "Hall Lid Sensor";
+@@ -37,6 +40,7 @@
+ 			linux,input-type = <EV_SW>;
+ 			linux,code = <SW_LID>;
+ 			linux,can-disable;
++			wakeup-event-action = <EV_ACT_DEASSERTED>;
+ 			wakeup-source;
+ 		};
+ 	};
+@@ -275,8 +279,6 @@
  
  		touchscreen-size-x = <1080>;
  		touchscreen-size-y = <1920>;
@@ -19,7 +48,7 @@ Subject: [PATCH] arm64: dts: qcom: thor: touch orientation
  
  		label = "top_touchscreen";
  	};
-@@ -393,8 +391,6 @@
+@@ -393,8 +395,6 @@
  
  		touchscreen-size-x = <1080>;
  		touchscreen-size-y = <1240>;
@@ -28,3 +57,19 @@ Subject: [PATCH] arm64: dts: qcom: thor: touch orientation
  
  		label = "bottom_touchscreen";
  
+@@ -452,6 +452,15 @@
+ 		bias-pull-up;
+ 		output-disable;
+ 	};
++
++	/* Open-drain hall output: with no pull-up the released (lid open)
++	   level is undefined. */
++	hall_lid_n: hall-lid-n-state {
++		pins = "gpio17";
++		function = "gpio";
++		bias-pull-up;
++		output-disable;
++	};
+ };
+ 
+ &remoteproc_adsp {
