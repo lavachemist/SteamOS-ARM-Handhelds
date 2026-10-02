@@ -735,36 +735,15 @@ if [[ "$SOC" == sm8550 ]]; then
   else
     remove_thor_bottom_screen
   fi
-  # GPU interrupts off the little cores: the A740's GMU wedges otherwise.
-  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-irq-affinity" \
-    "$R/usr/lib/steamos-sm8550/sm8550-irq-affinity" 0755
-  install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-irq-affinity.service" \
-    "$R/usr/lib/systemd/system/sm8550-irq-affinity.service" 0644
   # uclamp boost for game and Steam UI threads (no affinity).
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-boostd" \
     "$R/usr/lib/steamos-sm8550/sm8550-boostd" 0755
   install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-boostd.service" \
     "$R/usr/lib/systemd/system/sm8550-boostd.service" 0644
-  # No hard CPU pins: the Frame keeps system services on cpu1-4, the session
-  # on cpu0-4 and games on cpu3-7. Give all of them every core; EAS places.
-  install_file "$SM8550_OVL/usr/lib/systemd/system.conf.d/60-sm8550-cpu-affinity.conf" \
-    "$R/usr/lib/systemd/system.conf.d/60-sm8550-cpu-affinity.conf" 0644
-  install_file "$SM8550_OVL/usr/lib/systemd/user.conf.d/60-sm8550-cpu-affinity.conf" \
-    "$R/usr/lib/systemd/user.conf.d/60-sm8550-cpu-affinity.conf" 0644
-  install_file "$SM8550_OVL/usr/lib/systemd/user/steam.service.d/70-sm8550-cpu-affinity.conf" \
-    "$R/usr/lib/systemd/user/steam.service.d/70-sm8550-cpu-affinity.conf" 0644
   install_file "$SM8550_OVL/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules" \
     "$R/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules" 0644
   install_file "$SM8550_OVL/usr/lib/udev/rules.d/74-sm8550-ufs-serial.rules" \
     "$R/usr/lib/udev/rules.d/74-sm8550-ufs-serial.rules" 0644
-  install_file "$SM8550_OVL/usr/lib/udev/rules.d/99-zz-sm8550-backlight-nosystemd.rules" \
-    "$R/usr/lib/udev/rules.d/99-zz-sm8550-backlight-nosystemd.rules" 0644
-  # zram: zstd, RAM-sized up to 8 GB (the 8 GB models ran out of swap in Palworld).
-  install_file "$SM8550_OVL/usr/lib/systemd/zram-generator.conf.d/60-sm8550-zram.conf" \
-    "$R/usr/lib/systemd/zram-generator.conf.d/60-sm8550-zram.conf" 0644
-  # TEO cpuidle governor (same fps as menu, ~4 % less power in game).
-  install_file "$SM8550_OVL/usr/lib/tmpfiles.d/sm8550-cpuidle-teo.conf" \
-    "$R/usr/lib/tmpfiles.d/sm8550-cpuidle-teo.conf" 0644
   # Output volume across reboots (pro-audio outputs have no saved routes).
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-volume-keeper" \
     "$R/usr/lib/steamos-sm8550/sm8550-volume-keeper" 0755
@@ -781,7 +760,7 @@ if [[ "$SOC" == sm8550 ]]; then
     "$R/usr/lib/udev/rules.d/72-sm8550-touch-inhibit.rules" 0644
   mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
   for u in sm8550-fand.service sm8550-powerbuttond.service \
-           sm8550-irq-affinity.service sm8550-boostd.service; do
+           sm8550-boostd.service; do
     ln -sfn ../$u "$R/usr/lib/systemd/system/multi-user.target.wants/$u"
   done
   # Default CPU scheduler: EAS (sm8550-boostd steps in), not LAVD. On 7.2,
@@ -809,17 +788,9 @@ else
     "$R/var/lib/overlays/etc/upper/inputplumber/devices.d/50-ayn_thor.yaml" \
     "$R/usr/lib/systemd/system/sm8550-thor-backlightd.service" \
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-thor-backlightd.service" \
-    "$R/usr/lib/systemd/system/sm8550-irq-affinity.service" \
-    "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-irq-affinity.service" \
     "$R/usr/lib/systemd/system/sm8550-boostd.service" \
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-boostd.service" \
-    "$R/usr/lib/systemd/system.conf.d/60-sm8550-cpu-affinity.conf" \
-    "$R/usr/lib/systemd/user.conf.d/60-sm8550-cpu-affinity.conf" \
-    "$R/usr/lib/systemd/user/steam.service.d/70-sm8550-cpu-affinity.conf" \
     "$R/usr/lib/udev/rules.d/74-sm8550-ufs-serial.rules" \
-    "$R/usr/lib/udev/rules.d/99-zz-sm8550-backlight-nosystemd.rules" \
-    "$R/usr/lib/systemd/zram-generator.conf.d/60-sm8550-zram.conf" \
-    "$R/usr/lib/tmpfiles.d/sm8550-cpuidle-teo.conf" \
     "$R/usr/lib/systemd/user/sm8550-volume-keeper.service" \
     "$R/usr/lib/systemd/user/default.target.wants/sm8550-volume-keeper.service"
   # Back to the package default (the build rootfs is reused across SoCs).
@@ -828,6 +799,37 @@ else
     if [[ -f "$f" ]]; then sed -i 's/^SCHEDULER=.*/SCHEDULER=lavd/' "$f"; fi
   done
 fi
+
+# CPU, GPU and memory tuning shared by SM8550 and SM8650 (measured on the
+# Retroid Pocket 6, carried to the Pocket FIT).
+log "== CPU/GPU/memory tuning (GPU IRQs, no CPU pins, zram, TEO, backlight uevents)"
+# GPU interrupts off the little cores: the A740's GMU wedges otherwise (the
+# A750 has the same GMU).
+install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-irq-affinity" \
+  "$R/usr/lib/steamos-sm8550/sm8550-irq-affinity" 0755
+install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-irq-affinity.service" \
+  "$R/usr/lib/systemd/system/sm8550-irq-affinity.service" 0644
+mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
+ln -sfn ../sm8550-irq-affinity.service \
+  "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-irq-affinity.service"
+# No hard CPU pins: the Frame keeps system services on cpu1-4, the session
+# on cpu0-4 and games on cpu3-7. Give all of them every core; the scheduler
+# places them.
+install_file "$SM8550_OVL/usr/lib/systemd/system.conf.d/60-sm8550-cpu-affinity.conf" \
+  "$R/usr/lib/systemd/system.conf.d/60-sm8550-cpu-affinity.conf" 0644
+install_file "$SM8550_OVL/usr/lib/systemd/user.conf.d/60-sm8550-cpu-affinity.conf" \
+  "$R/usr/lib/systemd/user.conf.d/60-sm8550-cpu-affinity.conf" 0644
+install_file "$SM8550_OVL/usr/lib/systemd/user/steam.service.d/70-sm8550-cpu-affinity.conf" \
+  "$R/usr/lib/systemd/user/steam.service.d/70-sm8550-cpu-affinity.conf" 0644
+# Brightness changes no longer flood udisksd through systemd device units.
+install_file "$SM8550_OVL/usr/lib/udev/rules.d/99-zz-sm8550-backlight-nosystemd.rules" \
+  "$R/usr/lib/udev/rules.d/99-zz-sm8550-backlight-nosystemd.rules" 0644
+# zram: zstd, RAM-sized up to 8 GB (the 8 GB models ran out of swap in Palworld).
+install_file "$SM8550_OVL/usr/lib/systemd/zram-generator.conf.d/60-sm8550-zram.conf" \
+  "$R/usr/lib/systemd/zram-generator.conf.d/60-sm8550-zram.conf" 0644
+# TEO cpuidle governor (same fps as menu, ~4 % less power in game).
+install_file "$SM8550_OVL/usr/lib/tmpfiles.d/sm8550-cpuidle-teo.conf" \
+  "$R/usr/lib/tmpfiles.d/sm8550-cpuidle-teo.conf" 0644
 
 # Tailscale: in every image but off, with no account or keys (see the
 # script). TAILSCALE=0 leaves it out; BUNDLE_TAILSCALE=0 still works too.

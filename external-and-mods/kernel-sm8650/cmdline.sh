@@ -12,11 +12,10 @@ build_cmdline() {
   # No clk_ignore_unused / pd_ignore_unused: those are SM8550 (MaSi) flags;
   # ROCKNIX boots SM8650 without them and they can upset display bring-up.
   local -a parts=(video=efifb:off)
-  # Interrupts go to the little cores (0-1) on SM8650. SM8550 keeps the
-  # kernel default: only its GPU interrupts must stay off cpu0-2 (A740 GMU
-  # hang, Armada e2d9802), and the kernel always adds the boot CPU to this
-  # mask anyway, so sm8550-irq-affinity.service moves just those.
-  [[ "${SOC:-sm8650}" == sm8550 ]] || parts+=(irqaffinity=0-1)
+  # No irqaffinity=: interrupts keep the kernel default (all CPUs). Only the
+  # GPU's must stay off the little cores (A740/A750 GMU hang, Armada
+  # e2d9802), and the kernel always adds the boot CPU to this mask anyway, so
+  # sm8550-irq-affinity.service moves just those.
   parts+=(
     # Pocket FIT pad is an XInput device on USB; 2 ms polling like ROCKNIX
     # (needs 0506-usbcore-add-interrupt-interval-override.patch).

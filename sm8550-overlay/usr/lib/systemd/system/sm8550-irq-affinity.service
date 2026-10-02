@@ -1,12 +1,12 @@
 [Unit]
-Description=SM8550 GPU interrupts off the little cores (Adreno 740 GMU hang)
+Description=GPU interrupts off the little cores (Adreno 740/750 GMU hang)
 ConditionPathExists=/sys/firmware/devicetree/base/compatible
 # Before anything starts rendering.
 Before=display-manager.service
 
 [Service]
 Type=oneshot
-ExecCondition=/bin/sh -c 'grep -qa "qcom,sm8550" /sys/firmware/devicetree/base/compatible'
+ExecCondition=/bin/sh -c 'grep -qaE "qcom,sm8(550|650)" /sys/firmware/devicetree/base/compatible'
 ExecStart=/usr/lib/steamos-sm8550/sm8550-irq-affinity
 
 [Install]

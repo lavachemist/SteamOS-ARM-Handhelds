@@ -1,12 +1,26 @@
 #!/bin/sh
-# sm8550-irq-affinity: keep only the GPU's interrupts off the SM8550's little
-# cores (0-2); every other interrupt stays at the kernel default (all CPUs).
-# The Adreno 740's GMU wedges when a GPU interrupt wakes a little core out of
-# power collapse: GMU HFI replies arrive late, then "OOB set GPU_SET"
-# timeouts and a GPU hang that recovery never clears (Armada e2d9802).
-# Older images also carry irqaffinity=3-7 on the cmdline; undo that here.
-all=ff    # CPUs 0-7
-gpu=f8    # CPUs 3-7
+# sm8550-irq-affinity: keep only the GPU's interrupts off the little cores
+# (SM8550: cpu0-2, SM8650: cpu0-1); every other interrupt stays at the
+# kernel default (all CPUs). The Adreno 740's GMU wedges when a GPU
+# interrupt wakes a little core out of power collapse: GMU HFI replies
+# arrive late, then "OOB set GPU_SET" timeouts and a GPU hang that recovery
+# never clears (Armada e2d9802). The SM8650's Adreno 750 has the same GMU.
+# Older images also carry irqaffinity= on the cmdline; undo that here.
+
+# Little cores have the lowest cpu_capacity; the GPU gets all the others.
+low=
+for c in /sys/devices/system/cpu/cpu[0-9]*; do
+  cap=$(cat "$c/cpu_capacity" 2>/dev/null) || continue
+  if [ -z "$low" ] || [ "$cap" -lt "$low" ]; then low=$cap; fi
+done
+all=0 gpu=0
+for c in /sys/devices/system/cpu/cpu[0-9]*; do
+  n=${c##*cpu}
+  all=$((all | 1 << n))
+  [ "$(cat "$c/cpu_capacity" 2>/dev/null)" = "$low" ] || gpu=$((gpu | 1 << n))
+done
+[ "$gpu" -ne 0 ] || gpu=$all
+all=$(printf %x "$all") gpu=$(printf %x "$gpu")
 
 echo "$all" >/proc/irq/default_smp_affinity
 for f in /proc/irq/*/smp_affinity; do
@@ -16,4 +30,4 @@ moved=""
 for irq in $(awk '$NF ~ /^(gpu-irq|hfi|gmu)$/ { sub(":", "", $1); print $1 }' /proc/interrupts); do
   echo "$gpu" >"/proc/irq/$irq/smp_affinity" && moved="$moved $irq"
 done
-echo "sm8550-irq-affinity: GPU interrupts on CPUs 3-7 (irq${moved:- none found}), rest on all CPUs"
+echo "sm8550-irq-affinity: GPU interrupts on CPU mask $gpu (irq${moved:- none found}), rest on $all"

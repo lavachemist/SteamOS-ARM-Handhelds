@@ -68,6 +68,11 @@ Everything below is on `main`. Each commit message explains its change.
   with GCC 13 does not boot on the RP6. sched_ext, BTF, function tracing and
   the TEO idle governor are built in. The Pocket FIT runs the same 7.2.8
   kernel on ROCKNIX's 20260901 SM8650 recipe, also built with GCC 15.
+- **Shared with the Pocket FIT:** the bounded GPU fence wait, GPU interrupts
+  off the little cores (cores 2-7 there), no hard CPU pinning, zstd zram,
+  TEO and the udisks fix below apply to SM8650 too. konkrd stays the Pocket
+  FIT's uclamp booster in place of `sm8550-boostd`, and its default
+  scheduler stays LAVD.
 - **Device support from ROCKNIX:** device trees, the panel, the RSInput
   controller, the LED and haptics drivers, and AYN-signed firmware. The
   Adreno 740 firmware comes from linux-firmware, pinned by tag and SHA-256.
@@ -233,7 +238,9 @@ you saw.
   firewalld masked, the suspend model check, Tailscale staying off, and
   Android apps after leaving Game Mode.
 - The Easy UFS Installer and its SoC check, and the per-SoC update packages.
-- zstd zram, as on SM8550.
+- The CPU, GPU and memory tuning shared with SM8550 (GPU interrupts on
+  cores 2-7, no CPU pins, zstd zram, TEO, the udisks fix): running on the
+  device, not benchmarked yet.
 - `main` does **not** include the Pocket FIT fixes kept on the
   `claude-tests-all` branch (speaker amp fault patch, quieter boot,
   controller and haptics work, Wi-Fi fix). An image from `main` goes without
