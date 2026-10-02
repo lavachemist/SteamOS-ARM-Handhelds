@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 // Home screen: app tiles. Black around them (pixels off on the AMOLED).
-// A running app's tile brings it forward and has a close badge; holding the
+// A running app's tile brings it forward and has a close badge (not
+// Trackpad and Keyboard, which close by themselves on Home); holding the
 // AYN button comes back here from any app. Trackpad and Keyboard make the
 // bottom screen the top screen's trackpad and keyboard (TopInputApp.qml).
 import QtQuick
@@ -20,7 +21,8 @@ Rectangle {
         property string app
         property string name
         property string iconKind
-        readonly property bool isRunning: home.running[app] === true
+        property bool closable: true  // Trackpad and Keyboard close on Home by themselves
+        readonly property bool isRunning: closable && home.running[app] === true
         readonly property string statusText: home.status[app] || ""
 
         width: 300 * home.s
@@ -119,11 +121,13 @@ Rectangle {
             app: "trackpad"
             name: "Trackpad"
             iconKind: "trackpad"
+            closable: false
         }
         Tile {
             app: "keyboard"
             name: "Keyboard"
             iconKind: "keyboard"
+            closable: false
         }
         Tile {
             app: "dino"
