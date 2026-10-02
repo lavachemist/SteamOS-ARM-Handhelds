@@ -70,9 +70,8 @@ Everything below is on `main`. Each commit message explains its change.
   kernel on ROCKNIX's 20260901 SM8650 recipe, also built with GCC 15.
 - **Shared with the Pocket FIT:** the bounded GPU fence wait, GPU interrupts
   off the little cores (cores 2-7 there), no hard CPU pinning, zstd zram,
-  TEO and the udisks fix below apply to SM8650 too. konkrd stays the Pocket
-  FIT's uclamp booster in place of `sm8550-boostd`, and its default
-  scheduler stays LAVD.
+  TEO, the udisks fix and the EAS default below apply to SM8650 too. konkrd
+  stays the Pocket FIT's uclamp booster in place of `sm8550-boostd`.
 - **Device support from ROCKNIX:** device trees, the panel, the RSInput
   controller, the LED and haptics drivers, and AYN-signed firmware. The
   Adreno 740 firmware comes from linux-firmware, pinned by tag and SHA-256.
@@ -192,10 +191,17 @@ not precise performance.
 
 ### KONKR Pocket FIT
 
-An image of `main` (`ec3beb2`) was built and checked offline: the kernel
-command line, kernel modules, the 0.3.0 base, the LAVD scheduler setting,
-KONKR Control and the Android payload are all in place. **It has not been
-booted yet.**
+An image of `main` (`ec3beb2`) was built and booted from an SD card on one
+KONKR Pocket FIT. Checked there: the 0.3.0 base, the /etc overlay (a
+service enabled at runtime survived a reboot), firewalld masked, Tailscale
+off, no failed units. The Pocket FIT has no built-in mic in its UCM
+profile, so the mic change does nothing there.
+
+On the same card, this branch's kernel (7.2.8) then booted with the panel,
+Wi-Fi, controller, KONKR buttons, touch, audio card, GPU, zram and sleep
+(konkr-standby) working, and with the SM8550 CPU/GPU/memory tuning.
+Tomb Raider (2013, 1080p, 2x SSAA, TressFX) runs at about 38.5 fps on
+battery, GPU-bound and slowed by heat.
 
 ### Build machine
 
@@ -231,16 +237,14 @@ you saw.
 
 **KONKR Pocket FIT and AYANEO Pocket S2 (`main` build):**
 
-- Booting at all, and everything after that.
-- Things `main` changed for SM8650 too: the stable 0.3.0 base, LAVD
-  actually running (sched_ext is now in the shared kernel config), the mic
-  without the Frame's loopback, the /etc overlay mounted from the initramfs,
-  firewalld masked, the suspend model check, Tailscale staying off, and
-  Android apps after leaving Game Mode.
+- Anything beyond the one Pocket FIT above, the AYANEO Pocket S2 at all,
+  and installs on internal storage.
+- Android apps after leaving Game Mode.
 - The Easy UFS Installer and its SoC check, and the per-SoC update packages.
 - The CPU, GPU and memory tuning shared with SM8550 (GPU interrupts on
-  cores 2-7, no CPU pins, zstd zram, TEO, the udisks fix): running on the
-  device, not benchmarked yet.
+  cores 2-7, no CPU pins, zstd zram, TEO, the udisks fix, EAS): running on
+  the device. Benchmarked in Tomb Raider only (EAS vs LAVD); the other
+  changes have no A/B numbers yet.
 - `main` does **not** include the Pocket FIT fixes kept on the
   `claude-tests-all` branch (speaker amp fault patch, quieter boot,
   controller and haptics work, Wi-Fi fix). An image from `main` goes without

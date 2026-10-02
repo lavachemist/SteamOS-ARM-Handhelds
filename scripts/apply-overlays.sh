@@ -763,13 +763,6 @@ if [[ "$SOC" == sm8550 ]]; then
            sm8550-boostd.service; do
     ln -sfn ../$u "$R/usr/lib/systemd/system/multi-user.target.wants/$u"
   done
-  # Default CPU scheduler: EAS (sm8550-boostd steps in), not LAVD. On 7.2,
-  # LAVD 1.1.2 pins the little and mid cores at max clock in games for no
-  # gain: EDC 58.5 fps at 7.4 W on EAS vs 58.1 fps at 8.5 W on LAVD.
-  for f in "$R/etc/default/steamos-scheduler" \
-           "$R/var/lib/overlays/etc/upper/default/steamos-scheduler"; do
-    if [[ -f "$f" ]]; then sed -i 's/^SCHEDULER=.*/SCHEDULER=none/' "$f"; fi
-  done
 else
   remove_old_bottom_session
   rm -rf "$R/usr/lib/steamos-sm8550" "$R/usr/share/sm8550-fand" \
@@ -793,11 +786,6 @@ else
     "$R/usr/lib/udev/rules.d/74-sm8550-ufs-serial.rules" \
     "$R/usr/lib/systemd/user/sm8550-volume-keeper.service" \
     "$R/usr/lib/systemd/user/default.target.wants/sm8550-volume-keeper.service"
-  # Back to the package default (the build rootfs is reused across SoCs).
-  for f in "$R/etc/default/steamos-scheduler" \
-           "$R/var/lib/overlays/etc/upper/default/steamos-scheduler"; do
-    if [[ -f "$f" ]]; then sed -i 's/^SCHEDULER=.*/SCHEDULER=lavd/' "$f"; fi
-  done
 fi
 
 # CPU, GPU and memory tuning shared by SM8550 and SM8650 (measured on the
@@ -830,6 +818,15 @@ install_file "$SM8550_OVL/usr/lib/systemd/zram-generator.conf.d/60-sm8550-zram.c
 # TEO cpuidle governor (same fps as menu, ~4 % less power in game).
 install_file "$SM8550_OVL/usr/lib/tmpfiles.d/sm8550-cpuidle-teo.conf" \
   "$R/usr/lib/tmpfiles.d/sm8550-cpuidle-teo.conf" 0644
+# Default CPU scheduler: EAS, not LAVD (sm8550-boostd or konkrd add the
+# uclamp boost). On 7.2, LAVD 1.1.2 pins the little and mid cores at max
+# clock in games for no gain. RP6, EDC: 58.5 fps at 7.4 W on EAS vs 58.1 fps
+# at 8.5 W on LAVD. Pocket FIT, Tomb Raider (2x SSAA): 38.4 vs 38.9 fps, but
+# 1 % low +5.7 %, 0.1 % low +19 % and 4 % less power on EAS.
+for f in "$R/etc/default/steamos-scheduler" \
+         "$R/var/lib/overlays/etc/upper/default/steamos-scheduler"; do
+  if [[ -f "$f" ]]; then sed -i 's/^SCHEDULER=.*/SCHEDULER=none/' "$f"; fi
+done
 
 # Tailscale: in every image but off, with no account or keys (see the
 # script). TAILSCALE=0 leaves it out; BUNDLE_TAILSCALE=0 still works too.
