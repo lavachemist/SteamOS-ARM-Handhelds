@@ -48,6 +48,8 @@ Physical testing was done on one unit of each:
 
 Installing to internal storage (UFS) on SM8550 has only been tested in a VM.
 
+Here is a link to all of our benchmark tests: [docs/benchmark-results.md](docs/benchmark-results.md)
+
 ## How it differs from upstream
 
 - **Snapdragon 8 Gen 2 (SM8550) support** for the Retroid Pocket 6 and AYN
