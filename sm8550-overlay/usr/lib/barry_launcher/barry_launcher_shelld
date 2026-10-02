@@ -21,7 +21,14 @@ the apps here include a web browser, and a web page must not type.
 
 The keyboard follows text focus through AT-SPI: Firefox reports focus
 changes on the accessibility bus, and an editable field gaining focus shows
-the keyboard; anything else gaining focus hides it. Keys go to the focused
+the keyboard; anything else gaining focus hides it. It only shows for a
+touch, though: focus (or the caret moving in a field that already had it,
+as when Signal's message box is tapped again) must come within TOUCH_S of a
+finger on the bottom touchscreen, which this reads alongside gamescope. A
+tap on the focused field itself also brings back a keyboard hidden by hand:
+there the caret may not move at all.
+Apps focusing their own fields as they open or come back stay keyboard-
+free. Keys go to the focused
 window through XTest (xdotool). The keyboard window is a gamescope overlay
 (STEAM_OVERLAY), and while shown it has STEAM_INPUT_FOCUS=2, as Steam's own
 keyboard does: it takes the touches, but X keyboard focus stays on the app
@@ -44,9 +51,11 @@ change to it brings the home screen forward.
 """
 from __future__ import annotations
 
+import glob
 import json
 import os
 import shutil
+import struct
 import subprocess
 import threading
 import time
@@ -91,7 +100,8 @@ APPS = {
     "signal": {"flatpak": "org.signal.Signal", "window": "^org\\.signal\\.signal$",
                "args": ["--ozone-platform=x11", "--force-device-scale-factor=1.75",
                         "--force-renderer-accessibility"],
-               "seed": {"~/.var/app/org.signal.Signal/config/Signal/config.json": "{}\n"}},
+               "seed": {"~/.var/app/org.signal.Signal/config/Signal/config.json": "{}\n"},
+               "warm": ["~/.var/app/org.signal.Signal/config/Signal"]},
     # The top screen's trackpad and keyboard: QML windows by title.
     "trackpad": {"qml": "trackpad", "window": "^Barry Launcher Trackpad$"},
     "keyboard": {"qml": "keyboard", "window": "^Barry Launcher Top Keyboard$"},
@@ -137,11 +147,27 @@ FIREFOX_PREFS = {
     "full-screen-api.warning.timeout": 0,
 }
 # A new Firefox window puts the cursor in the address bar by itself; that
-# should not bring up the keyboard as the app opens.
+# should not bring up the keyboard as the app opens, nor when an app comes
+# back (the tile tap that brought it is a touch too).
 LAUNCH_QUIET_S = 3.0
+SWITCH_QUIET_S = 1.5
+# Text focus shows the keyboard only this soon after a touch.
+TOUCH_NAME = "bottom_touchscreen"
+TOUCH_S = 1.0
+TAP_SLOP = 30  # touchscreen units a tap may wander
+EV_KEY, EV_ABS, BTN_TOUCH = 1, 3, 0x14A
+ABS_MT_POSITION_X, ABS_MT_POSITION_Y, ABS_MT_TRACKING_ID = 0x35, 0x36, 0x39
+INPUT_EVENT = struct.Struct("llHHi")
 # Launch-script dialogs (zenity) of Flatpak apps: watched this long.
 DIALOG_CLASS = "^zenity$"
 DIALOG_WATCH_S = 60.0
+# Apps with "warm": read their files from the SD card into the page cache
+# this long after we start, at idle I/O priority. A first start reads them
+# cold (Signal: 25 s; 3-4 s once cached).
+WARM_DELAY_S = 60.0
+# Of the runtime, the libraries and fonts; of the profile, not the
+# attachments (*.noindex, 1.9 GB for Signal).
+WARM_RUNTIME_DIRS = ("lib/aarch64-linux-gnu", "lib/locale", "share/fonts")
 KEYS = {"BackSpace", "Return", "Tab", "Left", "Right", "Up", "Down", "Escape", "Delete", "space"}
 
 
@@ -159,6 +185,8 @@ class State:
         self.overlay_marked = False
         self.input_focus: bool | None = None
         self.quiet_until = 0.0  # monotonic time: no keyboard for text focus before it
+        self.last_touch: float | None = None  # monotonic; None: no touchscreen found
+        self.text_acc = None  # the focused editable field, if any
 
     def keyboard(self) -> dict:
         with self.lock:
@@ -242,9 +270,11 @@ def activate(args: list[str]) -> bool:
 
 def go_home() -> None:
     STATE.set_keyboard(False)
-    # Leaving the trackpad mid-drag must not leave a button held on top.
-    if any(running(a) for a, spec in APPS.items() if "qml" in spec):
-        threading.Thread(target=release_top_input, daemon=True).start()
+    # The trackpad and keyboard are tools, not apps to come back to: leaving
+    # them closes them. Their exit lets go of anything held on top (watch).
+    for app, spec in APPS.items():
+        if "qml" in spec and running(app):
+            close(app)
     if not activate(["--name", f"^{HOME_TITLE}$"]):
         log("cannot find the home screen window")
 
@@ -282,6 +312,39 @@ def app_log(app: str):
 
 def flatpak_installed(ref: str) -> bool:
     return subprocess.run(["flatpak", "info", ref], capture_output=True).returncode == 0
+
+
+def flatpak_location(ref: str) -> str | None:
+    r = subprocess.run(["flatpak", "info", "--show-location", ref], capture_output=True, text=True)
+    return r.stdout.strip() or None
+
+
+def warm_apps() -> None:
+    """Read the "warm" apps' files into the page cache, so their first start
+    does not wait on the SD card. The kernel drops them again under memory
+    pressure."""
+    time.sleep(WARM_DELAY_S)
+    for app, spec in APPS.items():
+        if "warm" not in spec or running(app) or not flatpak_installed(spec["flatpak"]):
+            continue
+        ref = spec["flatpak"]
+        paths = [os.path.expanduser(p) for p in spec["warm"]]
+        loc = flatpak_location(ref)
+        if loc:
+            paths.append(os.path.join(loc, "files"))
+        r = subprocess.run(["flatpak", "info", "--show-runtime", ref], capture_output=True, text=True)
+        rt = flatpak_location(r.stdout.strip()) if r.stdout.strip() else None
+        if rt:
+            paths += [os.path.join(rt, "files", d) for d in WARM_RUNTIME_DIRS]
+        paths = [p for p in paths if os.path.isdir(p)]
+        started = time.monotonic()
+        r = subprocess.run(
+            ["ionice", "-c", "3", "nice", "-n", "19", "sh", "-c",
+             'find "$@" -name "*.noindex" -prune -o -type f -print0 | xargs -0 -r cat | wc -c', "warm", *paths],
+            capture_output=True, text=True,
+        )
+        size = int(r.stdout.strip() or 0)
+        log(f"warmed {app}: {size // 1048576} MB in {time.monotonic() - started:.0f} s")
 
 
 def start_flatpak(app: str, spec: dict) -> None:
@@ -326,6 +389,7 @@ def launch(app: str) -> tuple[int, dict]:
         return 200, {"ok": True, "running": False}
     proc = running(app)
     if proc:
+        STATE.quiet_until = time.monotonic() + SWITCH_QUIET_S
         if "flatpak" in spec:
             # Its window, or a launch dialog still waiting for an answer.
             if not activate(["--classname", spec["window"]]):
@@ -475,26 +539,137 @@ def enable_accessibility() -> None:
         log(f"cannot enable accessibility: {err.message}")
 
 
+def watch_touches() -> None:
+    """Note when a finger touches the bottom screen. Reading an evdev node
+    does not take its events away from gamescope."""
+    for name_file in glob.glob("/sys/class/input/event*/device/name"):
+        try:
+            with open(name_file, encoding="utf-8") as fh:
+                if fh.read().strip() != TOUCH_NAME:
+                    continue
+        except OSError:
+            continue
+        dev = "/dev/input/" + name_file.split("/")[4]
+        try:
+            fd = os.open(dev, os.O_RDONLY)
+        except OSError as err:
+            log(f"cannot read {dev} ({TOUCH_NAME}): {err}; the keyboard follows focus alone")
+            return
+        STATE.last_touch = 0.0
+        log(f"watching touches on {dev}")
+        fingers = 0
+        x = y = start = None  # the first finger of a one-finger touch
+        with os.fdopen(fd, "rb", buffering=0) as fh:
+            while True:
+                data = fh.read(INPUT_EVENT.size)
+                if len(data) < INPUT_EVENT.size:
+                    return
+                _, _, etype, code, value = INPUT_EVENT.unpack(data)
+                if (etype == EV_KEY and code == BTN_TOUCH) or (etype == EV_ABS and code == ABS_MT_TRACKING_ID):
+                    STATE.last_touch = time.monotonic()
+                if etype != EV_ABS:
+                    continue
+                if code == ABS_MT_TRACKING_ID:
+                    if value >= 0:
+                        fingers += 1
+                        x = y = start = None
+                    else:
+                        fingers = max(0, fingers - 1)
+                        if fingers == 0 and start and x is not None and abs(x - start[0]) + abs(y - start[1]) < TAP_SLOP:
+                            GLib.idle_add(on_tap, x, y)
+                        start = None
+                elif fingers == 1 and code in (ABS_MT_POSITION_X, ABS_MT_POSITION_Y):
+                    if code == ABS_MT_POSITION_X:
+                        x = value
+                    else:
+                        y = value
+                    if start is None and x is not None and y is not None:
+                        start = (x, y)
+    log(f"no {TOUCH_NAME} input device; the keyboard follows focus alone")
+
+
+def text_field(acc) -> tuple[bool, bool]:
+    """(editable, in the lower half of the screen) for an accessible."""
+    states = acc.get_state_set()
+    editable = states.contains(Atspi.StateType.EDITABLE) and not states.contains(Atspi.StateType.READ_ONLY)
+    top = False
+    if editable:
+        ext = acc.get_extents(Atspi.CoordType.SCREEN)
+        screen_h = int(os.environ.get("THOR_BOTTOM_HEIGHT", "1080"))
+        top = ext.y + ext.height / 2 > screen_h * 0.5
+    return editable, top
+
+
+def touched_lately() -> bool:
+    return STATE.last_touch is None or time.monotonic() - STATE.last_touch < TOUCH_S
+
+
+def show_for_text(top: bool, why: str) -> None:
+    if time.monotonic() < STATE.quiet_until:
+        log(f"{why} while an app opens: no keyboard")
+        return
+    if not touched_lately():
+        log(f"{why} without a touch: no keyboard")
+        return
+    if not STATE.keyboard()["visible"] or top != STATE.keyboard()["top"]:
+        log(f"{why}{' (lower half)' if top else ''}: keyboard")
+    STATE.set_keyboard(True, top)
+
+
 def on_focus(event) -> None:
     if event.detail1 != 1:
         return  # the next focus gain decides
-    acc = event.source
     try:
-        states = acc.get_state_set()
-        editable = states.contains(Atspi.StateType.EDITABLE) and not states.contains(Atspi.StateType.READ_ONLY)
-        top = False
-        if editable:
-            ext = acc.get_extents(Atspi.CoordType.SCREEN)
-            screen_h = int(os.environ.get("THOR_BOTTOM_HEIGHT", "1080"))
-            top = ext.y + ext.height / 2 > screen_h * 0.5
+        editable, top = text_field(event.source)
     except GLib.Error:
         return
-    if editable and time.monotonic() < STATE.quiet_until:
-        log("text focus in while the app opens: no keyboard")
+    if editable:
+        STATE.text_acc = event.source
+        show_for_text(top, "text focus in")
         return
-    if editable != STATE.keyboard()["visible"] or (editable and top != STATE.keyboard()["top"]):
-        log(f"text focus {'in' if editable else 'out'}{' (lower half)' if editable and top else ''}")
-    STATE.set_keyboard(editable, top)
+    STATE.text_acc = None
+    if STATE.keyboard()["visible"]:
+        log("text focus out")
+    STATE.set_keyboard(False)
+
+
+def on_caret(event) -> None:
+    """A tap in a field that already has focus moves only its caret."""
+    if STATE.keyboard()["visible"]:
+        return
+    try:
+        acc = event.source
+        if not acc.get_state_set().contains(Atspi.StateType.FOCUSED):
+            return
+        editable, top = text_field(acc)
+    except GLib.Error:
+        return
+    if editable:
+        STATE.text_acc = acc
+    if editable and touched_lately():  # apps move their own carets all the time
+        show_for_text(top, "caret moved in a focused field")
+
+
+def on_tap(raw_x: int, raw_y: int) -> bool:
+    """A one-finger tap ended: on the focused field with the keyboard
+    hidden (by hand, say), show it again."""
+    acc = STATE.text_acc
+    if acc is None or STATE.keyboard()["visible"]:
+        return False
+    # The panel is portrait and turned right: its y runs left to right on
+    # screen, its x bottom to top.
+    screen_h = int(os.environ.get("THOR_BOTTOM_HEIGHT", "1080"))
+    sx, sy = raw_y, screen_h - 1 - raw_x
+    try:
+        if not acc.get_state_set().contains(Atspi.StateType.FOCUSED):
+            return False
+        editable, top = text_field(acc)
+        ext = acc.get_extents(Atspi.CoordType.SCREEN)
+    except GLib.Error:
+        return False
+    if editable and ext.x <= sx < ext.x + ext.width and ext.y <= sy < ext.y + ext.height:
+        show_for_text(top, "tap on the focused field")
+    return False
 
 
 def main() -> None:
@@ -505,6 +680,10 @@ def main() -> None:
     Atspi.init()
     listener = Atspi.EventListener.new(on_focus)
     listener.register("object:state-changed:focused")
+    caret = Atspi.EventListener.new(on_caret)
+    caret.register("object:text-caret-moved")
+    threading.Thread(target=watch_touches, daemon=True).start()
+    threading.Thread(target=warm_apps, daemon=True).start()
     def home_request_stamp() -> int | None:
         try:
             return os.stat(HOME_REQUEST).st_mtime_ns
