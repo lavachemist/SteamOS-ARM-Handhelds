@@ -98,6 +98,10 @@ struct xwayland_ctx_t final : public gamescope::IWaitable
 	double accum_y = 0.0;
 
 	bool force_windows_fullscreen = false;
+	// GAMESCOPE_FOCUS_BOTTOM_INSET: root pixels at the bottom that an
+	// on-screen keyboard covers. App windows shrink above them and draw at
+	// the top instead of centered. 0 = off.
+	int focus_bottom_inset = 0;
 
 	std::optional<bool> obTouchPointerEmulation;
 
@@ -230,6 +234,7 @@ struct xwayland_ctx_t final : public gamescope::IWaitable
 		Atom gamescopeHDRTonemapOperator;
 
 		Atom gamescopeForceWindowsFullscreen;
+		Atom gamescopeFocusBottomInset;
 
 		Atom gamescopeColorLut3DOverride;
 		Atom gamescopeColorShaperLutOverride;

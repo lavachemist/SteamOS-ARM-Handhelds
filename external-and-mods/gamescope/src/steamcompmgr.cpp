@@ -2265,6 +2265,9 @@ window_is_fullscreen( steamcompmgr_win_t *w )
 	return w && ( window_is_steam( w ) || w->isFullscreen );
 }
 
+static bool win_anchored_top( steamcompmgr_win_t *w );
+static void fit_above_inset( steamcompmgr_win_t *w, float height, float &scale_x, float &scale_y );
+
 void calc_scale_factor_scaler(GamescopeUpscaleScaler eScaler, float &out_scale_x, float &out_scale_y, float sourceWidth, float sourceHeight)
 {
 	float XOutputRatio = currentOutputWidth / (float)g_nNestedWidth;
@@ -2727,9 +2730,12 @@ void MouseCursor::paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, str
 	int cursorOffsetX, cursorOffsetY;
 
 	calc_scale_factor(frameInfo->eUpscaleScaler, currentScaleRatio_x, currentScaleRatio_y, sourceWidth, sourceHeight);
+	fit_above_inset( window, sourceHeight, currentScaleRatio_x, currentScaleRatio_y );
 
 	cursorOffsetX = (currentOutputWidth - sourceWidth * currentScaleRatio_x) / 2.0f;
 	cursorOffsetY = (currentOutputHeight - sourceHeight * currentScaleRatio_y) / 2.0f;
+	if ( win_anchored_top( window ) )
+		cursorOffsetY = 0;
 
 	// Actual point on scaled screen where the cursor hotspot should be.
 	// Compositing ignores the focused window's X11 origin, so the cursor
@@ -2995,9 +3001,12 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 	if (baseWidth != (int32_t)currentOutputWidth || baseHeight != (int32_t)currentOutputHeight || offset || globalScaleRatio != 1.0f)
 	{
 		calc_scale_factor(frameInfo->eUpscaleScaler, baseScaleRatio_x, baseScaleRatio_y, baseWidth, baseHeight);
+		fit_above_inset( scaleW, baseHeight, baseScaleRatio_x, baseScaleRatio_y );
 
 		baseXOffset = ((int)currentOutputWidth - (int)baseWidth * baseScaleRatio_x) / 2.0f;
 		baseYOffset = ((int)currentOutputHeight - (int)baseHeight * baseScaleRatio_y) / 2.0f;
+		if ( win_anchored_top( scaleW ) )
+			baseYOffset = 0;
 
 		if ( w != scaleW )
 		{
@@ -3015,9 +3024,12 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 	if (sourceWidth != (int32_t)currentOutputWidth || sourceHeight != (int32_t)currentOutputHeight || offset || globalScaleRatio != 1.0f)
 	{
 		calc_scale_factor(frameInfo->eUpscaleScaler, currentScaleRatio_x, currentScaleRatio_y, sourceWidth, sourceHeight);
+		fit_above_inset( scaleW, sourceHeight, currentScaleRatio_x, currentScaleRatio_y );
 
 		drawXOffset = ((int)currentOutputWidth - (int)sourceWidth * currentScaleRatio_x) / 2.0f;
 		drawYOffset = ((int)currentOutputHeight - (int)sourceHeight * currentScaleRatio_y) / 2.0f;
+		if ( win_anchored_top( scaleW ) )
+			drawYOffset = 0;
 
 		if ( w != scaleW )
 		{
@@ -5263,6 +5275,11 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 				fs_height = g_nSteamMaxHeight;
 				fs_width  = ctx->root_width * steam_height_scale;
 			}
+			// An on-screen keyboard's inset (GAMESCOPE_FOCUS_BOTTOM_INSET):
+			// apps without Steam's own appid count as games here when
+			// gamescope runs without --steam, so the inset applies here too.
+			if ( !bIsSteam )
+				fs_height -= ctx->focus_bottom_inset;
 
 			if ( w->GetGeometry().nWidth != fs_width || w->GetGeometry().nHeight != fs_height || globalScaleRatio != 1.0f )
 				XResizeWindow(ctx->dpy, ctx->focus.focusWindow->xwayland().id, fs_width, fs_height);
@@ -6127,10 +6144,43 @@ handle_desktop_window(steamcompmgr_win_t *w)
 		int fs_width  = ctx->root_width;
 		int fs_height = ctx->root_height;
 
+		// Overlays (the keyboard itself) keep the whole screen.
+		if ( !w->isOverlay && !w->isExternalOverlay )
+			fs_height -= ctx->focus_bottom_inset;
+
 		if ( w->GetGeometry().nWidth != fs_width || w->GetGeometry().nHeight != fs_height )
 		{
 			XResizeWindow(ctx->dpy, w->xwayland().id, fs_width, fs_height);
 		}
+	}
+}
+
+// With a bottom inset, the focused app draws from the top of the screen, the
+// inset left to the keyboard below it, instead of centered.
+static bool
+win_anchored_top( steamcompmgr_win_t *w )
+{
+	return w && w->type == steamcompmgr_win_type_t::XWAYLAND &&
+		w->xwayland().ctx->focus_bottom_inset > 0 &&
+		!w->isOverlay && !w->isExternalOverlay;
+}
+
+// An app that will not get as short as asked (Signal keeps 550 px) is
+// scaled down to fit above the keyboard instead of running under it.
+static void
+fit_above_inset( steamcompmgr_win_t *w, float height, float &scale_x, float &scale_y )
+{
+	if ( !win_anchored_top( w ) || height <= 0 )
+		return;
+	// In the app's own (root) pixels: the output may be the rotated panel
+	// (the Thor's bottom screen: mode 1080x1240, logical 1240x1080).
+	xwayland_ctx_t *ctx = w->xwayland().ctx;
+	const float avail = ctx->root_height - ctx->focus_bottom_inset;
+	if ( height > avail )
+	{
+		const float k = avail / height;
+		scale_x *= k;
+		scale_y *= k;
 	}
 }
 
@@ -7897,6 +7947,21 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 		ctx->force_windows_fullscreen = !!get_prop( ctx, ctx->root, ctx->atoms.gamescopeForceWindowsFullscreen, 0 );
 		MakeFocusDirty();
 	}
+	if ( ev->atom == ctx->atoms.gamescopeFocusBottomInset )
+	{
+		// Leave the app at least a quarter of the screen (Barry Launcher's
+		// keyboard with its suggestion strip takes 606 of 1080).
+		int inset = (int)get_prop( ctx, ctx->root, ctx->atoms.gamescopeFocusBottomInset, 0 );
+		inset = clamp( inset, 0, ctx->root_height * 3 / 4 );
+		if ( inset != ctx->focus_bottom_inset )
+		{
+			ctx->focus_bottom_inset = inset;
+			for ( steamcompmgr_win_t *w = ctx->list; w; w = w->xwayland().next )
+				handle_desktop_window( w );
+			MakeFocusDirty();
+			hasRepaint = true;
+		}
+	}
 	if ( ev->atom == ctx->atoms.gamescopeColorLut3DOverride )
 	{
 		std::string path = get_string_prop( ctx, ctx->root, ctx->atoms.gamescopeColorLut3DOverride );
@@ -9419,6 +9484,7 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	ctx->atoms.gamescopeHDRTonemapOperator = XInternAtom( ctx->dpy, "GAMESCOPE_HDR_TONEMAP_OPERATOR", false );
 
 	ctx->atoms.gamescopeForceWindowsFullscreen = XInternAtom( ctx->dpy, "GAMESCOPE_FORCE_WINDOWS_FULLSCREEN", false );
+	ctx->atoms.gamescopeFocusBottomInset = XInternAtom( ctx->dpy, "GAMESCOPE_FOCUS_BOTTOM_INSET", false );
 
 	ctx->atoms.gamescopeColorLut3DOverride = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_3DLUT_OVERRIDE", false );
 	ctx->atoms.gamescopeColorShaperLutOverride = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_SHAPERLUT_OVERRIDE", false );
