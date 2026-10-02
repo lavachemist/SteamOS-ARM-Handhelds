@@ -3,8 +3,12 @@
 > [!IMPORTANT]
 > **This fork was built with a coding agent: [Claude Code](https://www.anthropic.com/claude-code),
 > running Anthropic's Claude Opus 5.5 (`claude-opus-5-5`).** Claude wrote the
-> code, the commit messages and this README. People set the goals, made the
-> decisions and did the hands-on testing. Review the code before you rely on it.
+> code, the commit messages and this README, **except the statement right
+> below**, which lavachemist, a human, wrote by hand. People set the goals,
+> made the decisions and did the hands-on testing. Review the code before you
+> rely on it.
+
+### A note from lavachemist (written by a human)
 
 Project Barry is a playground for testing ideas using GenAI. Use any of this
 code at your own discretion.
