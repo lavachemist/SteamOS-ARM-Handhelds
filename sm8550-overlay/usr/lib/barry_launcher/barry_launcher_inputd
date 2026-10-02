@@ -56,6 +56,10 @@ REL_X, REL_Y, REL_HWHEEL, REL_WHEEL = 0, 1, 6, 8
 REL_WHEEL_HI_RES, REL_HWHEEL_HI_RES = 11, 12
 BTN_LEFT, BTN_RIGHT, BTN_MIDDLE = 0x110, 0x111, 0x112
 BUS_VIRTUAL = 0x06
+# Game Mode's gamescope hides a pointer that has not moved for 3 s
+# (--hide-cursor-delay 3000), and a hidden pointer's wheel never reaches
+# Steam: a scroll after a still spell first nudges the pointer there and back.
+WAKE_POINTER_S = 2.0
 EVENT = struct.Struct("llHHi")
 SETUP = struct.Struct("HHHH80sI")
 
@@ -140,6 +144,7 @@ class Input:
         self.keyboard = Device("Barry Launcher Keys", keys, [])
         self.rest = [0.0, 0.0]  # sub-pixel motion carried to the next move
         self.wheel = [0, 0]  # hi-res units sent since the last whole notch
+        self.moved_at = 0.0  # monotonic time of the last pointer motion
 
     def pointer(self, dx: float, dy: float) -> None:
         with self.lock:
@@ -151,6 +156,7 @@ class Input:
             self.rest[0] -= ix
             self.rest[1] -= iy
             self.mouse.emit([(EV_REL, REL_X, ix), (EV_REL, REL_Y, iy)])
+            self.moved_at = time.monotonic()
 
     def scroll(self, dx: float, dy: float) -> None:
         with self.lock:
@@ -169,6 +175,10 @@ class Input:
                     self.wheel[i] -= notches * NOTCH
                     events.append((EV_REL, lo, notches))
             if events:
+                if time.monotonic() - self.moved_at > WAKE_POINTER_S:
+                    self.mouse.emit([(EV_REL, REL_X, 1)])
+                    self.mouse.emit([(EV_REL, REL_X, -1)])
+                    self.moved_at = time.monotonic()
                 self.mouse.emit(events)
 
     def button(self, name: str, state: str) -> None:

@@ -43,14 +43,16 @@ Rectangle {
         if (sending)
             return
         let path = "", body = null
-        if (pendingX !== 0 || pendingY !== 0) {
-            path = "/pointer"
-            body = { dx: pendingX, dy: pendingY }
-            pendingX = 0; pendingY = 0
-        } else if (pendingScrollX !== 0 || pendingScrollY !== 0) {
+        // Scrolls first: pointer moves left over from a touch's first frames
+        // must not hold a two-finger scroll back.
+        if (pendingScrollX !== 0 || pendingScrollY !== 0) {
             path = "/scroll"
             body = { dx: pendingScrollX, dy: pendingScrollY }
             pendingScrollX = 0; pendingScrollY = 0
+        } else if (pendingX !== 0 || pendingY !== 0) {
+            path = "/pointer"
+            body = { dx: pendingX, dy: pendingY }
+            pendingX = 0; pendingY = 0
         } else {
             return
         }
@@ -166,9 +168,15 @@ Rectangle {
             property double lastMoveAt: 0
             property bool dragging: false  // tap, then touch: left button held
             property bool dragMoved: false
+            // Two fingers never land at once: the pointer waits this long at
+            // the start of a touch, so a second finger turns it into a clean
+            // scroll instead of a pointer jump followed by a scroll.
+            property real heldX: 0
+            property real heldY: 0
 
             readonly property real tapSlop: 14 * ti.s
             readonly property int tapMs: 220
+            readonly property int settleMs: 70
 
             function down() {
                 let n = 0
@@ -194,12 +202,20 @@ Rectangle {
             }
 
             onPressed: function (points) {
-                if (!touching) {
+                // Only the fingers just pressed are down: a new touch, even
+                // when the last one's release went missing (it then stayed
+                // "touching" with two fingers, and one finger only scrolled).
+                if (!touching || down() === points.length) {
+                    if (touching && dragging) {
+                        ti.post("/button", { button: "left", state: "up" })
+                        dragging = false
+                    }
                     touching = true
                     fingers = 0
                     moved = 0
                     startedAt = Date.now()
                     lastMoveAt = startedAt
+                    heldX = 0; heldY = 0
                     if (clickLater.running) {
                         clickLater.stop()
                         dragging = true
@@ -208,6 +224,9 @@ Rectangle {
                     }
                 }
                 fingers = Math.max(fingers, down())
+                if (fingers >= 2) {
+                    heldX = 0; heldY = 0
+                }
             }
 
             onUpdated: function (points) {
@@ -239,8 +258,14 @@ Rectangle {
                 // Pointer acceleration: pixels per millisecond of finger
                 // speed raise the gain up to 3.5x.
                 const gain = ti.speed * (1 + 1.25 * Math.min(2, dist / dt)) / ti.s
-                ti.pendingX += dx * gain
-                ti.pendingY += dy * gain
+                if (!dragging && now - startedAt < settleMs) {
+                    heldX += dx * gain
+                    heldY += dy * gain
+                    return
+                }
+                ti.pendingX += heldX + dx * gain
+                ti.pendingY += heldY + dy * gain
+                heldX = 0; heldY = 0
             }
 
             onReleased: function (points) {
