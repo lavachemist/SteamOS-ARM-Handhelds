@@ -503,6 +503,23 @@ def release_top_input() -> None:
 TYPE_LOCK = threading.Lock()  # one typing request at a time, in the order they came
 
 
+def caret_holder(acc):
+    """The object that holds the caret's text. A rich text field (Signal's,
+    Discord's: Chromium contenteditable) reports focus on its outer box,
+    whose text is one placeholder per paragraph; the caret's text is in the
+    paragraph under it, and in that paragraph's text under that."""
+    for _ in range(8):
+        for i in range(min(acc.get_child_count(), 64)):
+            child = acc.get_child_at_index(i)
+            if child is not None and child.get_text_iface() is not None \
+                    and Atspi.Text.get_caret_offset(child) >= 0:
+                acc = child
+                break
+        else:
+            return acc
+    return acc
+
+
 def text_before_caret(n: int) -> str | None:
     """Up to n characters before the caret in the focused field, read over
     AT-SPI on the main loop; None if they cannot be read."""
@@ -514,9 +531,10 @@ def text_before_caret(n: int) -> str | None:
 
     def read() -> bool:
         try:
-            offset = Atspi.Text.get_caret_offset(acc)
+            holder = caret_holder(acc)
+            offset = Atspi.Text.get_caret_offset(holder)
             if offset >= 0:
-                result["text"] = Atspi.Text.get_text(acc, max(0, offset - n), offset)
+                result["text"] = Atspi.Text.get_text(holder, max(0, offset - n), offset)
         except Exception:  # noqa: BLE001 - the field may be gone
             pass
         done.set()
