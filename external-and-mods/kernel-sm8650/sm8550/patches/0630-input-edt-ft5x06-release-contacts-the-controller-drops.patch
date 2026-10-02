@@ -1,0 +1,59 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] Input: edt-ft5x06 - release contacts the controller stops reporting, on the AYN Thor
+
+The driver releases a slot only when the controller sends TOUCH_EVENT_UP
+for it. When that one report is lost, the contact stays down for good.
+On the AYN Thor's bottom screen (FT5452) this left two contacts frozen at
+fixed positions with no finger on the panel, so every touch afterwards
+looked like part of an old multi-finger gesture: the Barry Launcher
+trackpad only scrolled and never saw the pad go idle.
+
+The controller lists every current contact in each report, so on
+"ayn,thor" let the input core drop the slots a frame leaves out
+(INPUT_MT_DROP_UNUSED with input_mt_sync_frame()). Frames that fail to
+read still report nothing. The flag lives in input->mt, so the patch adds
+no state and leaves the kernel's BTF, and so the modules built against
+it, unchanged. Other boards using the driver (the Retroid
+Pocket 6 among them) keep the old behaviour.
+
+--- a/drivers/input/touchscreen/edt-ft5x06.c
++++ b/drivers/input/touchscreen/edt-ft5x06.c
+@@ -25,6 +25,7 @@
+ #include <linux/irq.h>
+ #include <linux/kernel.h>
+ #include <linux/module.h>
++#include <linux/of.h>
+ #include <linux/property.h>
+ #include <linux/ratelimit.h>
+ #include <linux/regmap.h>
+@@ -377,6 +378,13 @@
+ 					       x, y, true);
+ 	}
+ 
++	/*
++	 * A contact the controller no longer lists has lifted, even if its
++	 * TOUCH_EVENT_UP never arrived: release it rather than leave it down
++	 * for good. Frames that failed to read skip this (goto out above).
++	 */
++	if (tsdata->input->mt->flags & INPUT_MT_DROP_UNUSED)
++		input_mt_sync_frame(tsdata->input);
+ 	input_mt_report_pointer_emulation(tsdata->input, true);
+ 	input_sync(tsdata->input);
+ 
+@@ -1344,8 +1352,15 @@
+ 
+ 	touchscreen_parse_properties(input, true, &tsdata->prop);
+ 
++	/*
++	 * Only the AYN Thor is known to lose TOUCH_EVENT_UP reports. No new
++	 * state here: the flag lives in input->mt, so the kernel's BTF (and
++	 * with it the modules built against it) stays the same.
++	 */
+ 	error = input_mt_init_slots(input, tsdata->max_support_points,
+-				    INPUT_MT_DIRECT);
++				    INPUT_MT_DIRECT |
++				    (of_machine_is_compatible("ayn,thor") ?
++				     INPUT_MT_DROP_UNUSED : 0));
+ 	if (error) {
+ 		dev_err(&client->dev, "Unable to init MT slots.\n");
+ 		return error;
