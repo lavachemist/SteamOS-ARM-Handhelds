@@ -57,12 +57,15 @@ Window {
 
     KeyPanel {
         id: panel
+        autocorrect: true
         width: parent.width
         height: implicitHeight
         y: win.atTop ? 0 : parent.height - height
         s: win.s
         onTyped: function (text) { win.request("POST", "/type", { text: text }) }
         onKey: function (name) { win.request("POST", "/type", { key: name }) }
+        onReplace: function (back, text) { win.request("POST", "/type", { back: back, text: text }) }
+        onTypedWith: function (body, done) { win.request("POST", "/type", body, function (reply) { if (done) done(reply) }) }
         onHideRequested: win.hide()
     }
 

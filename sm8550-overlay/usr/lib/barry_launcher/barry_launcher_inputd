@@ -250,6 +250,13 @@ def handle(path: str, body: dict) -> tuple[int, dict]:
             return 400, {"error": "bad button or state"}
         INPUT.button(name, state)
     elif path == "/key":
+        # "back": backspaces first, in the same request (a glided word swapped
+        # for another).
+        back = body.get("back", 0)
+        if not isinstance(back, int) or not 0 <= back <= 100:
+            return 400, {"error": "back must be 0-100"}
+        for _ in range(back):
+            INPUT.named("BackSpace")
         if isinstance(body.get("text"), str) and body["text"]:
             return 200, {"ok": True, "skipped": INPUT.text(body["text"][:1000])}
         if body.get("key") in NAMED:
@@ -259,8 +266,8 @@ def handle(path: str, body: dict) -> tuple[int, dict]:
               and all(k in MODIFIERS for k in body["combo"][:-1])
               and (body["combo"][-1] in NAMED or body["combo"][-1].lower() in CHARS)):
             INPUT.combo(body["combo"])
-        else:
-            return 400, {"error": "need text, a known key or a combo"}
+        elif not back:
+            return 400, {"error": "need text, a known key, a combo or back"}
     elif path == "/release":
         INPUT.release()
     else:

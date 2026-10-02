@@ -696,6 +696,8 @@ if [[ "$SOC" == sm8550 ]]; then
       barry_launcher_inputd barry_launcher_desktop; do
       install_file "$SM8550_OVL/usr/lib/barry_launcher/$f" "$R/usr/lib/barry_launcher/$f" 0755
     done
+    # Glide typing's decoder, imported by barry_launcher_shelld.
+    install_file "$SM8550_OVL/usr/lib/barry_launcher/barry_glide.py" "$R/usr/lib/barry_launcher/barry_glide.py" 0644
     cp -r "$SM8550_OVL/usr/share/barry_launcher" "$R/usr/share/"
     chmod -R u=rwX,go=rX "$R/usr/share/barry_launcher"
     install_file "$SM8550_OVL/usr/lib/systemd/user/barry_launcher.service" \
