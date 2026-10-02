@@ -59,6 +59,7 @@ import struct
 import subprocess
 import threading
 import time
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -69,6 +70,8 @@ from gi.repository import Atspi, Gio, GLib  # noqa: E402
 
 PORT = 47824
 KEYBOARD_TITLE = "Barry Launcher Keyboard"
+# Our gamescope's root property for the keyboard's height (patch 0017).
+INSET_PROP = "GAMESCOPE_FOCUS_BOTTOM_INSET"
 HOME_TITLE = "Barry Launcher"
 DASHBOARD_FLAG = "/run/sm8550-thor/overlay"
 HOME_REQUEST = "/run/sm8550-thor/home"
@@ -187,6 +190,8 @@ class State:
         self.quiet_until = 0.0  # monotonic time: no keyboard for text focus before it
         self.last_touch: float | None = None  # monotonic; None: no touchscreen found
         self.text_acc = None  # the focused editable field, if any
+        self.keyboard_height = 0  # the key panel's height, as Keyboard.qml reports it
+        self.inset: int | None = None  # GAMESCOPE_FOCUS_BOTTOM_INSET last set
 
     def keyboard(self) -> dict:
         with self.lock:
@@ -202,6 +207,7 @@ class State:
         # Touches go to the keyboard only while it shows; it turns opaque
         # on its next poll (100 ms).
         keyboard_input_focus(visible)
+        apply_inset()
 
 
 STATE = State()
@@ -223,6 +229,21 @@ def set_keyboard_prop(prop: str, value: str, quiet: bool = False) -> bool:
     if r.returncode != 0 and not quiet:
         log(f"cannot set {prop} on the keyboard: {r.stderr.strip()}")
     return r.returncode == 0
+
+
+def apply_inset() -> None:
+    """While the keyboard shows, gamescope makes the app that much shorter
+    and draws it from the top: the keyboard pushes the app up instead of
+    covering it."""
+    with STATE.lock:
+        inset = STATE.keyboard_height if STATE.visible else 0
+        if inset == STATE.inset:
+            return
+        STATE.inset = inset
+    r = subprocess.run(["xprop", "-root", "-f", INSET_PROP, "32c", "-set", INSET_PROP, str(inset)],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        log(f"cannot set {INSET_PROP}: {r.stderr.strip()}")
 
 
 def mark_keyboard_overlay(quiet: bool = False) -> bool:
@@ -488,8 +509,13 @@ class Handler(BaseHTTPRequestHandler):
             return {}
 
     def do_GET(self) -> None:
-        path = self.path.split("?", 1)[0]
+        path, _, query = self.path.partition("?")
         if path == "/keyboard":
+            # Keyboard.qml polls with its panel height (?h=).
+            h = urllib.parse.parse_qs(query).get("h", [""])[0]
+            if h.isdigit() and int(h) != STATE.keyboard_height:
+                STATE.keyboard_height = int(h)
+                apply_inset()
             self._json(200, STATE.keyboard())
         elif path == "/apps":
             self._json(200, {name: {"running": running(name) is not None,
@@ -611,9 +637,10 @@ def show_for_text(top: bool, why: str) -> None:
     if not touched_lately():
         log(f"{why} without a touch: no keyboard")
         return
-    if not STATE.keyboard()["visible"] or top != STATE.keyboard()["top"]:
+    if not STATE.keyboard()["visible"]:
         log(f"{why}{' (lower half)' if top else ''}: keyboard")
-    STATE.set_keyboard(True, top)
+    # Always at the bottom: the app moves up above it (apply_inset).
+    STATE.set_keyboard(True, False)
 
 
 def on_focus(event) -> None:
@@ -683,6 +710,7 @@ def main() -> None:
     caret = Atspi.EventListener.new(on_caret)
     caret.register("object:text-caret-moved")
     threading.Thread(target=watch_touches, daemon=True).start()
+    apply_inset()  # no inset left over from before a restart
     threading.Thread(target=warm_apps, daemon=True).start()
     def home_request_stamp() -> int | None:
         try:

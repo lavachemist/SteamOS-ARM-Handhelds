@@ -74,7 +74,7 @@ Window {
             if (win.polling)
                 return
             win.polling = true
-            win.request("GET", "/keyboard", null, function (st) {
+            win.request("GET", "/keyboard?h=" + Math.round(panel.height), null, function (st) {
                 win.polling = false
                 if (!st)
                     return
