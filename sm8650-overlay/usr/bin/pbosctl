@@ -6,6 +6,9 @@
   pbosctl rgb RRGGBB [brightness]     static stick colour
   pbosctl rgb breath RRGGBB | rainbow | off
   pbosctl mcu status|enable|disable   MCU UART driver (extra buttons + stick RGB; on by default)
+  pbosctl buttons steam|system|status Custom Function + K: trackpad clicks Steam
+                                       can remap (steam, default) or pbosd actions
+                                       (system)
   pbosctl monitor                     print key/button events from the pads
                                        (find out what each extra button sends)
   pbosctl sleep standby|s2idle|status standby (default: panel off, session
@@ -27,6 +30,7 @@ BLACKLIST = "/etc/modprobe.d/konkr-mcu.conf"
 S2IDLE = "/var/lib/pbosd/sleep-s2idle"
 PROFILES = ("lowpower", "balanced")
 LEGACY_PROFILES = {"silent": "lowpower", "turbo": "balanced"}
+BUTTON_MODES = ("steam", "system")
 SPEAKER_CONF = "/etc/wireplumber/wireplumber.conf.d/55-konkr-speaker.conf"
 
 
@@ -83,6 +87,8 @@ def status() -> None:
                 temps.append(int(v) / 1000)
     if temps:
         print(f"soc temp: {max(temps):.1f} °C (hottest cpu/gpu zone)")
+    mode = st.get("buttons_mode", "steam")
+    print(f"buttons : {mode} ({'Steam Remap' if mode == 'steam' else 'pbosd actions'})")
     mcu = "loaded" if os.path.isdir("/sys/module/konkr_sysbtn") else "not loaded"
     print("sleep   :", "s2idle (experimental)" if os.path.exists(S2IDLE) else "standby")
     print(f"mcu     : {mcu} ({'blacklisted' if os.path.exists(BLACKLIST) else 'enabled at boot'})")
@@ -208,6 +214,17 @@ def main() -> None:
         save(st)
     elif a[0] == "mcu" and len(a) == 2:
         mcu(a[1])
+    elif a[0] == "buttons" and len(a) == 2:
+        if a[1] == "status":
+            print("buttons :", load().get("buttons_mode", "steam"))
+            return
+        if a[1] not in BUTTON_MODES:
+            sys.exit(__doc__)
+        need_root()
+        st = load()
+        st["buttons_mode"] = a[1]
+        save(st)   # pbosd switches the InputPlumber map (restarts it if needed)
+        print("buttons", a[1])
     elif a[0] == "sleep" and len(a) == 2:
         sleep_mode(a[1])
     elif a[0] == "speaker" and len(a) == 2:

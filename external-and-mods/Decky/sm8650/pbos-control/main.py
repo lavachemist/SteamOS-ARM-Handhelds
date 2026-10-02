@@ -21,6 +21,7 @@ BLACKLIST = "/etc/modprobe.d/konkr-mcu.conf"
 PROFILES = ("lowpower", "balanced")
 LEGACY_PROFILES = {"silent": "lowpower", "turbo": "balanced"}
 ACTIONS = ("profile-next", "rgb-next", "sticks-toggle", "none")
+BUTTON_MODES = ("steam", "system")
 
 
 def rd(path: str, default: str = "") -> str:
@@ -43,6 +44,8 @@ def load() -> dict[str, Any]:
     st["fan"].pop("boost", None)             # fan boost was removed
     st.setdefault("power_led", True)
     st.setdefault("buttons", {"F13": "rgb-next", "F14": "profile-next"})
+    if st.get("buttons_mode") not in BUTTON_MODES:
+        st["buttons_mode"] = "steam"
     st["profile"] = LEGACY_PROFILES.get(st["profile"], st["profile"])
     if st["profile"] not in PROFILES:
         st["profile"] = "balanced"
@@ -123,6 +126,7 @@ class Plugin:
             "fan": st["fan"],
             "power_led": st["power_led"],
             "buttons": st["buttons"],
+            "buttons_mode": st["buttons_mode"],
             "mcu_enabled": not os.path.exists(BLACKLIST),
             "mcu_loaded": os.path.isdir("/sys/module/konkr_sysbtn"),
             "sticks_led": bool(glob.glob("/sys/class/leds/*joysticks*")),
@@ -171,6 +175,17 @@ class Plugin:
         st["buttons"][key] = action
         save(st)
         return st["buttons"]
+
+    # "steam": Custom Function and K are trackpad clicks Steam can remap.
+    # "system": they run the actions above. pbosd swaps the InputPlumber map
+    # and restarts it.
+    async def set_buttons_mode(self, mode: str = "steam", **_: Any) -> str:
+        if mode not in BUTTON_MODES:
+            return load()["buttons_mode"]
+        st = load()
+        st["buttons_mode"] = mode
+        save(st)
+        return mode
 
     async def set_power_led(self, on: bool = True, **_: Any) -> bool:
         st = load()

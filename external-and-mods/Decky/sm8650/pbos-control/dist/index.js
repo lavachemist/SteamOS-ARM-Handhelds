@@ -29,10 +29,18 @@ const setRgb = callable("set_rgb");
 const setMcu = callable("set_mcu");
 const setFan = callable("set_fan");
 const setPowerLed = callable("set_power_led");
+const setButton = callable("set_button");
+const setButtonsMode = callable("set_buttons_mode");
 
 const PROFILES = [
     { data: "lowpower", label: "Low Power", desc: "About half the power: GPU up to 680 MHz, big cores up to 2 GHz, quiet fan" },
     { data: "balanced", label: "Balanced", desc: "Full clocks on demand, game threads on the big cores" },
+];
+const ACTIONS = [
+    { data: "rgb-next", label: "Cycle stick lighting" },
+    { data: "sticks-toggle", label: "Stick lighting on/off" },
+    { data: "profile-next", label: "Switch performance profile" },
+    { data: "none", label: "Do nothing" },
 ];
 const RGB_PRESETS = [
     { label: "Ember", mode: "static", color: "ff3c00" },
@@ -45,6 +53,7 @@ const RGB_PRESETS = [
 
 
 const row = (child) => jsx(DFL.PanelSectionRow, { children: child });
+const lines = (...items) => jsx("div", { children: items.map((t, i) => jsx("div", { children: t }, i)) });
 const note = (text) => row(jsx("div", { style: { fontSize: "12px", opacity: 0.75 }, children: text }));
 
 function Content() {
@@ -63,6 +72,8 @@ function Content() {
     }
     const prof = PROFILES.find((p) => p.data === st.profile) || PROFILES.find((p) => p.data === "balanced");
     const fan = st.fan || { mode: "auto", fixed: 50 };
+    const buttons = st.buttons || {};
+    const steamButtons = (st.buttons_mode || "steam") === "steam";
     const status = [
         st.temp_c != null ? `${st.temp_c} °C` : null,
         st.fan_rpm != null ? `fan ${st.fan_rpm} rpm (${Math.round((st.fan_pwm || 0) / 2.55)}%)` : null,
@@ -122,8 +133,32 @@ function Content() {
             })),
         ] }),
         jsxs(DFL.PanelSection, { title: "Buttons", children: [
-            note("KONKR cycles stick lighting · Performance switches Low Power / Balanced"),
-            note("Home = Steam button · right front button = Quick Access · Power: tap to sleep, hold for the power menu"),
+            row(jsx(DFL.ToggleField, {
+                label: "Steam Remap",
+                description: steamButtons
+                    ? lines("Custom Function = Left Trackpad Click", "K = Right Trackpad Click", "Bind them in controller settings.")
+                    : "Off: buttons map to actions selected below",
+                checked: steamButtons,
+                onChange: (v) => setButtonsMode(v ? "steam" : "system").then(() => {
+                    toaster.toast({ title: "PB-OS Control", body: "Buttons switched, controller reconnects" });
+                    refresh();
+                }),
+            })),
+            row(jsx(DFL.DropdownItem, {
+                label: "Custom Function",
+                disabled: steamButtons,
+                rgOptions: ACTIONS,
+                selectedOption: buttons.F14 || "profile-next",
+                onChange: (o) => setButton("F14", o.data).then(refresh),
+            })),
+            row(jsx(DFL.DropdownItem, {
+                label: "K",
+                disabled: steamButtons,
+                rgOptions: ACTIONS,
+                selectedOption: buttons.F13 || "rgb-next",
+                onChange: (o) => setButton("F13", o.data).then(refresh),
+            })),
+            note("Navigation → Steam · = → Quick Access · Power: tap to sleep, hold for the power menu"),
         ] }),
         jsxs(DFL.PanelSection, { title: "Hardware", children: [
             row(jsx(DFL.ToggleField, {

@@ -26,8 +26,8 @@ AYANEO Pocket S2 shares the ROCKNIX dtsi and gets a DTB too (untested).
 | LC1 / RC1 back buttons (`BTN_Z` / `BTN_C`) | L4 / R4 | USB pad |
 | KONKR (MCU) | Quick Access | MCU link* |
 | LC / RC next to the shoulders | L5 / R5 | MCU link* |
-| front-top-right (Performance) | F14 → switch **Low Power / Balanced** | MCU link* |
-| front-bottom-right | F13 → cycle stick RGB preset | MCU link* |
+| Custom Function (above ABXY) | Left Trackpad Click, remappable in Steam; with **Steam Remap** off: F14 → switch **Low Power / Balanced** | MCU link* |
+| K (larger button below the right stick) | Right Trackpad Click, remappable in Steam; with **Steam Remap** off: F13 → cycle stick RGB preset | MCU link* |
 | Hall triggers (either trigger mode), sticks, D-pad, ABXY, Start/Select | as on a Deck | USB pad |
 
 \*The **MCU link** is the ROCKNIX `konkr_sysbtn` UART driver (written for the
@@ -35,6 +35,13 @@ Pocket FIT Elite), bound to the FIT's controller UART (`uart13 @894000`). It
 works on the regular FIT and is on by default. `pbosctl mcu disable` turns it
 off; `pbosctl monitor` shows which button sends what. Button actions live in
 `/etc/pbosd.conf`.
+
+The Deck controller has no spare buttons, but the Pocket FIT has no
+trackpads, so by default Custom Function and K send trackpad clicks that Steam
+can bind per game. PB-OS Control → Buttons → **Steam Remap** off (or
+`pbosctl buttons system`) makes them run pbosd's actions instead; pbosd then
+installs the other InputPlumber map from `/usr/share/pbosd/inputplumber/`
+and restarts InputPlumber, so the controller reconnects once.
 
 The pad boots as a fake Xbox 360 pad (`045e:028e`), and in that mode the back
 buttons send nothing. pbosd switches it to the AYANEO default mode
@@ -86,12 +93,12 @@ konkr-game compat %command%    # strict TSO / split locks for crashing games
 - Power LED (PM8550 LPG, RGB): profile colour flash on change (blue = Low Power, green = Balanced),
   then amber while charging, green when full, red pulse below 15%.
 - Stick RGB rings (MCU link): static / breath / rainbow / off from KONKR
-  Control, `pbosctl rgb`, or the front-bottom-right button.
+  Control, `pbosctl rgb`, or the K button (with Steam Remap off).
 
 ### Quick Access panel: PB-OS Control (Decky)
 
 Profile, live temperature, fan and GPU clock, stick lighting, MCU link toggle,
-It replaces the SM8550-Power and SM8550-LED plugins,
+Steam Remap and the Custom Function / K actions. It replaces the SM8550-Power and SM8550-LED plugins,
 which would fight `pbosd` over the fan and drive AYN-only LEDs.
 
 ## Compared with the SM8550 setup, in short
