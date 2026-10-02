@@ -91,10 +91,10 @@ export GAMESCOPE_DISABLE_ASYNC_FLIPS=1
 # DRMBackend.cpp; keep it forced so a 0° probe cannot skip it.
 # Portrait panel: rotate in the composite shader (safe everywhere). SM8650
 # DPU can rotate UBWC buffers inline (ROCKNIX 0066); opt in with
-# `konkrctl`-managed flag /var/lib/konkrd/kms-rotation, which lets gamescope
+# `pbosctl`-managed flag /var/lib/pbosd/kms-rotation, which lets gamescope
 # scan games out directly instead of compositing every frame. Two failed
 # starts in a row turn the flag off again.
-KMS_ROT_FLAG=/var/lib/konkrd/kms-rotation
+KMS_ROT_FLAG=/var/lib/pbosd/kms-rotation
 KMS_ROT_TRIES="$XDG_RUNTIME_DIR/gamescope-kms-rotation.tries"
 KMS_ROTATION=0
 DEVICE_MODEL="$(tr -d '\0' </sys/firmware/devicetree/base/model 2>/dev/null)"

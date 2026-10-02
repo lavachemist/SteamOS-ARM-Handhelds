@@ -172,15 +172,15 @@ fi
 # ── Bundled Decky plugins (built dist, no node_modules) ──
 log "Stage Decky plugins (SOC=${SOC})"
 BUNDLE="$R/usr/share/steamos-odin/decky-plugins"
-# KONKR Control only on SM8650 (KONKR Pocket FIT / AYANEO Pocket S2): it
-# drives konkrd, which does not run anywhere else. SM8550-Power would fight
-# konkrd over the fan/governors and SM8550-LED drives the AYN MCU LEDs, so
+# PB-OS Control only on SM8650 (KONKR Pocket FIT / AYANEO Pocket S2): it
+# drives pbosd, which does not run anywhere else. SM8550-Power would fight
+# pbosd over the fan/governors and SM8550-LED drives the AYN MCU LEDs, so
 # neither ships on SM8650. DECKY_PLUGINS (colon-separated paths) overrides.
 decky_plugins=()
 if [[ -n "${DECKY_PLUGINS:-}" ]]; then
   IFS=: read -ra decky_plugins <<<"${DECKY_PLUGINS}"
 elif [[ "$SOC" == sm8650 ]]; then
-  decky_plugins=("${MOD}/Decky/sm8650/konkr-control")
+  decky_plugins=("${MOD}/Decky/sm8650/pbos-control")
 elif [[ "${DEVICE:-}" == thor ]]; then
   # Dual Screen: AYN Thor bottom screen on/off.
   decky_plugins=("${MOD}/Decky/sm8550/dual-screen")
@@ -190,10 +190,12 @@ fi
 rm -rf "$BUNDLE"
 mkdir -p "$BUNDLE"
 if [[ "$SOC" != sm8650 ]]; then
-  rm -rf "${HOME_DST}/homebrew/plugins/konkr-control"
+  rm -rf "${HOME_DST}/homebrew/plugins/pbos-control"
 fi
 # Renamed to dual-screen.
 rm -rf "${BUNDLE}/thor-screens" "${HOME_DST}/homebrew/plugins/thor-screens"
+# Renamed to pbos-control.
+rm -rf "${BUNDLE}/konkr-control" "${HOME_DST}/homebrew/plugins/konkr-control"
 if [[ "${DEVICE:-}" != thor ]]; then
   rm -rf "${HOME_DST}/homebrew/plugins/dual-screen"
 fi

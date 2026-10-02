@@ -1,4 +1,4 @@
-const manifest = {"name":"KONKR Control"};
+const manifest = {"name":"PB-OS Control"};
 const API_VERSION = 2;
 const internalAPIConnection = window.__DECKY_SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED_deckyLoaderAPIInit;
 if (!internalAPIConnection) {
@@ -31,9 +31,8 @@ const setFan = callable("set_fan");
 const setPowerLed = callable("set_power_led");
 
 const PROFILES = [
-    { data: "silent", label: "Silent", desc: "Quiet fan, GPU capped at 75%, no game boost" },
+    { data: "lowpower", label: "Low Power", desc: "About half the power: GPU up to 680 MHz, big cores up to 2 GHz, quiet fan" },
     { data: "balanced", label: "Balanced", desc: "Full clocks on demand, game threads on the big cores" },
-    { data: "turbo", label: "Turbo", desc: "Big cores held high, GPU floor raised, fan aggressive" },
 ];
 const RGB_PRESETS = [
     { label: "Ember", mode: "static", color: "ff3c00" },
@@ -62,8 +61,8 @@ function Content() {
     if (!st) {
         return jsx(DFL.PanelSection, { children: row("Loading…") });
     }
-    const prof = PROFILES.find((p) => p.data === st.profile) || PROFILES[1];
-    const fan = st.fan || { mode: "auto", fixed: 50, boost: false };
+    const prof = PROFILES.find((p) => p.data === st.profile) || PROFILES.find((p) => p.data === "balanced");
+    const fan = st.fan || { mode: "auto", fixed: 50 };
     const status = [
         st.temp_c != null ? `${st.temp_c} °C` : null,
         st.fan_rpm != null ? `fan ${st.fan_rpm} rpm (${Math.round((st.fan_pwm || 0) / 2.55)}%)` : null,
@@ -79,7 +78,7 @@ function Content() {
                 selectedOption: st.profile,
                 onChange: (o) => setProfile(o.data).then(refresh),
             })),
-            note(st.daemon ? status : "konkrd is not running"),
+            note(st.daemon ? status : "pbosd is not running"),
         ] }),
         jsxs(DFL.PanelSection, { title: "Fan", children: [
             row(jsx(DFL.DropdownItem, {
@@ -89,18 +88,13 @@ function Content() {
                     : "Automatic, follows the profile's temperature curve",
                 rgOptions: [{ data: "auto", label: "Automatic" }, { data: "fixed", label: "Fixed speed" }],
                 selectedOption: fan.mode,
-                onChange: (o) => setFan(o.data, fan.fixed, fan.boost).then(refresh),
+                onChange: (o) => setFan(o.data, fan.fixed).then(refresh),
             })),
             fan.mode === "fixed" ? row(jsx(DFL.SliderField, {
                 label: "Speed",
                 value: fan.fixed, min: 0, max: 100, step: 5, showValue: true, valueSuffix: "%",
-                onChange: (v) => setFan("fixed", v, fan.boost),
-            })) : row(jsx(DFL.ToggleField, {
-                label: "Boost",
-                description: "Use the Turbo fan curve with any profile",
-                checked: !!fan.boost,
-                onChange: (v) => setFan(fan.mode, fan.fixed, v).then(refresh),
-            })),
+                onChange: (v) => setFan("fixed", v),
+            })) : null,
         ] }),
         jsxs(DFL.PanelSection, { title: "Lighting", children: [
             row(jsx(DFL.DropdownItem, {
@@ -128,7 +122,7 @@ function Content() {
             })),
         ] }),
         jsxs(DFL.PanelSection, { title: "Buttons", children: [
-            note("KONKR cycles stick lighting · Performance cycles the performance profile"),
+            note("KONKR cycles stick lighting · Performance switches Low Power / Balanced"),
             note("Home = Steam button · right front button = Quick Access · Power: tap to sleep, hold for the power menu"),
         ] }),
         jsxs(DFL.PanelSection, { title: "Hardware", children: [
@@ -137,7 +131,7 @@ function Content() {
                 description: "Needed for the KONKR, Performance and Quick Access buttons and stick lighting",
                 checked: st.mcu_enabled,
                 onChange: (v) => setMcu(v).then(() => {
-                    toaster.toast({ title: "KONKR Control", body: v ? "MCU link enabled" : "MCU link disabled" });
+                    toaster.toast({ title: "PB-OS Control", body: v ? "MCU link enabled" : "MCU link disabled" });
                     refresh();
                 }),
             })),
@@ -145,30 +139,27 @@ function Content() {
     ] });
 }
 
-// Toast whenever the profile or fan boost changes (KONKR button, konkrctl or
-// this panel), like Android's on-screen mode switch. Registered at plugin
-// load, so it works with Quick Access closed and over games.
+// Toast whenever the profile changes (Performance button, pbosctl or this
+// panel), like Android's on-screen mode switch. Registered at plugin load,
+// so it works with Quick Access closed and over games.
 const MODE_TOAST = {
-    silent: { title: "🌙  Silent", body: "Quiet fan, GPU capped" },
+    lowpower: { title: "🔋  Low Power", body: "About half the power, GPU and CPU capped" },
     balanced: { title: "⚖️  Balanced", body: "Full clocks on demand" },
-    turbo: { title: "⚡  Turbo", body: "Maximum performance, fan aggressive" },
 };
-function onMode(profile, boost, profileChanged) {
-    const t = profileChanged
-        ? MODE_TOAST[profile] || { title: profile, body: "" }
-        : { title: boost ? "🌀  Fan boost on" : "🌀  Fan boost off", body: (MODE_TOAST[profile] || {}).title || "" };
+function onMode(profile) {
+    const t = MODE_TOAST[profile] || { title: profile, body: "" };
     toaster.toast({ title: t.title, body: t.body, duration: 2000, playSound: false, critical: true });
 }
 
 var index = definePlugin(() => {
-    api.addEventListener("konkr_mode", onMode);
+    api.addEventListener("pbos_mode", onMode);
     return {
-        name: "KONKR Control",
+        name: "PB-OS Control",
         content: jsx(Content, {}),
         icon: jsx("div", { style: { fontWeight: 800 }, children: "K" }),
         alwaysRender: false,
         onDismount() {
-            api.removeEventListener("konkr_mode", onMode);
+            api.removeEventListener("pbos_mode", onMode);
         },
     };
 });

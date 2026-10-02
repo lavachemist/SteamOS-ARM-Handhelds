@@ -1,4 +1,4 @@
-# KONKR Pocket FIT: konkrd owns the power button in both modes, like
+# KONKR Pocket FIT: pbosd owns the power button in both modes, like
 # powerbuttond on the Deck (short press sleeps, long press opens the shut
 # down prompt), so Plasma must not act on it too.
 [AC][SuspendAndShutdown]

@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""konkrctl — control the KONKR Pocket FIT platform daemon (konkrd).
+"""pbosctl — control the KONKR Pocket FIT platform daemon (pbosd).
 
-  konkrctl status
-  konkrctl profile silent|balanced|turbo|next
-  konkrctl rgb RRGGBB [brightness]     static stick colour
-  konkrctl rgb breath RRGGBB | rainbow | off
-  konkrctl mcu status|enable|disable   MCU UART driver (extra buttons + stick RGB; on by default)
-  konkrctl monitor                     print key/button events from the pads
+  pbosctl status
+  pbosctl profile lowpower|balanced|next
+  pbosctl rgb RRGGBB [brightness]     static stick colour
+  pbosctl rgb breath RRGGBB | rainbow | off
+  pbosctl mcu status|enable|disable   MCU UART driver (extra buttons + stick RGB; on by default)
+  pbosctl monitor                     print key/button events from the pads
                                        (find out what each extra button sends)
-  konkrctl sleep standby|s2idle|status standby (default: panel off, session
+  pbosctl sleep standby|s2idle|status standby (default: panel off, session
                                        frozen, ~1 W) or experimental kernel s2idle
-  konkrctl speaker boost|flat|status   speaker loudness chain (default: boost)
+  pbosctl speaker boost|flat|status   speaker loudness chain (default: boost)
 """
 from __future__ import annotations
 
@@ -22,10 +22,11 @@ import struct
 import subprocess
 import sys
 
-STATE = "/var/lib/konkrd/state.json"
+STATE = "/var/lib/pbosd/state.json"
 BLACKLIST = "/etc/modprobe.d/konkr-mcu.conf"
-S2IDLE = "/var/lib/konkrd/sleep-s2idle"
-PROFILES = ("silent", "balanced", "turbo")
+S2IDLE = "/var/lib/pbosd/sleep-s2idle"
+PROFILES = ("lowpower", "balanced")
+LEGACY_PROFILES = {"silent": "lowpower", "turbo": "balanced"}
 SPEAKER_CONF = "/etc/wireplumber/wireplumber.conf.d/55-konkr-speaker.conf"
 
 
@@ -47,7 +48,7 @@ def save(st: dict) -> None:
     with open(STATE + ".tmp", "w", encoding="utf-8") as fh:
         json.dump(st, fh, indent=2)
     os.replace(STATE + ".tmp", STATE)
-    subprocess.run(["systemctl", "kill", "-s", "HUP", "konkrd.service"], check=False)
+    subprocess.run(["systemctl", "kill", "-s", "HUP", "pbosd.service"], check=False)
 
 
 def rd(p: str) -> str:
@@ -71,7 +72,8 @@ def status() -> None:
               f"(max {int(rd(d + '/max_freq')) // 1_000_000} MHz, {rd(d + '/governor')})")
     for pol in sorted(glob.glob("/sys/devices/system/cpu/cpufreq/policy*")):
         print(f"{os.path.basename(pol):8}: cpus {rd(pol + '/related_cpus'):12} "
-              f"{int(rd(pol + '/scaling_cur_freq')) // 1000} MHz  {rd(pol + '/scaling_governor')}")
+              f"{int(rd(pol + '/scaling_cur_freq')) // 1000} MHz  {rd(pol + '/scaling_governor')} "
+              f"(max {int(rd(pol + '/scaling_max_freq')) // 1000} MHz)")
     temps = []
     for z in glob.glob("/sys/class/thermal/thermal_zone*"):
         t = rd(z + "/type")
@@ -96,10 +98,10 @@ def mcu(cmd: str) -> None:
             os.remove(BLACKLIST)
         r = subprocess.run(["modprobe", "konkr_sysbtn"], check=False)
         print("konkr_sysbtn loaded" if r.returncode == 0 else "modprobe failed")
-        print("Press the extra buttons with `konkrctl monitor` to check the MCU answers.")
+        print("Press the extra buttons with `pbosctl monitor` to check the MCU answers.")
     elif cmd == "disable":
         with open(BLACKLIST, "w", encoding="utf-8") as fh:
-            fh.write("# Pocket FIT MCU UART driver — opt-in (konkrctl mcu enable)\n"
+            fh.write("# Pocket FIT MCU UART driver — opt-in (pbosctl mcu enable)\n"
                      "blacklist konkr_sysbtn\n")
         subprocess.run(["modprobe", "-r", "konkr_sysbtn"], check=False)
         print("konkr_sysbtn disabled")
@@ -180,10 +182,13 @@ def main() -> None:
     elif a[0] == "profile" and len(a) == 2:
         need_root()
         st = load()
-        if a[1] == "next":
-            st["profile"] = PROFILES[(PROFILES.index(st.get("profile", "balanced")) + 1) % 3]
-        elif a[1] in PROFILES:
-            st["profile"] = a[1]
+        cur = LEGACY_PROFILES.get(st.get("profile"), st.get("profile"))
+        name = LEGACY_PROFILES.get(a[1], a[1])
+        if name == "next":
+            i = PROFILES.index(cur) if cur in PROFILES else 0
+            st["profile"] = PROFILES[(i + 1) % len(PROFILES)]
+        elif name in PROFILES:
+            st["profile"] = name
         else:
             sys.exit(__doc__)
         save(st)

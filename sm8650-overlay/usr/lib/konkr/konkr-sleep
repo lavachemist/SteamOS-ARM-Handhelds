@@ -105,8 +105,8 @@ post() {
     modprobe "${WIFI_MODS[0]}" || log "ath12k reload failed"
   fi
   audio 0
-  # konkrd re-applies profile clocks/LEDs on SIGHUP
-  systemctl kill -s HUP konkrd.service >/dev/null 2>&1
+  # pbosd re-applies profile clocks/LEDs on SIGHUP
+  systemctl kill -s HUP pbosd.service >/dev/null 2>&1
   log "post: restored"
 }
 

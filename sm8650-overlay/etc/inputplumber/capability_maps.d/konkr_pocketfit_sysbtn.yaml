@@ -3,15 +3,15 @@
 # `konkr-mcu enable`). IDs follow the Elite driver (ROCKNIX 0069):
 #   HAPPY1 front-bottom-right   HAPPY2 KONKR   HAPPY3/4 LC/RC shoulder extras
 #   HAPPY5 front-top-right
-# Buttons without a Deck equivalent become F13/F14, which konkr-controls
-# turns into device actions (see /etc/konkr-controls.conf).
+# Buttons without a Deck equivalent become F13/F14, which pbosd
+# turns into device actions (see /etc/pbosd.conf).
 version: 2
 kind: CapabilityMap
 name: KONKR Pocket FIT MCU buttons (Steam Deck layout)
 id: konkr_pocketfit_sysbtn
 
 mapping:
-  - name: Front-bottom-right → F13 (konkr-controls)
+  - name: Front-bottom-right → F13 (pbosd)
     source_events:
       - evdev: {event_type: KEY, event_code: BTN_TRIGGER_HAPPY1, value_type: button}
     target_event:
@@ -31,7 +31,7 @@ mapping:
       - evdev: {event_type: KEY, event_code: BTN_TRIGGER_HAPPY4, value_type: button}
     target_event:
       gamepad: {button: RightPaddle2}
-  - name: Front-top-right → F14 (konkr-controls)
+  - name: Front-top-right → F14 (pbosd)
     source_events:
       - evdev: {event_type: KEY, event_code: BTN_TRIGGER_HAPPY5, value_type: button}
     target_event:

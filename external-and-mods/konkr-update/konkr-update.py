@@ -20,11 +20,16 @@ from pathlib import Path, PurePosixPath
 FORMAT = 1
 ROOT_DIRS = ('usr', 'opt', 'etc')
 UPPER = 'var/lib/overlays/etc/upper'
-HOME_DIRS = ('homebrew/plugins/konkr-control', 'homebrew/plugins/decky-lsfg-vk')
+HOME_DIRS = ('homebrew/plugins/pbos-control', 'homebrew/plugins/decky-lsfg-vk')
+# Plugin folders from older images: removed on apply, restored on rollback.
+# Packages still carry an empty konkr-control folder, which updaters from
+# before the PB-OS Control rename require.
+LEGACY_HOME_DIRS = ('homebrew/plugins/konkr-control',)
+SNAPSHOT_HOME_DIRS = HOME_DIRS + LEGACY_HOME_DIRS
 # One package per SoC; `devices` must be exactly one of these (DTB models).
 KONKR_DEVICES = ['KONKR Pocket FIT', 'AYANEO Pocket S2']
 DEVICE_SETS = (KONKR_DEVICES, ['Retroid Pocket 6', 'Retroid Pocket 6 TOP-DPAD'])
-KONKR_ONLY = ('homebrew/plugins/konkr-control',)
+KONKR_ONLY = ('homebrew/plugins/pbos-control',)
 PRESERVE = ('passwd', 'shadow', 'group', 'gshadow', 'machine-id', 'hostname', 'hosts',
             'fstab', 'crypttab', 'localtime', 'adjtime', 'resolv.conf', 'ssh',
             'NetworkManager/system-connections', 'sudoers.d')
@@ -260,11 +265,11 @@ def snapshot(root, home, work):
     for rel in (*ROOT_DIRS, UPPER):
         src = root / rel
         if src.exists(): copy_tree(src, backup / 'root' / rel)
-    for rel in HOME_DIRS:
+    for rel in SNAPSHOT_HOME_DIRS:
         src = home / 'steamos' / rel
         if src.exists(): copy_tree(src, backup / 'home/steamos' / rel)
     # Explicitly record absent directories so rollback removes newly introduced ones.
-    write_json(backup / 'home-presence.json', {rel: (home / 'steamos' / rel).exists() for rel in HOME_DIRS})
+    write_json(backup / 'home-presence.json', {rel: (home / 'steamos' / rel).exists() for rel in SNAPSHOT_HOME_DIRS})
     local = home / 'steamos/.local/share/vulkan/implicit_layer.d'
     if local.exists(): copy_tree(local, backup / 'layers')
     write_json(backup / 'layers-presence.json', {'exists': local.exists()})
@@ -280,7 +285,7 @@ def restore(root, boot, home, work):
         if present_root[rel]: copy_tree(src, root / rel, delete=True)
         elif (root / rel).exists(): shutil.rmtree(root / rel)
     present = json.loads((backup / 'home-presence.json').read_text())
-    for rel in HOME_DIRS:
+    for rel in SNAPSHOT_HOME_DIRS:
         dest = home / 'steamos' / rel
         if present[rel]: copy_tree(backup / 'home/steamos' / rel, dest, delete=True)
         elif dest.exists(): shutil.rmtree(dest)
@@ -309,6 +314,8 @@ def apply(root, boot, home, work, manifest):
         copy_tree(src, home / 'steamos' / rel, delete=True)
         # Images stage users with numeric ownership; do not inherit root ownership.
         run('chown', '-R', '1000:1000', home / 'steamos' / rel)
+    for rel in LEGACY_HOME_DIRS:
+        if (home / 'steamos' / rel).exists(): shutil.rmtree(home / 'steamos' / rel)
     for prefix in (root / 'usr', root / 'usr/local', home / 'steamos/.local'):
         for name in ('VkLayer_LS_frame_generation.json', 'VkLayer_LS_frame_generation_arm64.json'):
             (prefix / 'share/vulkan/implicit_layer.d' / name).unlink(missing_ok=True)

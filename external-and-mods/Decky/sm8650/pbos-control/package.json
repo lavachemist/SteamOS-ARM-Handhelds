@@ -1,5 +1,5 @@
 {
-  "name": "konkr-control",
+  "name": "pbos-control",
   "version": "1.0.0",
   "description": "Decky plugin \u2014 KONKR Pocket FIT control (dist/index.js is hand-written, no build step)",
   "private": true,

@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""konkrd — KONKR Pocket FIT platform daemon (SteamOS-ARM-SM8650).
+"""pbosd — KONKR Pocket FIT platform daemon (SteamOS-ARM-SM8650).
 
 Fixes the platform-side gaps that make Linux slower than Android on this
 handheld and wires up the extra buttons:
 
   fan      ROCKNIX pins the pwm-fan at 70/255 forever (0500-set-boot-fanspeed)
            and the DT trips are not bound to it, so the SoC heat-soaks and
-           LMh throttles CPU/GPU. konkrd runs a real temperature curve.
-  profiles silent / balanced / turbo: fan curve, GPU floor/ceiling, how hard
-           game threads are boosted. Cycled by the Performance button.
+           LMh throttles CPU/GPU. pbosd runs a real temperature curve.
+  profiles lowpower / balanced: fan curve, GPU and big-core clock ceilings,
+           how hard game threads are boosted. Toggled by the Performance
+           button.
   games    threads of Steam-launched games (descendants of `reaper
            SteamLaunch`) are kept off the Cortex-A520 little cores and get a
            uclamp.min boost so schedutil ramps the big cores immediately —
@@ -18,8 +19,8 @@ handheld and wires up the extra buttons:
            konkr_pocketfit_sysbtn.yaml) run configurable actions.
   leds     power LED: profile colour flash, then charge state.
 
-Config: /etc/konkrd.conf   State: /var/lib/konkrd/state.json
-Control: konkrctl (sends SIGHUP after editing state).
+Config: /etc/pbosd.conf   State: /var/lib/pbosd/state.json
+Control: pbosctl (sends SIGHUP after editing state).
 """
 from __future__ import annotations
 
@@ -30,27 +31,39 @@ import glob
 import json
 import os
 import select
+import shutil
 import signal
 import struct
 import subprocess
 import sys
 import time
 
-CONF = "/etc/konkrd.conf"
-STATE_DIR = "/var/lib/konkrd"
+CONF = "/etc/pbosd.conf"
+STATE_DIR = "/var/lib/pbosd"
 STATE = f"{STATE_DIR}/state.json"
-PROFILES = ("silent", "balanced", "turbo")
+# Before the rename (2026-10) this was konkrd with the KONKR Control plugin.
+LEGACY_STATE_DIR = "/var/lib/konkrd"
+PLUGINS_DIR = "/home/steamos/homebrew/plugins"
+PLUGIN_BUNDLE = "/usr/share/steamos-odin/decky-plugins/pbos-control"
+PROFILES = ("lowpower", "balanced")
+# Profiles before 2026-10: Silent and Turbo. The Tomb Raider A/B on battery
+# showed Turbo (big cores on `performance`, GPU floor raised) and the Turbo
+# fan curve add heat and power for no frames: the GPU is heat-capped either
+# way. Low Power (GPU <= 680 MHz, big cores <= 2.04 GHz) draws 41-45 % less
+# than Balanced for ~25 % fewer frames when GPU-bound.
+LEGACY_PROFILES = {"silent": "lowpower", "turbo": "balanced"}
 
 # temp °C → pwm 0..255, linearly interpolated
 FAN_CURVES = {
-    "silent":   [(55, 0), (65, 45), (75, 85), (85, 150), (93, 255)],
+    "lowpower": [(55, 0), (65, 45), (75, 85), (85, 150), (93, 255)],
     "balanced": [(50, 35), (60, 60), (70, 100), (80, 160), (90, 255)],
-    "turbo":    [(45, 90), (60, 140), (70, 200), (80, 255)],
 }
-# fraction of the GPU OPP range: (floor, ceiling)
-GPU_RANGE = {"silent": (0.0, 0.75), "balanced": (0.0, 1.0), "turbo": (0.35, 1.0)}
+# clock ceilings (None = the hardware maximum); the GPU floor is always the
+# lowest OPP, big = the CPU clusters other than the Cortex-A520s
+GPU_MAX_MHZ = {"lowpower": 680, "balanced": None}
+BIG_CPU_MAX_KHZ = {"lowpower": 2035200, "balanced": None}
 # per-thread uclamp.min for game threads (0..1024)
-GAME_UCLAMP = {"silent": 0, "balanced": 256, "turbo": 512}
+GAME_UCLAMP = {"lowpower": 0, "balanced": 256}
 # The Steam UI path. Mainline EAS parks these bursty, light threads on the
 # Cortex-A520s (capacity 216 vs 855 on the big cores) — gamescope and
 # Xwayland were measured on cpu1 — which makes every menu feel laggy.
@@ -63,7 +76,7 @@ UI_COMMS = {"gamescope-wl", "Xwayland", "steam", "steamwebhelper",
             # Discover installs: the pull, the checksumming and the deploy
             # (comm is truncated to 15 chars)
             "flatpak", "flatpak-system-", "flatpak-session", "ostree"}
-UI_UCLAMP = {"silent": 128, "balanced": 200, "turbo": 300}
+UI_UCLAMP = {"lowpower": 128, "balanced": 200}
 # Disk priority (BFQ honours it). The microSD does ~1.6 MB/s of 4K writes;
 # a Steam download from the `steam` client process must not queue ahead of
 # the UI's and the game's reads.
@@ -76,7 +89,7 @@ IOPRIO_WHO_PROCESS = 1
 
 def set_ioprio(pid: int, level: int) -> None:
     _libc.syscall(SYS_IOPRIO_SET, IOPRIO_WHO_PROCESS, pid, (IOPRIO_CLASS_BE << 13) | level)
-PROFILE_RGB = {"silent": (0, 90, 255), "balanced": (0, 255, 60), "turbo": (255, 30, 0)}
+PROFILE_RGB = {"lowpower": (0, 90, 255), "balanced": (0, 255, 60)}
 
 EV_KEY = 1
 KEY_F13, KEY_F14, KEY_F15 = 183, 184, 185
@@ -84,7 +97,7 @@ INPUT_EVENT = struct.Struct("llHHi")
 
 
 def log(msg: str) -> None:
-    print(f"konkrd: {msg}", flush=True)
+    print(f"pbosd: {msg}", flush=True)
 
 
 def rd(path: str, default: str = "") -> str:
@@ -105,6 +118,42 @@ def wr(path: str, value) -> bool:
 
 
 # ---------------------------------------------------------------- state ----
+def migrate_from_konkrd() -> None:
+    """Keep the settings of a konkrd install and drop its Decky plugin once
+    PB-OS Control is there (two panels would both drive the daemon)."""
+    if os.path.isdir(LEGACY_STATE_DIR) and not os.path.exists(STATE):
+        os.makedirs(STATE_DIR, exist_ok=True)
+        for name in os.listdir(LEGACY_STATE_DIR):
+            os.replace(f"{LEGACY_STATE_DIR}/{name}", f"{STATE_DIR}/{name}")
+        log(f"moved {LEGACY_STATE_DIR} to {STATE_DIR}")
+    if os.path.isdir(LEGACY_STATE_DIR) and not os.listdir(LEGACY_STATE_DIR):
+        os.rmdir(LEGACY_STATE_DIR)
+    old, new = f"{PLUGINS_DIR}/konkr-control", f"{PLUGINS_DIR}/pbos-control"
+    if not os.path.isdir(old):
+        return
+    if not os.path.isdir(new) and os.path.isdir(PLUGIN_BUNDLE):
+        # An updater from before the rename only knows konkr-control (and
+        # leaves it empty); install PB-OS Control from the system bundle.
+        shutil.copytree(PLUGIN_BUNDLE, new)
+        for top, dirs, files in os.walk(new):
+            for name in [top, *(os.path.join(top, n) for n in dirs + files)]:
+                os.chown(name, 1000, 1000)
+        log("installed PB-OS Control from the system bundle")
+    if os.path.isdir(new):
+        shutil.rmtree(old, ignore_errors=True)
+        log("removed the old KONKR Control plugin")
+        subprocess.run(["systemctl", "try-restart", "plugin_loader.service"], check=False)
+
+
+def legacy_action(act: str) -> str:
+    """Button actions saved before the Silent/Turbo/fan-boost removal."""
+    if act == "fan-boost":
+        return "none"
+    if act.startswith("profile-") and act[8:] in LEGACY_PROFILES:
+        return "profile-" + LEGACY_PROFILES[act[8:]]
+    return act
+
+
 def load_state() -> dict:
     try:
         with open(STATE, encoding="utf-8") as fh:
@@ -113,11 +162,15 @@ def load_state() -> dict:
         st = {}
     st.setdefault("profile", "balanced")
     st.setdefault("rgb", {"mode": "static", "color": "ff3c00", "brightness": 160})
-    st.setdefault("fan", {"mode": "auto", "fixed": 50, "boost": False})
+    st.setdefault("fan", {"mode": "auto", "fixed": 50})
+    st["fan"].pop("boost", None)             # fan boost was removed
     st.setdefault("power_led", True)
     st.setdefault("buttons", {"F13": "rgb-next", "F14": "profile-next"})
+    for key, act in st["buttons"].items():
+        st["buttons"][key] = legacy_action(act)
     if st["rgb"].get("mode") == "rainbow":
         st["rgb"]["mode"] = "static"
+    st["profile"] = LEGACY_PROFILES.get(st["profile"], st["profile"])
     if st["profile"] not in PROFILES:
         st["profile"] = "balanced"
     return st
@@ -245,8 +298,6 @@ class Fan:
                 log(f"fan: fixed {fan.get('fixed')}% -> pwm {step}")
                 self.cur = step
             return
-        if fan.get("boost"):
-            profile = "turbo"
         # Smooth short spikes (boot, shader compiles) but react at once to
         # genuinely hot readings.
         if self.smooth is None or raw >= 85:
@@ -287,12 +338,11 @@ def apply_gpu(profile: str) -> None:
     freqs = sorted(int(f) for f in rd(f"{d}/available_frequencies").split() if f.isdigit())
     if not freqs:
         return
-    lo, hi = GPU_RANGE[profile]
-    fmin = freqs[int(lo * (len(freqs) - 1))]
-    fmax = freqs[int(round(hi * (len(freqs) - 1)))]
+    cap = GPU_MAX_MHZ[profile]
+    fmax = max((f for f in freqs if cap is None or f <= cap * 1_000_000), default=freqs[0])
     # order matters: never set min above the current max
     wr(f"{d}/max_freq", freqs[-1])
-    wr(f"{d}/min_freq", fmin)
+    wr(f"{d}/min_freq", freqs[0])
     wr(f"{d}/max_freq", fmax)
     wr(f"{d}/polling_interval", 16)
 
@@ -300,19 +350,20 @@ def apply_gpu(profile: str) -> None:
 def apply_cpu(profile: str) -> None:
     """schedutil everywhere (the ROCKNIX default is `performance`, which
     holds all eight cores — little A520s included — at max clock: heat for
-    nothing). Turbo pins only the big clusters to `performance`."""
+    nothing). Low Power caps the big clusters' clock."""
     big = big_cpus()
+    cap = BIG_CPU_MAX_KHZ[profile]
     for pol in glob.glob("/sys/devices/system/cpu/cpufreq/policy*"):
         govs = rd(f"{pol}/scaling_available_governors")
         cpus = {int(c) for c in rd(f"{pol}/related_cpus").split() if c.isdigit()}
-        gov = "schedutil"
-        if profile == "turbo" and cpus and cpus <= big and "performance" in govs:
-            gov = "performance"
-        if gov in govs:
-            wr(f"{pol}/scaling_governor", gov)
-        if gov == "schedutil":
+        if "schedutil" in govs:
+            wr(f"{pol}/scaling_governor", "schedutil")
             wr(f"{pol}/schedutil/rate_limit_us", 500)
-        wr(f"{pol}/scaling_max_freq", rd(f"{pol}/cpuinfo_max_freq"))
+        fmax = rd(f"{pol}/cpuinfo_max_freq")
+        if cap is not None and cpus and cpus <= big:
+            freqs = [int(f) for f in rd(f"{pol}/scaling_available_frequencies").split() if f.isdigit()]
+            fmax = max((f for f in freqs if f <= cap), default=fmax)
+        wr(f"{pol}/scaling_max_freq", fmax)
 
 
 def big_cpus() -> set[int]:
@@ -612,12 +663,12 @@ def power_press(long: bool) -> None:
                      env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-PROFILE_LABEL = {"silent": "Silent", "balanced": "Balanced", "turbo": "Turbo"}
+PROFILE_LABEL = {"lowpower": "Low Power", "balanced": "Balanced"}
 
 
 def notify_desktop(title: str, body: str) -> None:
     """Desktop Mode popup for button presses. Game Mode gets a Steam toast
-    from the KONKR Control plugin instead, so only notify while Plasma runs."""
+    from the PB-OS Control plugin instead, so only notify while Plasma runs."""
     import pwd
     import subprocess
     if subprocess.run(["pgrep", "-x", "plasmashell"], stdout=subprocess.DEVNULL).returncode != 0:
@@ -629,7 +680,7 @@ def notify_desktop(title: str, body: str) -> None:
     env = {"HOME": "/home/steamos", "USER": "steamos", "PATH": "/usr/bin:/bin",
            "XDG_RUNTIME_DIR": f"/run/user/{uid}",
            "DBUS_SESSION_BUS_ADDRESS": f"unix:path=/run/user/{uid}/bus"}
-    subprocess.Popen(["runuser", "-u", "steamos", "--", "notify-send", "-a", "KONKR",
+    subprocess.Popen(["runuser", "-u", "steamos", "--", "notify-send", "-a", "PB-OS",
                       "-i", "preferences-system-power", "-t", "2000",
                       "-h", "string:x-canonical-private-synchronous:konkr-mode", title, body],
                      env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -641,7 +692,7 @@ def notify_desktop(title: str, body: str) -> None:
 # while the clocks ramped: on the Steam home screen 5 frames over 34 ms per
 # 5 s of scrolling and a 234 ms freeze on a tab switch, vs 0-1 and 117-167 ms
 # with the floor raised (measured 2026-09-26; the GPU floor made no
-# difference). konkrd owns scaling_min_freq nowhere else.
+# difference). pbosd owns scaling_min_freq nowhere else.
 TOUCH_BOOST_HZ = {"big": 1800000, "little": 1500000}
 TOUCH_BOOST_HOLD_S = 1.2
 TOUCH_SAMPLE_S = 0.3        # look at the touchscreen at most ~3x a second
@@ -721,7 +772,7 @@ class TouchBoost:
 
     def watch_fds(self) -> list[int]:
         """fds to select on: none right after a touch (the boost is on and
-        the panel reports at ~280 Hz, which must not wake konkrd each time)."""
+        the panel reports at ~280 Hz, which must not wake pbosd each time)."""
         self.rescan()
         if time.monotonic() - self.last_touch < TOUCH_SAMPLE_S:
             return []
@@ -827,23 +878,18 @@ class Daemon:
         log(f"profile {p}")
 
     def action(self, name: str) -> None:
+        name = legacy_action(name)
         if name == "profile-next":
             i = PROFILES.index(self.st["profile"])
             self.st["profile"] = PROFILES[(i + 1) % len(PROFILES)]
             save_state(self.st)
             self.apply_profile()
             notify_desktop(PROFILE_LABEL[self.st["profile"]], "Performance profile")
-        elif name in ("profile-silent", "profile-balanced", "profile-turbo"):
+        elif name in ("profile-" + p for p in PROFILES):
             self.st["profile"] = name.split("-", 1)[1]
             save_state(self.st)
             self.apply_profile()
             notify_desktop(PROFILE_LABEL[self.st["profile"]], "Performance profile")
-        elif name == "fan-boost":
-            self.st["fan"]["boost"] = not self.st["fan"].get("boost")
-            save_state(self.st)
-            self.leds.flash((255, 255, 255) if self.st["fan"]["boost"] else (60, 60, 60))
-            log(f"fan boost {'on' if self.st['fan']['boost'] else 'off'}")
-            notify_desktop("Fan boost " + ("on" if self.st["fan"]["boost"] else "off"), "")
         elif name == "sticks-toggle":
             rgb = self.st["rgb"]
             if rgb.get("mode") == "off":
@@ -925,7 +971,11 @@ class Daemon:
 
 if __name__ == "__main__":
     if os.geteuid() != 0:
-        sys.exit("konkrd must run as root")
+        sys.exit("pbosd must run as root")
+    try:
+        migrate_from_konkrd()
+    except OSError as exc:
+        log(f"konkrd migration: {exc!r}")
     try:
         Daemon().run()
     except Exception as exc:  # never leave the fan at a low fixed speed

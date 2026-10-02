@@ -12,6 +12,6 @@ friendly_name = "AYANEO Pocket S2"
 
 [inputplumber]
 # keyboard target carries F13/F14 from the MCU buttons (KONKR → stick lights,
-# Performance → profile) to konkrd; steamos-manager applies this list at
+# Performance → profile) to pbosd; steamos-manager applies this list at
 # session start, so dropping "keyboard" here silently kills those buttons.
 target_devices = ["deck-uhid", "keyboard"]

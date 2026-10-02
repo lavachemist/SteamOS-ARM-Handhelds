@@ -236,7 +236,7 @@ def main() -> int:
         time.sleep(0.3)               # let gamescope commit the panel-off
         frozen = set_frozen(freeze_targets(), True)
         for pol in glob.glob("/sys/devices/system/cpu/cpufreq/policy*"):
-            # konkrd's touch boost may still hold the floor up (it drops it
+            # pbosd's touch boost may still hold the floor up (it drops it
             # within 0.5 s of this flag); a max below the min would be refused.
             wr(f"{pol}/scaling_min_freq", rd(f"{pol}/cpuinfo_min_freq"))
             saved[f"{pol}/scaling_max_freq"] = rd(f"{pol}/scaling_max_freq")
@@ -276,14 +276,14 @@ def main() -> int:
                 os.kill(pid, signal.SIGCONT)
             except OSError:
                 pass
-        time.sleep(0.5)               # let the wake release settle before konkrd sees keys
+        time.sleep(0.5)               # let the wake release settle before pbosd sees keys
         try:
             os.remove(FLAG)
         except OSError:
             pass
         os.close(fd)
-        # konkrd re-applies profile clocks/LEDs on SIGHUP
-        os.system("systemctl kill -s HUP konkrd.service >/dev/null 2>&1")
+        # pbosd re-applies profile clocks/LEDs on SIGHUP
+        os.system("systemctl kill -s HUP pbosd.service >/dev/null 2>&1")
     return 0
 
 

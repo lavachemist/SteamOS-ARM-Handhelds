@@ -26,21 +26,21 @@ AYANEO Pocket S2 shares the ROCKNIX dtsi and gets a DTB too (untested).
 | LC1 / RC1 back buttons (`BTN_Z` / `BTN_C`) | L4 / R4 | USB pad |
 | KONKR (MCU) | Quick Access | MCU link* |
 | LC / RC next to the shoulders | L5 / R5 | MCU link* |
-| front-top-right (Performance) | F14 → cycle **Silent / Balanced / Turbo** | MCU link* |
+| front-top-right (Performance) | F14 → switch **Low Power / Balanced** | MCU link* |
 | front-bottom-right | F13 → cycle stick RGB preset | MCU link* |
 | Hall triggers (either trigger mode), sticks, D-pad, ABXY, Start/Select | as on a Deck | USB pad |
 
 \*The **MCU link** is the ROCKNIX `konkr_sysbtn` UART driver (written for the
 Pocket FIT Elite), bound to the FIT's controller UART (`uart13 @894000`). It
-works on the regular FIT and is on by default. `konkrctl mcu disable` turns it
-off; `konkrctl monitor` shows which button sends what. Button actions live in
-`/etc/konkrd.conf`.
+works on the regular FIT and is on by default. `pbosctl mcu disable` turns it
+off; `pbosctl monitor` shows which button sends what. Button actions live in
+`/etc/pbosd.conf`.
 
 The pad boots as a fake Xbox 360 pad (`045e:028e`), and in that mode the back
-buttons send nothing. konkrd switches it to the AYANEO default mode
+buttons send nothing. pbosd switches it to the AYANEO default mode
 (`4001:0428`) at startup via the `gamepad_mode` attribute that kernel patch
 0004 adds to `konkr_sysbtn` (same MCU frames ArmadaOS uses). To keep the Xbox
-mode, set `mode = xbox` under `[controller]` in `/etc/konkrd.conf`.
+mode, set `mode = xbox` under `[controller]` in `/etc/pbosd.conf`.
 
 ### Performance: why Linux was slower than GameNative on Android, and the fixes
 
@@ -49,10 +49,10 @@ same model as the ARM Proton builds here. The gap was the **platform**:
 
 | Bottleneck (verified in source/config) | Fix |
 |---|---|
-| **Fan pinned at 70/255 (~27%) forever.** ROCKNIX `0500-set-boot-fanspeed` sets it once, and the DT fan trips have no `cooling-maps`. The SoC heat-soaks and Qualcomm LMh throttles CPU and GPU under sustained load. Android's thermal HAL ramps the fan to 100%. | `konkrd` runs a real temperature curve per profile (hysteresis, failsafe 180/255 if it ever stops). |
+| **Fan pinned at 70/255 (~27%) forever.** ROCKNIX `0500-set-boot-fanspeed` sets it once, and the DT fan trips have no `cooling-maps`. The SoC heat-soaks and Qualcomm LMh throttles CPU and GPU under sustained load. Android's thermal HAL ramps the fan to 100%. | `pbosd` runs a real temperature curve per profile (hysteresis, failsafe 180/255 if it ever stops). |
 | **GPU capped at 834 MHz.** Mainline's SM8650 OPP table stops there; the 8 Gen 3 runs its A750 at **903 MHz** on Android. | `opp-903000000` at the fused `TURBO_L1` corner is added to the Pocket FIT DTB. |
-| **`performance` governor on all 8 cores** (ROCKNIX default), including the Cortex-A520 little cores that games barely use. Pure heat, feeding the throttling. | `schedutil` by default; Turbo pins only the big clusters to `performance`. |
-| **No game-aware scheduling** (`CONFIG_UCLAMP_TASK` was off). Android's game mode keeps game threads on big cores. | uclamp enabled. `konkrd` keeps threads of Steam-launched games off the A520s and gives them a `uclamp.min` boost (Balanced 25%, Turbo 50%). |
+| **`performance` governor on all 8 cores** (ROCKNIX default), including the Cortex-A520 little cores that games barely use. Pure heat, feeding the throttling. | `schedutil` on every cluster; Low Power also caps the big clusters at 2.04 GHz. |
+| **No game-aware scheduling** (`CONFIG_UCLAMP_TASK` was off). Android's game mode keeps game threads on big cores. | uclamp enabled. `pbosd` keeps threads of Steam-launched games off the A520s and gives them a `uclamp.min` boost (Balanced 25%). |
 | GPU devfreq samples every 50 ms, so clocks lag frame load. | 16 ms polling. |
 | Windows sync primitives via esync/fsync. | `CONFIG_NTSYNC` + `/dev/ntsync` autoloaded and accessible (Proton ntsync). |
 | Games stream from microSD (Android: UFS 4.0). | 2 MB read-ahead + mq-deadline on the card. The card is still the ceiling: use a fast A2 card. |
@@ -83,16 +83,16 @@ konkr-game compat %command%    # strict TSO / split locks for crashing games
 
 ### Lighting
 
-- Power LED (PM8550 LPG, RGB): profile colour flash on change (blue/green/red),
+- Power LED (PM8550 LPG, RGB): profile colour flash on change (blue = Low Power, green = Balanced),
   then amber while charging, green when full, red pulse below 15%.
 - Stick RGB rings (MCU link): static / breath / rainbow / off from KONKR
-  Control, `konkrctl rgb`, or the front-bottom-right button.
+  Control, `pbosctl rgb`, or the front-bottom-right button.
 
-### Quick Access panel: KONKR Control (Decky)
+### Quick Access panel: PB-OS Control (Decky)
 
 Profile, live temperature, fan and GPU clock, stick lighting, MCU link toggle,
 It replaces the SM8550-Power and SM8550-LED plugins,
-which would fight `konkrd` over the fan and drive AYN-only LEDs.
+which would fight `pbosd` over the fan and drive AYN-only LEDs.
 
 ## Compared with the SM8550 setup, in short
 
@@ -147,7 +147,7 @@ Output: `/work/steamos-sm8650.img`.
   masked since they just crash-loop and keep the SoC awake. Sleep runs
   `konkr-standby`, which turns the panel off, freezes the session, takes the
   big cores offline and unloads wifi. Real s2idle is there behind
-  `konkrctl sleep s2idle` but doesn't wake up reliably yet.
+  `pbosctl sleep s2idle` but doesn't wake up reliably yet.
 - Some ARM64 Proton games hung on their splash screen because wined3d's GL
   path goes through zink. `WINE_D3D_CONFIG=renderer=vulkan` fixes it.
 - `konkr-focusfix` gives the game focus back after Quick Access closes,
@@ -166,7 +166,7 @@ Output: `/work/steamos-sm8650.img`.
 
 - 903 MHz stability on every chip. If you see GPU hangs, remove the
   `&gpu_opp_table` block from `external-and-mods/kernel-sm8650/dts/sm8650-konkr-pf.append`
-  and rebuild, or use the Silent profile.
+  and rebuild, or use the Low Power profile (GPU capped at 680 MHz).
 - AYANEO Pocket S2: has a DTB, never booted.
 - Which USB `phys_path` the internal pad uses (an external Xbox 360 pad with
   the same IDs gets merged into the same virtual Deck controller).

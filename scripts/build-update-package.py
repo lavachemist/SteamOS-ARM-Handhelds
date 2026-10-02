@@ -16,10 +16,10 @@ ap.add_argument('--output', required=True)
 ap.add_argument('--soc', choices=('sm8650', 'sm8550'), default='sm8650')
 a = ap.parse_args()
 # Device models (DTB `model`) each package may install on, and the Decky
-# plugins it carries. KONKR Control is KONKR-only (it drives konkrd).
+# plugins it carries. PB-OS Control is KONKR-only (it drives pbosd).
 DEVICES = {'sm8650': ['KONKR Pocket FIT', 'AYANEO Pocket S2'],
            'sm8550': ['Retroid Pocket 6', 'Retroid Pocket 6 TOP-DPAD']}[a.soc]
-PLUGINS = ('konkr-control', 'decky-lsfg-vk') if a.soc == 'sm8650' else ('decky-lsfg-vk',)
+PLUGINS = ('pbos-control', 'decky-lsfg-vk') if a.soc == 'sm8650' else ('decky-lsfg-vk',)
 root = Path(a.rootfs).resolve(); output = Path(a.output).resolve()
 if not (root / 'usr/lib/liblsfg-vk-layer-arm64.so').is_file(): raise SystemExit('missing LSFG v2 ARM layer')
 with tempfile.TemporaryDirectory(prefix='konkr-package-', dir=output.parent) as temp:
@@ -37,6 +37,10 @@ with tempfile.TemporaryDirectory(prefix='konkr-package-', dir=output.parent) as 
         if src.exists(): copy(src, stage / 'root' / rel)
     for name in PLUGINS:
         copy(root / 'home/steamos/homebrew/plugins' / name, stage / 'home/steamos/homebrew/plugins' / name)
+    if a.soc == 'sm8650':
+        # Updaters from before the PB-OS Control rename refuse a package without
+        # konkr-control; an empty one empties the old plugin, pbosd removes it.
+        (stage / 'home/steamos/homebrew/plugins/konkr-control').mkdir()
     (stage / 'boot').mkdir()
     subprocess.run(['cp', a.kernel, str(stage / 'boot/KERNEL')], check=True)
     files = {}

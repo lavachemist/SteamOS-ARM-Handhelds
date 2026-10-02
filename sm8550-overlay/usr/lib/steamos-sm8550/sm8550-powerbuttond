@@ -3,10 +3,10 @@
 
 The Frame image sets logind HandlePowerKey=ignore because its
 steamos-powerbuttond handles the key, but that daemon is
-Requisite=steamvr.service (VR only, masked here). On the Pocket FIT konkrd
+Requisite=steamvr.service (VR only, masked here). On the Pocket FIT pbosd
 takes over; nothing did on SM8550, so the button did nothing.
 
-Steam Deck behaviour (same as konkrd's power_press):
+Steam Deck behaviour (same as pbosd's power_press):
   Game Mode     short press -> Steam's sleep, long press -> Steam's power menu
   Desktop Mode  short press -> suspend, long press -> Plasma's shut down prompt
 Presses right after a wake are ignored (the wake press was followed by a

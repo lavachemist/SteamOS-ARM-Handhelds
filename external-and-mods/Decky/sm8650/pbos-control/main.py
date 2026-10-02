@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Decky backend — KONKR Control (KONKR Pocket FIT, SteamOS-ARM-SM8650).
+"""Decky backend — PB-OS Control (KONKR Pocket FIT, SteamOS-ARM-SM8650).
 
-Thin front for konkrd: every setting lives in /var/lib/konkrd/state.json and
-konkrd applies it on SIGHUP, so the buttons, konkrctl and this panel stay in
+Thin front for pbosd: every setting lives in /var/lib/pbosd/state.json and
+pbosd applies it on SIGHUP, so the buttons, pbosctl and this panel stay in
 sync.
 """
 from __future__ import annotations
@@ -16,10 +16,11 @@ from typing import Any
 
 import decky
 
-STATE = "/var/lib/konkrd/state.json"
+STATE = "/var/lib/pbosd/state.json"
 BLACKLIST = "/etc/modprobe.d/konkr-mcu.conf"
-PROFILES = ("silent", "balanced", "turbo")
-ACTIONS = ("profile-next", "rgb-next", "sticks-toggle", "fan-boost", "none")
+PROFILES = ("lowpower", "balanced")
+LEGACY_PROFILES = {"silent": "lowpower", "turbo": "balanced"}
+ACTIONS = ("profile-next", "rgb-next", "sticks-toggle", "none")
 
 
 def rd(path: str, default: str = "") -> str:
@@ -38,9 +39,13 @@ def load() -> dict[str, Any]:
         st = {}
     st.setdefault("profile", "balanced")
     st.setdefault("rgb", {"mode": "static", "color": "ff3c00", "brightness": 160})
-    st.setdefault("fan", {"mode": "auto", "fixed": 50, "boost": False})
+    st.setdefault("fan", {"mode": "auto", "fixed": 50})
+    st["fan"].pop("boost", None)             # fan boost was removed
     st.setdefault("power_led", True)
     st.setdefault("buttons", {"F13": "rgb-next", "F14": "profile-next"})
+    st["profile"] = LEGACY_PROFILES.get(st["profile"], st["profile"])
+    if st["profile"] not in PROFILES:
+        st["profile"] = "balanced"
     return st
 
 
@@ -49,7 +54,7 @@ def save(st: dict[str, Any]) -> None:
     with open(STATE + ".tmp", "w", encoding="utf-8") as fh:
         json.dump(st, fh, indent=2)
     os.replace(STATE + ".tmp", STATE)
-    subprocess.run(["systemctl", "kill", "-s", "HUP", "konkrd.service"], check=False)
+    subprocess.run(["systemctl", "kill", "-s", "HUP", "pbosd.service"], check=False)
 
 
 def telemetry() -> dict[str, Any]:
@@ -73,20 +78,16 @@ def telemetry() -> dict[str, Any]:
     return out
 
 
-def mode_of(st: dict[str, Any]) -> tuple[str, bool]:
-    return st["profile"], bool(st["fan"].get("boost"))
-
-
 class Plugin:
     async def _main(self) -> None:
         self.watcher = asyncio.create_task(self._watch_mode())
-        decky.logger.info("KONKR Control ready")
+        decky.logger.info("PB-OS Control ready")
 
     async def _unload(self) -> None:
         self.watcher.cancel()
 
-    # The KONKR/Performance button goes straight to konkrd, so the frontend
-    # would only see a change once the panel is opened. Watch konkrd's state
+    # The KONKR/Performance button goes straight to pbosd, so the frontend
+    # would only see a change once the panel is opened. Watch pbosd's state
     # and tell the frontend, which shows a toast over whatever is running.
     async def _watch_mode(self) -> None:
         try:
@@ -98,7 +99,7 @@ class Plugin:
 
     async def _watch_mode_loop(self) -> None:
         stamp = None
-        mode = mode_of(load())
+        mode = load()["profile"]
         while True:
             await asyncio.sleep(0.25)
             try:
@@ -108,11 +109,11 @@ class Plugin:
             if cur == stamp:
                 continue
             stamp = cur
-            new = mode_of(load())
+            new = load()["profile"]
             if new != mode:
                 old, mode = mode, new
-                decky.logger.info(f"mode {old} -> {new}")
-                await decky.emit("konkr_mode", new[0], new[1], old[0] != new[0])
+                decky.logger.info(f"profile {old} -> {new}")
+                await decky.emit("pbos_mode", new)
 
     async def get_state(self, **_: Any) -> dict[str, Any]:
         st = load()
@@ -125,7 +126,7 @@ class Plugin:
             "mcu_enabled": not os.path.exists(BLACKLIST),
             "mcu_loaded": os.path.isdir("/sys/module/konkr_sysbtn"),
             "sticks_led": bool(glob.glob("/sys/class/leds/*joysticks*")),
-            "daemon": subprocess.run(["systemctl", "is-active", "--quiet", "konkrd"]).returncode == 0,
+            "daemon": subprocess.run(["systemctl", "is-active", "--quiet", "pbosd"]).returncode == 0,
             **await asyncio.to_thread(telemetry),
         }
 
@@ -151,15 +152,15 @@ class Plugin:
             subprocess.run(["modprobe", "konkr_sysbtn"], check=False)
         else:
             with open(BLACKLIST, "w", encoding="utf-8") as fh:
-                fh.write("# Pocket FIT MCU UART driver — opt-in (konkrctl mcu enable)\nblacklist konkr_sysbtn\n")
+                fh.write("# Pocket FIT MCU UART driver — opt-in (pbosctl mcu enable)\nblacklist konkr_sysbtn\n")
             subprocess.run(["modprobe", "-r", "konkr_sysbtn"], check=False)
         subprocess.run(["systemctl", "restart", "inputplumber.service"], check=False)
         return enabled
 
-    async def set_fan(self, mode: str = "auto", fixed: int = 50, boost: bool = False, **_: Any) -> dict:
+    async def set_fan(self, mode: str = "auto", fixed: int = 50, **_: Any) -> dict:
         st = load()
         st["fan"] = {"mode": "fixed" if mode == "fixed" else "auto",
-                     "fixed": max(0, min(100, int(fixed))), "boost": bool(boost)}
+                     "fixed": max(0, min(100, int(fixed)))}
         save(st)
         return st["fan"]
 

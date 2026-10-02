@@ -504,6 +504,14 @@ if [[ ! -f "$R/usr/lib/lv2/dpl.lv2/dpl.so" ]]; then
   "${SCRIPT_DIR}/build-dpl-lv2-in-rootfs.sh" "$R"
 fi
 cp -r --no-preserve=mode,ownership "$SM8650_OVL/." "$R/"
+# konkrd/konkrctl were renamed pbosd/pbosctl. The build rootfs is reused, so
+# drop the old daemon (two would fight over the fan); keep the old command
+# name for scripts and habits.
+rm -f "$R/usr/lib/konkr/konkrd" "$R/usr/lib/systemd/system/konkrd.service" \
+  "$R/etc/konkrd.conf" "$R/etc/systemd/system/multi-user.target.wants/konkrd.service" \
+  "$R/var/lib/overlays/etc/upper/konkrd.conf" \
+  "$R/var/lib/overlays/etc/upper/systemd/system/multi-user.target.wants/konkrd.service"
+ln -sfn pbosctl "$R/usr/bin/konkrctl"
 if [[ "$SOC" != sm8650 ]]; then
   # SM8550 keeps the Odin 2 audio policy (sm8550-audio-pipewire: pro-audio +
   # MI2S speaker routes). 53 forces the SM8650-APS2 UCM profile and software
@@ -531,8 +539,8 @@ rm -f "$R/usr/share/inputplumber/devices/50-konkr_pocket_fit.yaml" \
   "$R/usr/share/inputplumber/devices/50-ayaneo_pocket_s2.yaml"
 chown -R root:root "$R/usr/share/alsa/ucm2/Qualcomm/sm8650" "$R/usr/share/alsa/ucm2/conf.d/sm8650" \
   "$R/etc/inputplumber" 2>/dev/null || true
-chmod 0755 "$R/usr/lib/steamos/sm8550-audio-setup" "$R/usr/lib/konkr/konkrd" \
-  "$R/usr/bin/konkrctl" "$R/usr/bin/konkr-game" "$R/usr/lib/konkr/konkr-standby" \
+chmod 0755 "$R/usr/lib/steamos/sm8550-audio-setup" "$R/usr/lib/konkr/pbosd" \
+  "$R/usr/bin/pbosctl" "$R/usr/bin/konkr-game" "$R/usr/lib/konkr/konkr-standby" \
   "$R/usr/lib/konkr/konkr-volume" "$R/usr/lib/konkr/konkr-sleep" \
   "$R/usr/lib/konkr/konkr-suspend" "$R/usr/lib/konkr/konkr-focusfix" \
   "$R/usr/bin/konkr-apk" "$R/usr/lib/konkr/apk-info" \
@@ -567,7 +575,7 @@ else
 fi
 chroot "$R" update-mime-database /usr/share/mime
 chroot "$R" update-desktop-database -q /usr/share/applications
-# Opt-in s2idle (konkrctl sleep s2idle): konkr-sleep.service prepares
+# Opt-in s2idle (pbosctl sleep s2idle): konkr-sleep.service prepares
 # Wi-Fi/touch/audio/wake sources. Default sleep is konkr-standby.
 mkdir -p "$R/usr/lib/systemd/system/sleep.target.wants"
 ln -sfn ../konkr-sleep.service "$R/usr/lib/systemd/system/sleep.target.wants/konkr-sleep.service"
@@ -587,24 +595,24 @@ ln -sfn ../konkr-flatpak-appstream.timer \
 # runtime are not seen at boot on SteamOS (overlay mounted late).
 mkdir -p "$R/usr/lib/systemd/user/default.target.wants"
 ln -sfn ../konkr-volume.service "$R/usr/lib/systemd/user/default.target.wants/konkr-volume.service"
-# konkrd: fan curve (ROCKNIX leaves the fan at 70/255), profiles, game-thread
+# pbosd: fan curve (ROCKNIX leaves the fan at 70/255), profiles, game-thread
 # boost, extra buttons, LEDs. ExecCondition keeps it off non-KONKR devices.
-mkdir -p "$R/etc/systemd/system/multi-user.target.wants" "$R/var/lib/konkrd"
-ln -sfn /usr/lib/systemd/system/konkrd.service \
-  "$R/etc/systemd/system/multi-user.target.wants/konkrd.service"
+mkdir -p "$R/etc/systemd/system/multi-user.target.wants" "$R/var/lib/pbosd"
+ln -sfn /usr/lib/systemd/system/pbosd.service \
+  "$R/etc/systemd/system/multi-user.target.wants/pbosd.service"
 if [[ -d "$R/var/lib/overlays/etc/upper" ]]; then
   mkdir -p "$R/var/lib/overlays/etc/upper/systemd/system/multi-user.target.wants" \
 
-  ln -sfn /usr/lib/systemd/system/konkrd.service \
-    "$R/var/lib/overlays/etc/upper/systemd/system/multi-user.target.wants/konkrd.service"
+  ln -sfn /usr/lib/systemd/system/pbosd.service \
+    "$R/var/lib/overlays/etc/upper/systemd/system/multi-user.target.wants/pbosd.service"
   # MCU link is on by default (verified on the Pocket FIT: Quick Access and
-  # Performance buttons, stick RGB). konkrctl mcu disable re-blacklists it.
+  # Performance buttons, stick RGB). pbosctl mcu disable re-blacklists it.
   # The build rootfs is reused across builds, so drop a blacklist left by
-  # testing `konkrctl mcu disable` — v1.0/v1.1 shipped with the buttons dead.
+  # testing `pbosctl mcu disable` — v1.0/v1.1 shipped with the buttons dead.
   rm -f "$R/etc/modprobe.d/konkr-mcu.conf" "$R/var/lib/overlays/etc/upper/modprobe.d/konkr-mcu.conf"
-  cp -f "$SM8650_OVL/etc/konkrd.conf" "$R/var/lib/overlays/etc/upper/konkrd.conf"
+  cp -f "$SM8650_OVL/etc/pbosd.conf" "$R/var/lib/overlays/etc/upper/pbosd.conf"
   # The base image has its own powerdevilrc in the upper layer, which would
-  # shadow ours (konkrd owns the power button, Plasma must not act on it).
+  # shadow ours (pbosd owns the power button, Plasma must not act on it).
   mkdir -p "$R/var/lib/overlays/etc/upper/xdg"
   cp -f "$SM8650_OVL/etc/xdg/powerdevilrc" "$R/var/lib/overlays/etc/upper/xdg/powerdevilrc"
   mkdir -p "$R/var/lib/overlays/etc/upper/systemd/coredump.conf.d"
@@ -614,7 +622,7 @@ if [[ -d "$R/var/lib/overlays/etc/upper" ]]; then
     || { mkdir -p "$R/var/lib/overlays/etc/upper/inputplumber"; cp -r "$SM8650_OVL/etc/inputplumber/." "$R/var/lib/overlays/etc/upper/inputplumber/"; }
   # cp keeps the source modes; a tree that went through the exFAT HDD has 0755
   # files (systemd warns about an executable coredump.conf) and 0700 dirs.
-  chmod 0644 "$R/var/lib/overlays/etc/upper/konkrd.conf" \
+  chmod 0644 "$R/var/lib/overlays/etc/upper/pbosd.conf" \
     "$R/var/lib/overlays/etc/upper/xdg/powerdevilrc" \
     "$R/var/lib/overlays/etc/upper/systemd/coredump.conf.d/10-konkr-sd.conf"
   find "$R/var/lib/overlays/etc/upper/inputplumber" \
@@ -821,7 +829,7 @@ install_file "$SM8550_OVL/usr/lib/systemd/zram-generator.conf.d/60-sm8550-zram.c
 # TEO cpuidle governor (same fps as menu, ~4 % less power in game).
 install_file "$SM8550_OVL/usr/lib/tmpfiles.d/sm8550-cpuidle-teo.conf" \
   "$R/usr/lib/tmpfiles.d/sm8550-cpuidle-teo.conf" 0644
-# Default CPU scheduler: EAS, not LAVD (sm8550-boostd or konkrd add the
+# Default CPU scheduler: EAS, not LAVD (sm8550-boostd or pbosd add the
 # uclamp boost). On 7.2, LAVD 1.1.2 pins the little and mid cores at max
 # clock in games for no gain. RP6, EDC: 58.5 fps at 7.4 W on EAS vs 58.1 fps
 # at 8.5 W on LAVD. Pocket FIT, Tomb Raider (2x SSAA): 38.4 vs 38.9 fps, but
@@ -915,7 +923,7 @@ mkdir -p "$HOME_DST"
 # skip it (decky-lsfg-vk installs its own copy).
 rsync -a --copy-links --exclude '.local/lib/liblsfg-vk.so' "${MOD}/Decky/Plug-ins/" "$HOME_DST/"
 # Decky itself. Upstream left it to a first-boot installer in ARM-Manager
-# that most people never found — no Decky, so no KONKR Control either.
+# that most people never found — no Decky, so no PB-OS Control either.
 DECKY_VERSION=v3.2.9
 DECKY_LOADER="${MOD}/Decky/loader/PluginLoader-${DECKY_VERSION}"
 if [[ ! -s "$DECKY_LOADER" ]]; then
@@ -966,7 +974,7 @@ if [[ -x "$R/usr/lib/steamos/sm8550-patch-steamui" && -d "$STEAM_HOME/steamui" ]
 fi
 touch "$STEAM_HOME/.install-complete"
 # Steam UI through ANGLE-Vulkan on Turnip instead of ANGLE -> GL -> zink
-# (see konkrd ensure_webhelper_vulkan, which keeps it after client updates).
+# (see pbosd ensure_webhelper_vulkan, which keeps it after client updates).
 WH="$STEAM_HOME/steamrtarm64/steamwebhelper.sh"
 if [[ -f "$WH" ]] && ! grep -q KONKR_CEF_FLAGS "$WH"; then
   python3 - "$WH" <<'PY'

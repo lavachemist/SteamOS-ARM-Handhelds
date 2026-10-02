@@ -7,7 +7,7 @@ Wants=inputplumber.service
 [Service]
 Type=simple
 ExecCondition=/bin/sh -c 'grep -qaE "KONKR Pocket FIT|AYANEO Pocket S2" /sys/firmware/devicetree/base/model'
-ExecStart=/usr/lib/konkr/konkrd
+ExecStart=/usr/lib/konkr/pbosd
 # Never leave the fan at a low fixed speed if the daemon goes away.
 ExecStopPost=/bin/sh -c 'for d in /sys/class/hwmon/hwmon*; do [ "$(cat $d/name 2>/dev/null)" = pwmfan ] && echo 255 > $d/pwm1; done; true'
 Restart=always
