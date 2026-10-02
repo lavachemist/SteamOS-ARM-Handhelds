@@ -1,0 +1,48 @@
+Same as sm8550/patches/0610: the msm driver is shared, so the Pocket FIT's
+Adreno 750 gets the same bounded wait.
+
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] drm/msm: bound the VM_BIND fence wait in msm_gem_vm_close
+
+msm_gem_vm_close() waits uninterruptibly and without a timeout for the VM's
+last VM_BIND fence. On the AYN Thor, stopping the nested gamescope that
+drives the second panel through a DRM lease left its thread
+("gamescope-vrmon") in D state in this wait for good: the process became an
+unkillable zombie, the user session could not restart, and reboot hung.
+Wait at most 3 s, log which fence (and whether its job ever started) so the
+root cause can be found, then carry on: the scheduler is stopped and torn
+down right after, which drops the job.
+
+--- a/drivers/gpu/drm/msm/msm_gem_vma.c
++++ b/drivers/gpu/drm/msm/msm_gem_vma.c
+@@ -914,9 +914,28 @@
+ 	if (vm->managed)
+ 		return;
+ 
+-	if (vm->last_fence)
+-		dma_fence_wait(vm->last_fence, false);
++	if (vm->last_fence) {
++		/*
++		 * Bounded wait: a VM_BIND job whose dependency never signals
++		 * would leave the closing task in D state forever (seen when a
++		 * DRM-lease gamescope on the AYN Thor's second panel exits).
++		 * The scheduler is torn down right below, which drops the job.
++		 */
++		long left = dma_fence_wait_timeout(vm->last_fence, false,
++						   msecs_to_jiffies(3000));
+ 
++		if (left == 0) {
++			struct dma_fence *f = vm->last_fence;
++			struct drm_sched_fence *sf = to_drm_sched_fence(f);
++
++			pr_warn("msm: VM close: fence %s:%s unsignaled after 3 s%s, tearing down\n",
++				f->ops->get_driver_name(f),
++				f->ops->get_timeline_name(f),
++				!sf ? "" : dma_fence_is_signaled(&sf->scheduled) ?
++				" (job started)" : " (job waiting on dependencies)");
++		}
++	}
++
+ 	/* Kill the scheduler now, so we aren't racing with it for cleanup: */
+ 	drm_sched_stop(&vm->sched, NULL);
+ 	drm_sched_fini(&vm->sched);
