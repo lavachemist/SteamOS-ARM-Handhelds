@@ -72,6 +72,8 @@ PORT = 47824
 KEYBOARD_TITLE = "Barry Launcher Keyboard"
 # Our gamescope's root property for the keyboard's height (patch 0017).
 INSET_PROP = "GAMESCOPE_FOCUS_BOTTOM_INSET"
+# How long going home waits for the home screen to get ready to slide in.
+HOME_READY_S = 0.15
 HOME_TITLE = "Barry Launcher"
 DASHBOARD_FLAG = "/run/sm8550-thor/overlay"
 HOME_REQUEST = "/run/sm8550-thor/home"
@@ -158,8 +160,14 @@ SWITCH_QUIET_S = 1.5
 TOUCH_NAME = "bottom_touchscreen"
 TOUCH_S = 1.0
 TAP_SLOP = 30  # touchscreen units a tap may wander
-EV_KEY, EV_ABS, BTN_TOUCH = 1, 3, 0x14A
-ABS_MT_POSITION_X, ABS_MT_POSITION_Y, ABS_MT_TRACKING_ID = 0x35, 0x36, 0x39
+# Swipe up from the bottom edge: Home, as a long press on the AYN button.
+# One finger, starting this close to the bottom, at least this far up,
+# within this time (screen pixels and seconds).
+HOME_SWIPE_EDGE = 45
+HOME_SWIPE_MIN = 150
+HOME_SWIPE_S = 0.8
+EV_SYN, EV_KEY, EV_ABS, BTN_TOUCH = 0, 1, 3, 0x14A
+ABS_MT_SLOT, ABS_MT_POSITION_X, ABS_MT_POSITION_Y, ABS_MT_TRACKING_ID = 0x2F, 0x35, 0x36, 0x39
 INPUT_EVENT = struct.Struct("llHHi")
 # Launch-script dialogs (zenity) of Flatpak apps: watched this long.
 DIALOG_CLASS = "^zenity$"
@@ -192,6 +200,8 @@ class State:
         self.text_acc = None  # the focused editable field, if any
         self.keyboard_height = 0  # the key panel's height, as Keyboard.qml reports it
         self.inset: int | None = None  # GAMESCOPE_FOCUS_BOTTOM_INSET last set
+        self.home_serial = 0  # counts trips home, for the home screen's slide-in
+        self.home_ready = threading.Event()
 
     def keyboard(self) -> dict:
         with self.lock:
@@ -290,6 +300,13 @@ def activate(args: list[str]) -> bool:
 
 
 def go_home() -> None:
+    # The home screen slides in (Shell.qml): it sees the new serial, puts
+    # itself at the animation's start while still hidden, and says so; then
+    # it comes forward. Not waiting long: it comes forward regardless.
+    with STATE.lock:
+        STATE.home_serial += 1
+        STATE.home_ready.clear()
+    STATE.home_ready.wait(HOME_READY_S)
     STATE.set_keyboard(False)
     # The trackpad and keyboard are tools, not apps to come back to: leaving
     # them closes them. Their exit lets go of anything held on top (watch).
@@ -510,7 +527,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path, _, query = self.path.partition("?")
-        if path == "/keyboard":
+        if path == "/home":
+            self._json(200, {"serial": STATE.home_serial})
+        elif path == "/keyboard":
             # Keyboard.qml polls with its panel height (?h=).
             h = urllib.parse.parse_qs(query).get("h", [""])[0]
             if h.isdigit() and int(h) != STATE.keyboard_height:
@@ -539,6 +558,10 @@ class Handler(BaseHTTPRequestHandler):
             self._json(*close(str(body.get("app", ""))))
         elif path == "/home":
             go_home()
+            self._json(200, {"ok": True})
+        elif path == "/home-ready":
+            if body.get("serial") == STATE.home_serial:
+                STATE.home_ready.set()
             self._json(200, {"ok": True})
         elif path == "/keyboard":
             STATE.set_keyboard(bool(body.get("visible")))
@@ -583,8 +606,15 @@ def watch_touches() -> None:
             return
         STATE.last_touch = 0.0
         log(f"watching touches on {dev}")
-        fingers = 0
-        x = y = start = None  # the first finger of a one-finger touch
+        # Per slot, as the kernel keeps them: a new contact repeats no
+        # coordinate that has not changed.
+        slot = 0
+        pos: dict[int, list] = {}
+        down: set[int] = set()
+        lead = None  # the slot of the touch's first finger
+        multi = False  # a second finger joined: neither tap nor swipe
+        start = None  # the first finger's first position
+        started_at = 0.0
         with os.fdopen(fd, "rb", buffering=0) as fh:
             while True:
                 data = fh.read(INPUT_EVENT.size)
@@ -593,25 +623,50 @@ def watch_touches() -> None:
                 _, _, etype, code, value = INPUT_EVENT.unpack(data)
                 if (etype == EV_KEY and code == BTN_TOUCH) or (etype == EV_ABS and code == ABS_MT_TRACKING_ID):
                     STATE.last_touch = time.monotonic()
+                if etype == EV_SYN:
+                    p = pos.get(lead)
+                    if lead in down and start is None and p and None not in p:
+                        start, started_at = tuple(p), time.monotonic()
+                    continue
                 if etype != EV_ABS:
                     continue
-                if code == ABS_MT_TRACKING_ID:
+                if code == ABS_MT_SLOT:
+                    slot = value
+                elif code == ABS_MT_TRACKING_ID:
                     if value >= 0:
-                        fingers += 1
-                        x = y = start = None
+                        if not down:
+                            lead, multi, start = slot, False, None
+                        else:
+                            multi = True
+                        down.add(slot)
                     else:
-                        fingers = max(0, fingers - 1)
-                        if fingers == 0 and start and x is not None and abs(x - start[0]) + abs(y - start[1]) < TAP_SLOP:
-                            GLib.idle_add(on_tap, x, y)
-                        start = None
-                elif fingers == 1 and code in (ABS_MT_POSITION_X, ABS_MT_POSITION_Y):
-                    if code == ABS_MT_POSITION_X:
-                        x = value
-                    else:
-                        y = value
-                    if start is None and x is not None and y is not None:
-                        start = (x, y)
+                        down.discard(slot)
+                        if not down:
+                            end = pos.get(lead)
+                            if not multi and start and end and None not in end:
+                                touch_ended(start, tuple(end), time.monotonic() - started_at)
+                            start = None
+                elif code in (ABS_MT_POSITION_X, ABS_MT_POSITION_Y):
+                    pos.setdefault(slot, [None, None])[code - ABS_MT_POSITION_X] = value
     log(f"no {TOUCH_NAME} input device; the keyboard follows focus alone")
+
+
+def touch_ended(start: tuple, end: tuple, seconds: float) -> None:
+    """A one-finger touch lifted: a tap, or a swipe up from the bottom edge."""
+    if abs(end[0] - start[0]) + abs(end[1] - start[1]) < TAP_SLOP:
+        GLib.idle_add(on_tap, *end)
+        return
+    # Raw x runs bottom to top on screen (see on_tap).
+    screen_h = int(os.environ.get("THOR_BOTTOM_HEIGHT", "1080"))
+    start_y, end_y = screen_h - 1 - start[0], screen_h - 1 - end[0]
+    if start_y >= screen_h - HOME_SWIPE_EDGE and start_y - end_y >= HOME_SWIPE_MIN and seconds <= HOME_SWIPE_S:
+        GLib.idle_add(on_home_swipe)
+
+
+def on_home_swipe() -> bool:
+    log("swipe up from the bottom edge: home")
+    go_home()
+    return False
 
 
 def text_field(acc) -> tuple[bool, bool]:
