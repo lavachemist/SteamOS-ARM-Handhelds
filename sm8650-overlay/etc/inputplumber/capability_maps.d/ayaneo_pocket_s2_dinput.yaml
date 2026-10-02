@@ -1,15 +1,15 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/capability_map_v2.json
-# KONKR Pocket FIT pad in DirectInput mode ("AYANEO Controller", 4001:0428)
-# → virtual Steam Deck controller. Back buttons LC1/RC1 on L4/R4 as in XInput
-# mode: LC/RC (top, next to the bumpers, MCU link) are L5/R5. Same controls as
+# AYANEO Pocket S2 pad in DirectInput mode ("AYANEO Controller", 4001:0428)
+# → virtual Steam Deck controller. Back buttons on L5/R5: the S2's aux
+# buttons (ayaneo_pocket_s2_aux) take L4/R4. Same controls as
 # XInput mode, but the right stick is on ABS_Z/ABS_RZ and the triggers on
 # ABS_BRAKE/ABS_GAS; the xpad map put Z/RZ on the triggers, so the right
 # stick drove LT/RT (GitHub issue #2). Layout from upstream InputPlumber
 # konkr_type2 / dinput_generic (PR #670, tested on hardware there).
 version: 2
 kind: CapabilityMap
-name: KONKR Pocket FIT DirectInput (Steam Deck layout)
-id: konkr_pocketfit_dinput
+name: AYANEO Pocket S2 DirectInput (Steam Deck layout)
+id: ayaneo_pocket_s2_dinput
 
 mapping:
   - name: Steam
@@ -67,16 +67,16 @@ mapping:
       - evdev: {event_type: ABS, event_code: ABS_GAS, value_type: trigger}
     target_event:
       gamepad: {trigger: {name: RightTrigger}}
-  - name: L4 (LC1, back left)
+  - name: L5 (LC1, lower back left)
     source_events:
       - evdev: {event_type: KEY, event_code: BTN_Z, value_type: button}
     target_event:
-      gamepad: {button: LeftPaddle1}
-  - name: R4 (RC1, back right)
+      gamepad: {button: LeftPaddle2}
+  - name: R5 (RC1, lower back right)
     source_events:
       - evdev: {event_type: KEY, event_code: BTN_C, value_type: button}
     target_event:
-      gamepad: {button: RightPaddle1}
+      gamepad: {button: RightPaddle2}
   - name: Left Stick
     source_events:
       - evdev: {event_type: ABS, event_code: ABS_X, value_type: joystick_x}

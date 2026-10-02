@@ -32,7 +32,7 @@ source_devices:
       vendor_id: "4001"
       product_id: "0428"
       handler: event*
-    capability_map_id: konkr_pocketfit_dinput
+    capability_map_id: ayaneo_pocket_s2_dinput
   # Same pad, its HID node: rumble. The motors only take an output report
   # in this mode (byte 4 left, byte 5 right); InputPlumber >= 0.79 sends it.
   - group: gamepad
