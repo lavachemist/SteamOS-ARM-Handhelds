@@ -33,6 +33,7 @@ const openBarryKeyboard = callable("open_barry_keyboard");
 const getBarryApps = callable("get_barry_apps");
 const setBarryApps = callable("set_barry_apps");
 const barryAppsFolder = callable("barry_apps_folder");
+const checkBarryApp = callable("check_barry_app");
 const installBarryApp = callable("install_barry_app");
 const removeBarryApp = callable("remove_barry_app");
 const getGameLinks = callable("get_game_links");
@@ -378,18 +379,44 @@ function AppsSection() {
         const path = picked && (picked.realpath || picked.path);
         if (!path) return;
         setBusy(true);
-        try {
-            const r = await installBarryApp(path);
-            if (r && r.ok) {
-                setMsg(`${r.app.updated ? "Updated" : "Installed"} ${r.app.name} ${r.app.version}.`);
-                load();
-            } else {
-                setErr((r && r.error) || "Could not install.");
+        const doInstall = async () => {
+            setBusy(true);
+            try {
+                const r = await installBarryApp(path);
+                if (r && r.ok) {
+                    setMsg(`${r.app.updated ? "Updated" : "Installed"} ${r.app.name} ${r.app.version}.`);
+                    load();
+                } else {
+                    setErr((r && r.error) || "Could not install.");
+                }
+            } catch (e) {
+                setErr("Could not install.");
             }
+            setBusy(false);
+        };
+        // An app with a service runs a program of its own: asked first.
+        let c;
+        try {
+            c = await checkBarryApp(path);
         } catch (e) {
-            setErr("Could not install.");
+            c = null;
         }
         setBusy(false);
+        if (!c || !c.ok) {
+            setErr((c && c.error) || "Could not read the app.");
+            return;
+        }
+        if (!c.app.service) {
+            doInstall();
+            return;
+        }
+        DFL.showModal(jsx(DFL.ConfirmModal, {
+            strTitle: `Install ${c.app.name}?`,
+            strDescription: `${c.app.name} comes with a program that runs on this device while the app is open, `
+                + "with the same access to your files and network as you. Install it only if you trust where it came from.",
+            strOKButtonText: "Install",
+            onOK: doInstall,
+        }));
     };
     const remove = (a) => DFL.showModal(jsx(DFL.ConfirmModal, {
         strTitle: `Remove ${a.name}?`,

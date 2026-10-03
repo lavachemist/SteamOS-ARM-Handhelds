@@ -584,6 +584,13 @@ class Plugin:
         downloads = os.path.join(home, "Downloads")
         return downloads if os.path.isdir(downloads) else home
 
+    async def check_barry_app(self, path: str = "", **_: Any) -> dict[str, Any]:
+        """What the archive at path holds, if it would install."""
+        try:
+            return await asyncio.to_thread(_shelld_answer, "/apps/check", {"path": str(path)}, 30)
+        except (OSError, ValueError) as err:
+            return {"ok": False, "error": f"Barry Launcher isn't answering ({err}); is the bottom screen on?"}
+
     async def install_barry_app(self, path: str = "", **_: Any) -> dict[str, Any]:
         """Install (or update) the app in the archive at path."""
         try:

@@ -65,7 +65,8 @@ change to it brings the home screen forward.
 
 User apps (barry_apps: QML apps installed from an archive, by the barry-app
 command or the Barry Launcher plugin) join the home screen after the built-in
-ones; each runs in shell/AppHost.qml, its output in
+ones; each runs in shell/AppHost.qml, with its service if it has one
+(started first, stopped when the app ends), their output in
 ~/.cache/barry_launcher/ID.log. They are picked up as they are installed.
 Those that come with Barry Launcher (Dino) are installed at its start
 unless the user removed them.
@@ -203,7 +204,8 @@ def refresh_user_apps(force: bool = False) -> None:
         else:
             # ids are [a-z0-9._-]: only the dots need escaping, for
             # xdotool's and KWin's regexes alike.
-            spec.update(main=m["main"], window=f"^Barry App {app_id.replace('.', '[.]')}$")
+            spec.update(main=m["main"], service=m["service"],
+                        window=f"^Barry App {app_id.replace('.', '[.]')}$")
         apps[app_id] = spec
     APPS = apps
 # The home screen's order and the apps it hides (the Barry Launcher plugin's
@@ -341,6 +343,7 @@ class State:
         self.visible = False
         self.top = False
         self.apps: dict[str, subprocess.Popen] = {}
+        self.services: dict[str, subprocess.Popen] = {}  # user app -> its service (barry_apps)
         self.status: dict[str, str] = {}  # app -> what its tile says meanwhile
         self.overlay_marked = False
         self.input_focus: bool | None = None
@@ -637,9 +640,18 @@ def launch(app: str) -> tuple[int, dict]:
             os.makedirs(d, exist_ok=True)
         if DESKTOP:
             extra["QT_QPA_PLATFORM"] = "wayland"
+        args = ["qml6", APP_HOST_QML, "--", spec["dir"], spec["main"], app, spec["name"], data, "fullscreen"]
         with app_log(app) as out:
+            if spec.get("service"):
+                # One left by a window that ended unseen goes first.
+                barry_apps.stop_service(STATE.services.pop(app, None))
+                proc, url, token = barry_apps.start_service(spec["dir"], spec["service"],
+                                                            app_env(**barry_apps.app_env(app)), out)
+                STATE.services[app] = proc
+                args += [url, token]
+                log(f"started {app}'s service (pid {proc.pid})")
             STATE.apps[app] = subprocess.Popen(
-                ["qml6", APP_HOST_QML, "--", spec["dir"], spec["main"], app, spec["name"], data],
+                args,
                 env=app_env(**extra),
                 stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
             )
@@ -709,6 +721,23 @@ def close(app: str) -> tuple[int, dict]:
     return 200, {"ok": True}
 
 
+def check_app(body: dict) -> tuple[int, dict]:
+    """Would the archive install, and what is in it (the plugin asks
+    before installing an app with a service)."""
+    path = body.get("path")
+    if not isinstance(path, str) or not os.path.isabs(path):
+        return 400, {"ok": False, "error": "path must be the archive's full path"}
+    try:
+        m = barry_apps.check(path)
+    except barry_apps.AppError as err:
+        return 400, {"ok": False, "error": str(err)}
+    except OSError as err:
+        return 400, {"ok": False, "error": f"cannot read it: {err.strerror or err}"}
+    if m["id"] in BUILTIN_APPS:
+        return 400, {"ok": False, "error": f'"{m["id"]}" is one of Barry Launcher\'s own apps'}
+    return 200, {"ok": True, "app": m}
+
+
 def install_app(body: dict) -> tuple[int, dict]:
     path = body.get("path")
     if not isinstance(path, str) or not os.path.isabs(path):
@@ -733,15 +762,15 @@ def stop(app: str, wait_s: float = 3.0) -> None:
     """Close an app and wait until it has ended: one that saves as it
     quits could otherwise write into a folder just removed."""
     proc = running(app)
-    if not proc:
-        return
-    close(app)
-    try:
-        proc.wait(wait_s)
-    except subprocess.TimeoutExpired:
-        log(f"{app} did not quit; killing it")
-        proc.kill()
-        proc.wait(2)
+    if proc:
+        close(app)
+        try:
+            proc.wait(wait_s)
+        except subprocess.TimeoutExpired:
+            log(f"{app} did not quit; killing it")
+            proc.kill()
+            proc.wait(2)
+    barry_apps.stop_service(STATE.services.pop(app, None), wait_s)
 
 
 def remove_app(body: dict) -> tuple[int, dict]:
@@ -1162,6 +1191,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(*suggest(body))
         elif path == "/layout":
             self._json(*set_layout(body))
+        elif path == "/apps/check":
+            self._json(*check_app(body))
         elif path == "/apps/install":
             self._json(*install_app(body))
         elif path == "/apps/remove":
@@ -1540,6 +1571,9 @@ def main() -> None:
             if proc.poll() is not None:
                 log(f"{name} exited ({proc.returncode})")
                 del STATE.apps[name]
+                if name in STATE.services:
+                    threading.Thread(target=barry_apps.stop_service, args=(STATE.services.pop(name),),
+                                     daemon=True).start()
                 if "qml" in APPS.get(name, {}):
                     threading.Thread(target=release_top_input, daemon=True).start()
                 STATE.set_keyboard(False)

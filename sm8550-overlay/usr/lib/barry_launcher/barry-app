@@ -9,9 +9,10 @@
                                  app makers: the same checks as install)
   barry-app pack FOLDER [-o OUT] check an app folder and zip it for sharing
   barry-app run FOLDER           run an app folder in a window, as Barry
-                                 Launcher would (to try it while making it;
-                                 needs Qt 6's qml tool, or BARRY_QML set to it;
-                                 a web app needs Firefox, or BARRY_FIREFOX)
+                                 Launcher would, with its service if it has
+                                 one (to try it while making it; needs Qt 6's
+                                 qml tool, or BARRY_QML set to it; a web app
+                                 needs Firefox, or BARRY_FIREFOX)
 
 Installs go through barry_launcher_shelld when it runs, so the home screen
 shows the app at once (and a running old version closes); otherwise
@@ -59,7 +60,8 @@ def shelld(path: str, body: dict) -> dict | None:
 
 
 def describe(m: dict) -> str:
-    return f'{m["name"]} {m["version"]} ({m["id"]})'
+    service = ", with a Python service" if m.get("service") else ""
+    return f'{m["name"]} {m["version"]} ({m["id"]}{service})'
 
 
 def cmd_install(a) -> int:
@@ -170,8 +172,17 @@ def cmd_run(a) -> int:
     env = dict(os.environ, BARRY_APP_ID=m["id"], BARRY_APP_DIR=folder, BARRY_APP_DATA=data,
                XDG_CONFIG_HOME=os.path.join(data, ".config"), XDG_DATA_HOME=os.path.join(data, ".local", "share"),
                QML_DISABLE_DISK_CACHE="1")
-    return subprocess.call([qml, host, "--", folder, m["main"], m["id"], m["name"], data,
-                            "fullscreen" if a.fullscreen else "windowed"], env=env)
+    args = [qml, host, "--", folder, m["main"], m["id"], m["name"], data,
+            "fullscreen" if a.fullscreen else "windowed"]
+    service = None
+    if m["service"]:
+        service, url, token = barry_apps.start_service(folder, m["service"], env, None)
+        print(f"Its service runs at {url} (pid {service.pid}); its output comes here too")
+        args += [url, token]
+    try:
+        return subprocess.call(args, env=env)
+    finally:
+        barry_apps.stop_service(service)
 
 
 def run_web(m: dict, a) -> int:

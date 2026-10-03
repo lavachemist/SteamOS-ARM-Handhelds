@@ -12,7 +12,22 @@ such a folder: the archive may hold it directly or inside one folder):
     "main": "main.qml",              the app: its root item fills the screen
     "icon": "icon.png",              optional: PNG or SVG, square
     "description": "...", "author": "...", "homepage": "..."   optional
+    "service": "service.py"          optional: see below
   }
+
+A QML app may come with a service: a Python 3 script (standard library
+only) for what QML cannot do, such as talking to a game over the network.
+It starts before the app's window and stops when the window closes
+(start_service). It must serve HTTP on 127.0.0.1, port BARRY_SERVICE_PORT,
+and answer only requests that carry BARRY_SERVICE_TOKEN in an
+X-Barry-Token header (or a "token" query parameter, for an Image's
+source), so web pages open on the device cannot use it. (The token is in
+the app window's command line, which other local programs can read: it is
+no defence against them.)
+The app finds it at barry.serviceUrl and calls it with barry.request
+(shell/AppHost.qml). A service runs as the user, like any program the user
+installs: the Barry Launcher plugin asks before installing one, and
+barry-app says so.
 
 A web app has no QML: "type": "web" and a "url" (https) instead of
 "main", with an optional "zoom" (CSS zoom on the bottom screen, 0.5-4)
@@ -40,8 +55,12 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import shutil
+import socket
 import stat
+import subprocess
+import sys
 import tarfile
 import tempfile
 import zipfile
@@ -121,11 +140,19 @@ def read_manifest(root: str) -> dict:
         raise AppError(f'{MANIFEST}: "type" must be one of {", ".join(TYPES)}')
     web = None
     main = None
+    service = None
     if kind == "qml":
         main = _str(m, "main")
         if not main.endswith(".qml"):
             raise AppError(f'{MANIFEST}: "main" must be a .qml file')
         _inside(root, main, "main")
+        service = _str(m, "service", required=False)
+        if service is not None:
+            if not service.endswith(".py"):
+                raise AppError(f'{MANIFEST}: "service" must be a .py file')
+            _inside(root, service, "service")
+    elif "service" in m:
+        raise AppError(f'{MANIFEST}: a web app has no "service"')
     else:
         url = _str(m, "url")
         if not re.match(r"^https://[^\s/]+(/\S*)?$", url):
@@ -143,7 +170,7 @@ def read_manifest(root: str) -> dict:
             raise AppError(f'{MANIFEST}: "icon" must be a PNG or SVG file')
         _inside(root, icon, "icon")
     out = {"format": FORMAT, "id": app_id, "name": name, "version": version, "type": kind,
-           "main": main, "web": web, "icon": icon}
+           "main": main, "web": web, "service": service, "icon": icon}
     for key in ("description", "author", "homepage"):
         v = m.get(key)
         if isinstance(v, str) and v.strip():
@@ -302,6 +329,38 @@ def app_env(app_id: str) -> dict[str, str]:
             "XDG_CONFIG_HOME": os.path.join(data, ".config"),
             "XDG_DATA_HOME": os.path.join(data, ".local", "share"),
             "QML_DISABLE_DISK_CACHE": "1"}
+
+
+def start_service(app_dir: str, service: str, env: dict, out) -> tuple[subprocess.Popen, str, str]:
+    """Start an app's service (the script service, in app_dir) with env
+    and its output to out: the process, its address and its token. The
+    address is for the app's window (barry.serviceUrl); the token, which
+    the service must ask for, keeps other programs out."""
+    with socket.socket() as s:  # a free port; the service binds it at once
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    token = secrets.token_urlsafe(24)
+    # This Python, without the user's site-packages: what the app brings,
+    # and the standard library.
+    proc = subprocess.Popen(
+        [sys.executable or "python3", "-s", "-u", os.path.join(app_dir, service)],
+        cwd=app_dir, env=dict(env, BARRY_SERVICE_PORT=str(port), BARRY_SERVICE_TOKEN=token),
+        stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
+    )
+    return proc, f"http://127.0.0.1:{port}/", token
+
+
+def stop_service(proc: subprocess.Popen | None, wait_s: float = 3.0) -> None:
+    """Stop a service started by start_service, and wait until it has
+    ended."""
+    if proc is None or proc.poll() is not None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(wait_s)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(2)
 
 
 def _read_json(path: str, default):
