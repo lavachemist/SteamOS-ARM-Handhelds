@@ -225,9 +225,9 @@ class Corrector:
             plain = word.lower()
             self.level.setdefault(plain, level)
             self.typed.setdefault(plain, word)
-        for w in ("a", "i"):
+        for w, typed in (("a", "a"), ("i", "I")):
             self.level.setdefault(w, 10)
-        self.typed.setdefault("i", "I")
+            self.typed.setdefault(w, typed)
         # Contractions typed without the apostrophe ("dont"), unless that is
         # a word itself ("cant", "wont", "its", "well").
         self.contractions = {}

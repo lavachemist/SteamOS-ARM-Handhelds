@@ -937,6 +937,26 @@ def text_field(acc) -> tuple[bool, bool]:
     return editable, top
 
 
+def on_this_screen(acc) -> bool:
+    """Game Mode: the accessibility bus is the whole session's, so a field
+    in a top-screen app (an emulator's text dialog, say) comes by too, and a
+    finger typing on the bottom screen then made it look tapped. Only apps on
+    this screen's X display count; one whose display cannot be read (an
+    app's bus proxy) does."""
+    if DESKTOP:
+        return True
+    try:
+        pid = acc.get_process_id()
+        with open(f"/proc/{pid}/environ", "rb") as fh:
+            env = fh.read().split(b"\0")
+    except (GLib.Error, OSError):
+        return True
+    for var in env:
+        if var.startswith(b"DISPLAY="):
+            return var[8:].decode(errors="replace") == os.environ.get("DISPLAY", "")
+    return True
+
+
 def touched_lately() -> bool:
     return STATE.last_touch is None or time.monotonic() - STATE.last_touch < TOUCH_S
 
@@ -947,6 +967,11 @@ def show_for_text(top: bool, why: str) -> None:
         return
     if not touched_lately():
         log(f"{why} without a touch: no keyboard")
+        return
+    if not DESKTOP and any(running(a) for a in TOP_INPUT_APPS):
+        # The Keyboard or Trackpad app fills the screen: no field of ours is
+        # in sight, and this keyboard would squeeze that app above it.
+        log(f"{why} under the top screen's keyboard or trackpad: no keyboard")
         return
     if not STATE.keyboard()["visible"]:
         log(f"{why}{' (lower half)' if top else ''}: keyboard")
@@ -964,6 +989,8 @@ def on_focus(event) -> None:
         return
     if event.detail1 != 1:
         return  # the next focus gain decides
+    if not on_this_screen(event.source):
+        return
     try:
         editable, top = text_field(event.source)
     except GLib.Error:
@@ -985,6 +1012,8 @@ def on_caret(event) -> None:
     try:
         acc = event.source
         if not acc.get_state_set().contains(Atspi.StateType.FOCUSED):
+            return
+        if not on_this_screen(acc):
             return
         editable, top = text_field(acc)
     except GLib.Error:
