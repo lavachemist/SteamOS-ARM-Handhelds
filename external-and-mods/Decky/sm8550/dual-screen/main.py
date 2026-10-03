@@ -34,7 +34,10 @@ Steam starts in RetroArch (one window for both screens) are only counted,
 for a note: switching them to the standalone melonDS is the user's call.
 
 Also Barry Launcher's home screen: which apps it shows, in what order
-(barry_launcher_shelld keeps them in ~/.config/barry_launcher/home.json).
+(barry_launcher_shelld keeps them in ~/.config/barry_launcher/home.json),
+and user apps: an archive picked in Decky's file picker is installed by
+barry_launcher_shelld (as the user, into ~/.local/share/barry_launcher/apps),
+and a user app can be removed.
 """
 from __future__ import annotations
 
@@ -48,6 +51,7 @@ import socket
 import subprocess
 import threading
 import time
+import urllib.error
 import urllib.request
 from typing import Any
 
@@ -139,6 +143,20 @@ def _shelld_post(path: str, body: dict) -> dict:
                                  {"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=2) as r:
         return json.load(r)
+
+
+def _shelld_answer(path: str, body: dict, timeout: float = 2) -> dict:
+    """barry_launcher_shelld's JSON answer, an error's included."""
+    req = urllib.request.Request(f"{SHELLD}{path}", json.dumps(body).encode(),
+                                 {"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as err:
+        try:
+            return json.load(err)
+        except ValueError:
+            return {"ok": False, "error": f"Barry Launcher answered {err.code}."}
 
 
 def _is_on() -> bool:
@@ -555,6 +573,25 @@ class Plugin:
             r = await asyncio.to_thread(_shelld_post, "/layout",
                                         {"order": list(order or []), "hidden": list(hidden or [])})
             return {"ok": "apps" in r, **r}
+        except (OSError, ValueError) as err:
+            return {"ok": False, "error": f"Barry Launcher isn't answering ({err})."}
+
+    async def barry_apps_folder(self, **_: Any) -> str:
+        """Where the file picker starts: Downloads, or home."""
+        home = _user_home()
+        downloads = os.path.join(home, "Downloads")
+        return downloads if os.path.isdir(downloads) else home
+
+    async def install_barry_app(self, path: str = "", **_: Any) -> dict[str, Any]:
+        """Install (or update) the app in the archive at path."""
+        try:
+            return await asyncio.to_thread(_shelld_answer, "/apps/install", {"path": str(path)}, 60)
+        except (OSError, ValueError) as err:
+            return {"ok": False, "error": f"Barry Launcher isn't answering ({err}); is the bottom screen on?"}
+
+    async def remove_barry_app(self, app: str = "", **_: Any) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(_shelld_answer, "/apps/remove", {"app": str(app)}, 10)
         except (OSError, ValueError) as err:
             return {"ok": False, "error": f"Barry Launcher isn't answering ({err})."}
 

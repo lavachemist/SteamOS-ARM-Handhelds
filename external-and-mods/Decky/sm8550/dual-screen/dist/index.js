@@ -32,6 +32,11 @@ const setTwoScreen = callable("set_two_screen");
 const openBarryKeyboard = callable("open_barry_keyboard");
 const getBarryApps = callable("get_barry_apps");
 const setBarryApps = callable("set_barry_apps");
+const barryAppsFolder = callable("barry_apps_folder");
+const installBarryApp = callable("install_barry_app");
+const removeBarryApp = callable("remove_barry_app");
+// Decky's file browser (select 0: a file), as @decky/api's openFilePicker.
+const ARCHIVE_EXTENSIONS = ["zip", "gz", "tgz", "xz", "txz", "bz2", "tbz2", "tar"];
 
 // Steam's on-screen keyboard never shows on the top screen: whenever Steam
 // would open it (a text field tapped or picked with the controller, Steam+X),
@@ -290,6 +295,8 @@ function TwoScreenSection() {
 function AppsSection() {
     const [apps, setApps] = useState(null);
     const [err, setErr] = useState("");
+    const [msg, setMsg] = useState("");
+    const [busy, setBusy] = useState(false);
     const load = useCallback(() => {
         getBarryApps().then((r) => {
             if (r && r.ok) { setApps(r.apps); setErr(""); }
@@ -310,6 +317,45 @@ function AppsSection() {
         [next[i], next[j]] = [next[j], next[i]];
         save(next);
     };
+    // User apps (barry_apps): an archive from the file browser; Barry
+    // Launcher checks and installs it, an app already there is updated.
+    const install = async () => {
+        setErr(""); setMsg("");
+        let picked;
+        try {
+            const start = await barryAppsFolder();
+            picked = await api.openFilePicker(0, start, true, true, undefined, ARCHIVE_EXTENSIONS, false, true);
+        } catch (e) {
+            return;  // closed without a file
+        }
+        const path = picked && (picked.realpath || picked.path);
+        if (!path) return;
+        setBusy(true);
+        try {
+            const r = await installBarryApp(path);
+            if (r && r.ok) {
+                setMsg(`${r.app.updated ? "Updated" : "Installed"} ${r.app.name} ${r.app.version}.`);
+                load();
+            } else {
+                setErr((r && r.error) || "Could not install.");
+            }
+        } catch (e) {
+            setErr("Could not install.");
+        }
+        setBusy(false);
+    };
+    const remove = (a) => DFL.showModal(jsx(DFL.ConfirmModal, {
+        strTitle: `Remove ${a.name}?`,
+        strDescription: "The app and everything it saved are deleted.",
+        strOKButtonText: "Remove",
+        onOK: () => {
+            setErr(""); setMsg("");
+            removeBarryApp(a.id).then((r) => {
+                if (r && r.ok) { setMsg(`Removed ${a.name}.`); load(); }
+                else setErr((r && r.error) || "Could not remove.");
+            }).catch(() => setErr("Could not remove."));
+        },
+    }));
     const button = (label, onClick, disabled) => jsx(DFL.DialogButton, {
         onClick, disabled,
         style: { minWidth: "36px", width: "36px", height: "32px", padding: 0, marginLeft: "4px" },
@@ -322,6 +368,7 @@ function AppsSection() {
             style: { display: "flex", alignItems: "center" },
             children: [
                 jsx("div", { style: { flex: 1, opacity: a.hidden ? 0.5 : 1 }, children: a.name }),
+                a.user && button("✕", () => remove(a)),
                 button("▲", () => move(i, -1), i === 0),
                 button("▼", () => move(i, 1), i === apps.length - 1),
                 // Trackpad and Keyboard always show (Barry Launcher says
@@ -333,7 +380,13 @@ function AppsSection() {
                 }) }),
             ],
         }), )),
-        apps && note("Switch: shown on Barry Launcher's home screen (Trackpad and Keyboard always are). ▲ ▼: its place there."),
+        apps && note("Switch: shown on Barry Launcher's home screen (Trackpad and Keyboard always are). ▲ ▼: its place there. ✕: remove an app you installed."),
+        msg && note(msg),
+        row(jsx(DFL.ButtonItem, {
+            layout: "below", disabled: busy, onClick: install,
+            children: busy ? "Installing…" : "Install app…",
+        })),
+        note("A Barry Launcher app comes as a .zip (or .tar.gz) archive; pick it here. Making one: github.com/project-barry/barry-launcher-apps"),
     ] });
 }
 
