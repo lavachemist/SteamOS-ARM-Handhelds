@@ -12,6 +12,9 @@ Window {
         return args.length && args[args.length - 1] === "keyboard" ? "keyboard" : "trackpad"
     }
     title: mode === "keyboard" ? "Barry Launcher Top Keyboard" : "Barry Launcher Trackpad"
+    // Desktop Mode: one seat for both screens, so this window must never
+    // take focus from the top screen's window it types into.
+    flags: Qt.application.arguments.indexOf("desktop") >= 0 ? Qt.WindowDoesNotAcceptFocus : Qt.Window
     color: "black"
     visibility: Window.FullScreen
     visible: true

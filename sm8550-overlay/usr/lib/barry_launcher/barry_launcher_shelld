@@ -72,7 +72,16 @@ from gi.repository import Atspi, Gio, GLib  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import barry_glide  # noqa: E402
 
-PORT = 47824
+# Desktop Mode (barry_launcher_desktop): under KWin instead of a nested
+# gamescope; windows, the keyboard's push-up and typing go through KWin
+# (barry_desktop).
+DESKTOP = os.environ.get("BARRY_DESKTOP") == "1"
+if DESKTOP:
+    import barry_desktop  # noqa: E402
+# KWin scales the Thor's bottom output 2x; Firefox's zoom was set for 1x.
+DESKTOP_SCALE = float(os.environ.get("BARRY_SCALE", "2"))
+
+PORT = int(os.environ.get("BARRY_PORT", "47824"))  # another only for tests
 KEYBOARD_TITLE = "Barry Launcher Keyboard"
 # Our gamescope's root property for the keyboard's height (patch 0017).
 INSET_PROP = "GAMESCOPE_FOCUS_BOTTOM_INSET"
@@ -111,6 +120,10 @@ APPS = {
     "signal": {"flatpak": "org.signal.Signal", "window": "^org\\.signal\\.signal$",
                "args": ["--ozone-platform=x11", "--force-device-scale-factor=1.75",
                         "--force-renderer-accessibility"],
+               # Desktop Mode: Wayland, with the input method (text-input v3).
+               "desktop_args": ["--ozone-platform=wayland", "--enable-wayland-ime",
+                                "--wayland-text-input-version=3", "--force-renderer-accessibility"],
+               "classes": ["signal", "signal-desktop", "org.signal.Signal"],
                "seed": {"~/.var/app/org.signal.Signal/config/Signal/config.json": "{}\n"},
                "warm": ["~/.var/app/org.signal.Signal/config/Signal"]},
     # The top screen's trackpad and keyboard: QML windows by title.
@@ -173,6 +186,7 @@ HOME_SWIPE_EDGE = 45
 HOME_SWIPE_MIN = 150
 HOME_SWIPE_S = 0.8
 EV_SYN, EV_KEY, EV_ABS, BTN_TOUCH = 0, 1, 3, 0x14A
+BTN_LEFT, BTN_RIGHT = 0x110, 0x111
 ABS_MT_SLOT, ABS_MT_POSITION_X, ABS_MT_POSITION_Y, ABS_MT_TRACKING_ID = 0x2F, 0x35, 0x36, 0x39
 INPUT_EVENT = struct.Struct("llHHi")
 # Launch-script dialogs (zenity) of Flatpak apps: watched this long.
@@ -208,6 +222,7 @@ class State:
         self.inset: int | None = None  # GAMESCOPE_FOCUS_BOTTOM_INSET last set
         self.home_serial = 0  # counts trips home, for the home screen's slide-in
         self.home_ready = threading.Event()
+        self.im = None  # Desktop Mode: barry_desktop.InputMethod
 
     def keyboard(self) -> dict:
         with self.lock:
@@ -256,6 +271,9 @@ def apply_inset() -> None:
         if inset == STATE.inset:
             return
         STATE.inset = inset
+    if DESKTOP:
+        barry_desktop.set_inset(inset)
+        return
     r = subprocess.run(["xprop", "-root", "-f", INSET_PROP, "32c", "-set", INSET_PROP, str(inset)],
                        capture_output=True, text=True)
     if r.returncode != 0:
@@ -264,6 +282,8 @@ def apply_inset() -> None:
 
 def mark_keyboard_overlay(quiet: bool = False) -> bool:
     """Make the (always mapped, transparent) keyboard window an overlay."""
+    if DESKTOP:
+        return True  # KWin: the keyboard window refuses focus itself
     if not STATE.overlay_marked:
         if set_keyboard_prop("STEAM_INPUT_FOCUS", "0", quiet) and set_keyboard_prop("STEAM_OVERLAY", "1", quiet):
             STATE.overlay_marked = True
@@ -273,6 +293,8 @@ def mark_keyboard_overlay(quiet: bool = False) -> bool:
 
 
 def keyboard_input_focus(on: bool) -> None:
+    if DESKTOP:
+        return
     if STATE.input_focus == on or not mark_keyboard_overlay():
         return
     if set_keyboard_prop("STEAM_INPUT_FOCUS", "2" if on else "0"):
@@ -305,6 +327,28 @@ def activate(args: list[str]) -> bool:
     return r.returncode == 0
 
 
+def bring_forward(app: str | None) -> bool:
+    """Bring an app's window (None: the home screen) forward."""
+    spec = APPS.get(app, {}) if app else {}
+    proc = running(app) if app else None
+    if DESKTOP:
+        if app is None:
+            return barry_desktop.activate(caption=f"^{HOME_TITLE}$")
+        if "flatpak" in spec:
+            return barry_desktop.activate(classes=spec.get("classes"))
+        if "qml" in spec or "qmlfile" in spec:
+            return barry_desktop.activate(caption=spec["window"])
+        return barry_desktop.activate(classes=[f"barry-{app}"])
+    if app is None:
+        return activate(["--name", f"^{HOME_TITLE}$"])
+    if "flatpak" in spec:
+        # Its window, or a launch dialog still waiting for an answer.
+        return activate(["--classname", spec["window"]]) or activate(["--classname", DIALOG_CLASS])
+    if "qml" in spec or "qmlfile" in spec:
+        return activate(["--pid", str(proc.pid), "--name", spec["window"]])
+    return activate(["--pid", str(proc.pid), "--classname", "Navigator"])
+
+
 def go_home() -> None:
     # The home screen slides in (Shell.qml): it sees the new serial, puts
     # itself at the animation's start while still hidden, and says so; then
@@ -319,13 +363,15 @@ def go_home() -> None:
     for app, spec in APPS.items():
         if "qml" in spec and running(app):
             close(app)
-    if not activate(["--name", f"^{HOME_TITLE}$"]):
+    if not bring_forward(None):
         log("cannot find the home screen window")
 
 
 def app_env(**extra: str) -> dict:
     env = dict(os.environ, GNOME_ACCESSIBILITY="1", **extra)
-    env.pop("WAYLAND_DISPLAY", None)  # X11, where gamescope's stacking applies
+    if not DESKTOP:
+        env.pop("WAYLAND_DISPLAY", None)  # X11, where gamescope's stacking applies
+    env.pop("BARRY_DESKTOP", None)
     return env
 
 
@@ -414,11 +460,12 @@ def start_flatpak(app: str, spec: dict) -> None:
                 log(f"wrote {path}")
         with app_log(app) as out:
             STATE.apps[app] = subprocess.Popen(
-                ["flatpak", "run", ref, *spec.get("args", [])],
+                ["flatpak", "run", ref, *spec.get("desktop_args" if DESKTOP else "args", [])],
                 env=app_env(ACCESSIBILITY_ENABLED="1"),
                 stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
             )
-        threading.Thread(target=surface_dialogs, args=(STATE.apps[app],), daemon=True).start()
+        if not DESKTOP:  # KWin shows launch dialogs itself
+            threading.Thread(target=surface_dialogs, args=(STATE.apps[app],), daemon=True).start()
         STATE.quiet_until = time.monotonic() + LAUNCH_QUIET_S
         log(f"started {app} (pid {STATE.apps[app].pid})")
     finally:
@@ -434,14 +481,7 @@ def launch(app: str) -> tuple[int, dict]:
     proc = running(app)
     if proc:
         STATE.quiet_until = time.monotonic() + SWITCH_QUIET_S
-        if "flatpak" in spec:
-            # Its window, or a launch dialog still waiting for an answer.
-            if not activate(["--classname", spec["window"]]):
-                activate(["--classname", DIALOG_CLASS])
-        elif "qml" in spec or "qmlfile" in spec:
-            activate(["--pid", str(proc.pid), "--name", spec["window"]])
-        else:
-            activate(["--pid", str(proc.pid), "--classname", "Navigator"])
+        bring_forward(app)
         return 200, {"ok": True, "running": True}
     if "flatpak" in spec:
         STATE.status[app] = "Starting…"
@@ -450,15 +490,23 @@ def launch(app: str) -> tuple[int, dict]:
     if "qml" in spec or "qmlfile" in spec:
         cmd = (["qml6", TOP_INPUT_QML, "--", spec["qml"]] if "qml" in spec
                else ["qml6", os.path.join(SHELL_DIR, spec["qmlfile"])])
+        extra = {}
+        if DESKTOP and "qml" in spec:
+            # The top screen's trackpad and keyboard must never take focus
+            # from the top screen's window: a KWin rule (barry_launcher_desktop)
+            # says so, so they can be Wayland windows, with proper multitouch.
+            cmd[-1:-1] = ["desktop"]
+            extra["QT_QPA_PLATFORM"] = "wayland"
         STATE.apps[app] = subprocess.Popen(
             cmd,
-            env=app_env(),
+            env=app_env(**extra),
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         log(f"started {app} (pid {STATE.apps[app].pid})")
         return 200, {"ok": True, "running": False}
     profile = os.path.join(DATA, spec["profile"])
-    write_firefox_prefs(profile, spec["zoom"], spec.get("prefs", {}))
+    zoom = str(round(float(spec["zoom"]) / DESKTOP_SCALE, 3)) if DESKTOP else spec["zoom"]
+    write_firefox_prefs(profile, zoom, spec.get("prefs", {}))
     # Start clean: a session left by a killed instance makes Firefox offer
     # "Open previous tabs?", which a kiosk app cannot act on.
     for leftover in ("sessionstore.jsonlz4", "sessionstore-backups"):
@@ -467,9 +515,17 @@ def launch(app: str) -> tuple[int, dict]:
             shutil.rmtree(path, ignore_errors=True)
         elif os.path.exists(path):
             os.remove(path)
+    if DESKTOP:
+        # Wayland, so KWin hands its text fields to the input method; named
+        # so KWin's scripts can tell it from the top screen's Firefox.
+        cmd = ["firefox", "--name", f"barry-{app}", "--no-remote", "--profile", profile, *spec["args"]]
+        env = app_env(MOZ_ENABLE_WAYLAND="1")
+    else:
+        cmd = ["firefox", "--no-remote", "--profile", profile, *spec["args"]]
+        env = app_env(MOZ_USE_XINPUT2="1", MOZ_ENABLE_WAYLAND="0")
     STATE.apps[app] = subprocess.Popen(
-        ["firefox", "--no-remote", "--profile", profile, *spec["args"]],
-        env=app_env(MOZ_USE_XINPUT2="1", MOZ_ENABLE_WAYLAND="0"),
+        cmd,
+        env=env,
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     STATE.quiet_until = time.monotonic() + LAUNCH_QUIET_S
@@ -546,7 +602,12 @@ def text_before_caret(n: int) -> str | None:
 
 def ends_with_word(word: str) -> bool:
     """The text before the caret ends with word, as a whole word."""
-    before = text_before_caret(len(word) + 1)
+    im = STATE.im
+    if im is not None and im.active:
+        full = im.before_cursor()
+        before = None if full is None else full[-(len(word) + 1):]
+    else:
+        before = text_before_caret(len(word) + 1)
     if before is None or not before.endswith(word):
         return False
     return len(before) == len(word) or not before[-len(word) - 1].isalnum()
@@ -589,11 +650,29 @@ def type_input(body: dict) -> tuple[int, dict]:
             cmds.append(["xdotool", "key", "--", body["key"]])
         elif not back and "keep" not in body:
             return 400, {"error": "need text, a known key or back"}
+        im = STATE.im
+        if im is not None and im.active:
+            # Desktop Mode: into the active field through KWin's input method.
+            return type_through_im(im, cmds, reply)
         for cmd in cmds:
             r = subprocess.run(cmd, capture_output=True, text=True)
             if r.returncode != 0:
                 return 500, {"error": r.stderr.strip()}
         return 200, reply
+
+
+def type_through_im(im, cmds: list, reply: dict) -> tuple[int, dict]:
+    """type_input's xdotool commands, sent through barry_launcher_imd."""
+    for cmd in cmds:
+        if cmd[1] == "type":
+            ok = im.commit(cmd[-1])
+        elif "--repeat" in cmd:
+            ok = im.back(int(cmd[cmd.index("--repeat") + 1]))
+        else:
+            ok = im.key(cmd[-1])
+        if not ok:
+            return 500, {"error": "the input method went away"}
+    return 200, reply
 
 
 GLIDE = {"decoder": None, "corrector": None, "lock": threading.Lock()}
@@ -834,7 +913,14 @@ def show_for_text(top: bool, why: str) -> None:
     STATE.set_keyboard(True, False)
 
 
+def im_decides() -> bool:
+    """Desktop Mode with barry_launcher_imd: KWin says which field is active."""
+    return STATE.im is not None and STATE.im.connected
+
+
 def on_focus(event) -> None:
+    if im_decides():
+        return
     if event.detail1 != 1:
         return  # the next focus gain decides
     try:
@@ -853,7 +939,7 @@ def on_focus(event) -> None:
 
 def on_caret(event) -> None:
     """A tap in a field that already has focus moves only its caret."""
-    if STATE.keyboard()["visible"]:
+    if im_decides() or STATE.keyboard()["visible"]:
         return
     try:
         acc = event.source
@@ -872,7 +958,7 @@ def on_tap(raw_x: int, raw_y: int) -> bool:
     """A one-finger tap ended: on the focused field with the keyboard
     hidden (by hand, say), show it again."""
     acc = STATE.text_acc
-    if acc is None or STATE.keyboard()["visible"]:
+    if im_decides() or acc is None or STATE.keyboard()["visible"]:
         return False
     # The panel is portrait and turned right: its y runs left to right on
     # screen, its x bottom to top.
@@ -890,6 +976,74 @@ def on_tap(raw_x: int, raw_y: int) -> bool:
     return False
 
 
+# Timing log, to tell a click on a field from an app focusing one by itself
+# (no text, only times and caret offsets).
+TIMING = os.environ.get("BARRY_TIMING") == "1"
+IM_HIDE_DELAY_MS = 200  # a field handing over to the next one: no flicker
+
+
+def on_im_event(ev: dict) -> None:
+    kind = ev.get("event")
+    if TIMING and kind in ("activate", "deactivate", "surrounding"):
+        extra = f" cursor {ev.get('cursor')}" if kind == "surrounding" else ""
+        log(f"timing: field {kind}{extra} {time.monotonic():.3f}")
+    if kind == "activate":
+        show_for_text(False, "text field active")
+    elif kind == "deactivate":
+        def hide_if_still_inactive() -> bool:
+            if STATE.im is not None and not STATE.im.active and STATE.keyboard()["visible"]:
+                log("text field inactive")
+                STATE.set_keyboard(False)
+            return False
+        GLib.timeout_add(IM_HIDE_DELAY_MS, hide_if_still_inactive)
+    elif kind == "surrounding":
+        # A tap in the field that is already active moves its caret: show a
+        # keyboard hidden by hand again.
+        if not STATE.keyboard()["visible"] and STATE.im is not None and STATE.im.active and touched_lately():
+            show_for_text(False, "caret moved in the active field")
+
+
+def watch_presses(name: str, codes: tuple) -> None:
+    """Desktop Mode: a press on another touch device (the top screen, the
+    trackpad's clicks) counts as a touch too, for showing the keyboard."""
+    for name_file in glob.glob("/sys/class/input/event*/device/name"):
+        try:
+            with open(name_file, encoding="utf-8") as fh:
+                if fh.read().strip() != name:
+                    continue
+            fd = os.open("/dev/input/" + name_file.split("/")[4], os.O_RDONLY)
+        except OSError:
+            continue
+        log(f"watching presses on {name}")
+        with os.fdopen(fd, "rb", buffering=0) as fh:
+            while True:
+                data = fh.read(INPUT_EVENT.size)
+                if len(data) < INPUT_EVENT.size:
+                    return
+                _, _, etype, code, value = INPUT_EVENT.unpack(data)
+                if etype == EV_KEY and code in codes and value == 1:
+                    STATE.last_touch = time.monotonic()
+                if TIMING and etype == EV_KEY and code in codes and value in (0, 1):
+                    log(f"timing: {name} {'press' if value else 'release'} {time.monotonic():.3f}")
+        return
+
+
+def start_desktop() -> None:
+    """Desktop Mode: KWin's window placement, the input method, and the
+    other devices whose presses count as touches."""
+    def place() -> bool:
+        if barry_desktop.place_windows():
+            log("KWin places Barry's windows on " + barry_desktop.OUTPUT)
+            return False
+        return True  # KWin not ready yet: again shortly
+    if place():
+        GLib.timeout_add(1000, place)
+    STATE.im = barry_desktop.InputMethod(on_im_event)
+    threading.Thread(target=STATE.im.run, daemon=True).start()
+    for name, codes in (("top_touchscreen", (BTN_TOUCH,)), ("Barry Launcher Trackpad", (BTN_LEFT, BTN_RIGHT))):
+        threading.Thread(target=watch_presses, args=(name, codes), daemon=True).start()
+
+
 def main() -> None:
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     srv.daemon_threads = True
@@ -901,6 +1055,8 @@ def main() -> None:
     caret = Atspi.EventListener.new(on_caret)
     caret.register("object:text-caret-moved")
     threading.Thread(target=watch_touches, daemon=True).start()
+    if DESKTOP:
+        start_desktop()
     apply_inset()  # no inset left over from before a restart
     threading.Thread(target=warm_apps, daemon=True).start()
     threading.Thread(target=load_dictionary, daemon=True).start()

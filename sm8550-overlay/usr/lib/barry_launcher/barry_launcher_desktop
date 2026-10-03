@@ -1,8 +1,54 @@
 #!/bin/bash
-# barry_launcher_desktop: Barry Launcher's trackpad and keyboard for the AYN
-# Thor's top screen, on the bottom screen in Desktop Mode (Desktop.qml).
-# X11, where a window can refuse keyboard focus; the pointer and keys come
-# from barry_launcher_inputd, started here if it is not running yet.
+# barry_launcher_desktop: Barry Launcher on the AYN Thor's bottom screen in
+# Desktop Mode (Plasma on Wayland): the same home screen, apps and keyboard
+# as in Game Mode, with KWin in the place of the bottom screen's gamescope
+# (barry_desktop.py). Barry's keyboard is KWin's input method
+# (barry_launcher_imd) instead of Plasma's own.
+# Started with the Plasma session (barry_launcher_desktop.service); from the
+# applications menu, with Barry already running, it goes Home.
+grep -qa "ayn,thor" /sys/firmware/devicetree/base/compatible 2>/dev/null || exit 0
+api=http://127.0.0.1:47824
+if curl -fs -X POST -H "Content-Type: application/json" -d "{}" "$api/home" >/dev/null 2>&1; then
+  exit 0
+fi
 systemctl --user start barry_launcher_inputd.service
-export QT_QPA_PLATFORM=xcb
-exec qml6 /usr/share/barry_launcher/shell/Desktop.qml
+# KWin starts its input method at login, so on the first run it is still
+# Plasma's: --notify makes KWin switch to Barry's at once.
+im=/usr/share/applications/org.barry_launcher.keyboard.desktop
+if [[ "$(kreadconfig6 --file kwinrc --group Wayland --key InputMethod)" != "$im" ]]; then
+  kwriteconfig6 --notify --file kwinrc --group Wayland --key VirtualKeyboardEnabled true
+  kwriteconfig6 --notify --file kwinrc --group Wayland --key InputMethod "$im"
+fi
+# Barry's keyboard, trackpad and top-screen keyboard are Wayland windows
+# (proper multitouch) that must never take focus from the field or window
+# they type into: a KWin rule says so, next to any rules already there.
+rule=barry-launcher-nofocus
+rules="$(kreadconfig6 --file kwinrulesrc --group General --key rules)"
+if [[ ",$rules," != *",$rule,"* ]]; then
+  rules="${rules:+$rules,}$rule"
+  kwriteconfig6 --file kwinrulesrc --group General --key rules "$rules"
+  kwriteconfig6 --file kwinrulesrc --group General --key count "$(tr , "\n" <<<"$rules" | grep -c .)"
+fi
+kwriteconfig6 --file kwinrulesrc --group "$rule" --key Description "Barry Launcher: keyboard and trackpad windows never take focus"
+kwriteconfig6 --file kwinrulesrc --group "$rule" --key title "^Barry Launcher (Keyboard|Trackpad|Top Keyboard)$"
+kwriteconfig6 --file kwinrulesrc --group "$rule" --key titlematch 3
+kwriteconfig6 --file kwinrulesrc --group "$rule" --key acceptfocus false
+kwriteconfig6 --file kwinrulesrc --group "$rule" --key acceptfocusrule 2
+qdbus6 org.kde.KWin /KWin reconfigure >/dev/null 2>&1
+# The bottom screen is Barry's: a gap between it and the top screen in
+# KWin's layout keeps the pointer, and windows dragged with it, on the top
+# one (KWin only crosses between outputs that touch); touches still go to
+# it by name. thorch-display-setup puts it right under the top screen at
+# login, so this runs again once that is done.
+gap_layout() {
+  kscreen-doctor output.DSI-1.position.170,760 >/dev/null 2>&1
+}
+gap_layout
+(sleep 6; gap_layout) &
+export BARRY_DESKTOP=1 BARRY_OUTPUT="${BARRY_OUTPUT:-DSI-1}"
+shell_qml=/usr/share/barry_launcher/shell
+/usr/lib/barry_launcher/barry_launcher_shelld &
+QT_QPA_PLATFORM=wayland qml6 "$shell_qml/Shell.qml" &
+sleep 1  # home first, so it stays under the apps
+QT_QPA_PLATFORM=wayland qml6 "$shell_qml/Keyboard.qml" -- desktop &
+wait

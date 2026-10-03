@@ -6,22 +6,31 @@
 // half, upper) part; tapping the rest hides it.
 // The window stays mapped and hides by opacity, as Steam's overlay does
 // (gamescope ignores property changes on unmapped windows).
+//
+// Desktop Mode ("desktop" argument, under KWin; a KWin rule keeps it from
+// taking focus): just the keys, along the bottom output's lower edge (KWin's
+// script puts it there). It stays mapped there, invisible and click-through
+// while hidden: a window mapped anew lands on the screen with the pointer
+// first, and would flash on the top screen. Text goes through KWin's input
+// method.
 import QtQuick
 import QtQuick.Window
 
 Window {
     id: win
     title: "Barry Launcher Keyboard"
-    flags: Qt.WindowDoesNotAcceptFocus
+    flags: Qt.WindowDoesNotAcceptFocus | (desktop && !shown ? Qt.WindowTransparentForInput : 0)
     color: "transparent"
-    visibility: Window.FullScreen
-    visible: true
-    opacity: shown ? 1 : 0
+    readonly property bool desktop: Qt.application.arguments.indexOf("desktop") >= 0
+    visibility: desktop ? Window.Windowed : Window.FullScreen
+    // Window opacity does nothing under Wayland: in Desktop Mode the keys
+    // themselves hide, over a transparent window.
+    opacity: desktop || shown ? 1 : 0
     width: 1240
-    height: 1080
+    height: desktop ? panel.implicitHeight : 1080
 
     readonly property string api: "http://127.0.0.1:47824"
-    readonly property real s: Math.min(width / 1240, height / 1080)
+    readonly property real s: desktop ? width / 1240 : Math.min(width / 1240, height / 1080)
     property bool shown: false
     property bool atTop: false
     property bool polling: false
@@ -57,10 +66,11 @@ Window {
 
     KeyPanel {
         id: panel
+        visible: !win.desktop || win.shown
         autocorrect: true
         width: parent.width
         height: implicitHeight
-        y: win.atTop ? 0 : parent.height - height
+        y: win.desktop || !win.atTop ? parent.height - height : 0
         s: win.s
         onTyped: function (text) { win.request("POST", "/type", { text: text }) }
         onKey: function (name) { win.request("POST", "/type", { key: name }) }

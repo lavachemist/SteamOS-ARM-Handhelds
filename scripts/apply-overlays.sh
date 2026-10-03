@@ -666,7 +666,10 @@ remove_thor_bottom_screen() {
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-thor-controlsd.service" \
     "$R/usr/lib/systemd/user/barry_launcher_inputd.service" \
     "$R/usr/lib/systemd/user/default.target.wants/barry_launcher_inputd.service" \
-    "$R/usr/share/applications/barry_launcher_desktop.desktop"
+    "$R/usr/share/applications/barry_launcher_desktop.desktop" \
+    "$R/usr/lib/systemd/user/barry_launcher_desktop.service" \
+    "$R/usr/lib/systemd/user/plasma-workspace.target.wants/barry_launcher_desktop.service" \
+    "$R/usr/share/applications/org.barry_launcher.keyboard.desktop"
 }
 if [[ "$SOC" == sm8550 ]]; then
   log "== SM8550 overlay (fan curve, power button, thread boost, steamos-manager devices, Thor touch)"
@@ -700,8 +703,15 @@ if [[ "$SOC" == sm8550 ]]; then
       barry_launcher_inputd barry_launcher_desktop; do
       install_file "$SM8550_OVL/usr/lib/barry_launcher/$f" "$R/usr/lib/barry_launcher/$f" 0755
     done
-    # Glide typing's decoder, imported by barry_launcher_shelld.
-    install_file "$SM8550_OVL/usr/lib/barry_launcher/barry_glide.py" "$R/usr/lib/barry_launcher/barry_glide.py" 0644
+    # Glide typing's decoder and the Desktop Mode (KWin) side, imported by
+    # barry_launcher_shelld.
+    for f in barry_glide.py barry_desktop.py; do
+      install_file "$SM8550_OVL/usr/lib/barry_launcher/$f" "$R/usr/lib/barry_launcher/$f" 0644
+    done
+    # Desktop Mode: Barry's keyboard as KWin's input method, a small Wayland
+    # client built here against the rootfs's libwayland.
+    "${ROOT}/external-and-mods/barry-launcher-imd/build.sh" "$R" "$R/usr/lib/barry_launcher/barry_launcher_imd" \
+      || die "cannot build barry_launcher_imd (the rootfs needs gcc, wayland-scanner and wayland-protocols)"
     cp -r "$SM8550_OVL/usr/share/barry_launcher" "$R/usr/share/"
     chmod -R u=rwX,go=rX "$R/usr/share/barry_launcher"
     install_file "$SM8550_OVL/usr/lib/systemd/user/barry_launcher.service" \
@@ -718,6 +728,15 @@ if [[ "$SOC" == sm8550 ]]; then
       "$R/usr/lib/systemd/user/default.target.wants/barry_launcher_inputd.service"
     install_file "$SM8550_OVL/usr/share/applications/barry_launcher_desktop.desktop" \
       "$R/usr/share/applications/barry_launcher_desktop.desktop" 0644
+    # Desktop Mode: Barry on the bottom screen with the Plasma session, and
+    # its keyboard registered as a virtual keyboard KWin can use.
+    install_file "$SM8550_OVL/usr/lib/systemd/user/barry_launcher_desktop.service" \
+      "$R/usr/lib/systemd/user/barry_launcher_desktop.service" 0644
+    mkdir -p "$R/usr/lib/systemd/user/plasma-workspace.target.wants"
+    ln -sfn ../barry_launcher_desktop.service \
+      "$R/usr/lib/systemd/user/plasma-workspace.target.wants/barry_launcher_desktop.service"
+    install_file "$SM8550_OVL/usr/share/applications/org.barry_launcher.keyboard.desktop" \
+      "$R/usr/share/applications/org.barry_launcher.keyboard.desktop" 0644
     # AYN Thor: InputPlumber leaves the AYN button to sm8550-thor-backlightd,
     # which uses it to show the bottom-screen dashboard.
     ip_thor="$R/usr/share/inputplumber/devices/50-ayn_thor.yaml"
