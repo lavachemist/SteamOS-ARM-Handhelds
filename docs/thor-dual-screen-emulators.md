@@ -16,12 +16,17 @@ changed, once, and remembers it.
 
 ## The quick way: the Dual Screen plugin
 
-In Game Mode, open the Quick Access menu, then **Dual Screen → Emulators →
-Two-screen emulators**. It finds melonDS, Azahar, Lime3DS, Citra and Cemu
-(AppImage or Flatpak) and makes the changes below in their settings files;
-turning it off puts back what they had. Open each emulator once before, so
-its settings file exists, and close any running emulator first: they write
-their settings back when they quit.
+The Thor does this for you: **Quick Access → Dual Screen → Emulators →
+Two-screen emulators** is on by default. It finds melonDS, Azahar, Lime3DS,
+Citra and Cemu (AppImage or Flatpak) and makes the changes below in their
+settings files, also for an emulator installed later or reset by EmuDeck,
+within half a minute and while that emulator isn't running (they write their
+settings back when they quit). An emulator needs to have been opened once,
+so its settings file exists.
+
+Turning the switch off puts back what the emulators had, and leaves them
+alone from then on. While it's on, changing these settings inside an
+emulator doesn't stick; turn the switch off first.
 
 DS games still need the standalone melonDS (see below).
 
@@ -76,8 +81,7 @@ games.
 
 EmuDeck's updates keep these settings. **Reset configuration** in EmuDeck puts
 its own settings back (it saves the old file with a `.bak` ending), so after a
-reset, change them again (with the plugin: turn **Two-screen emulators**
-off and on again).
+reset, change them again (with the plugin's switch on, it does that itself).
 
 ## Other languages
 
