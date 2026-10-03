@@ -179,11 +179,28 @@ def refresh_user_apps(force: bool = False) -> None:
     apps = dict(BUILTIN_APPS)
     for app_id, m in barry_apps.installed().items():
         icon = f"file://{os.path.join(m['dir'], m['icon'])}" if m["icon"] else "app"
-        apps[app_id] = {"name": m["name"], "icon": icon, "user": True, "version": m["version"],
-                        "dir": m["dir"], "main": m["main"],
-                        # ids are [a-z0-9._-]: only the dots need escaping,
-                        # for xdotool's and KWin's regexes alike.
-                        "window": f"^Barry App {app_id.replace('.', '[.]')}$"}
+        spec = {"name": m["name"], "icon": icon, "user": True, "version": m["version"], "dir": m["dir"]}
+        if m["type"] == "web":
+            # A Firefox app, like Discord, with its profile in the app's
+            # data folder: removing the app logs it out and leaves nothing.
+            web = m["web"]
+            # The profile is this site's alone: it may keep its data (no
+            # "store data in persistent storage?" prompt); no notifications.
+            prefs = {"permissions.default.desktop-notification": 2,
+                     "permissions.default.persistent-storage": 1}
+            if "microphone" in web["allow"]:
+                prefs["permissions.default.microphone"] = 1
+            if "camera" in web["allow"]:
+                prefs["permissions.default.camera"] = 1
+            if web["allow"]:
+                prefs["media.navigator.permission.disabled"] = True
+            spec.update(profile=os.path.join(barry_apps.APP_DATA_DIR, app_id, "firefox"),
+                        args=["--kiosk", web["url"]], zoom=str(web["zoom"]), prefs=prefs)
+        else:
+            # ids are [a-z0-9._-]: only the dots need escaping, for
+            # xdotool's and KWin's regexes alike.
+            spec.update(main=m["main"], window=f"^Barry App {app_id.replace('.', '[.]')}$")
+        apps[app_id] = spec
     APPS = apps
 # The home screen's order and the apps it hides (the Barry Launcher plugin's
 # Apps tab sets them); apps not listed go last, in APPS' order. Apps with
@@ -451,7 +468,7 @@ def bring_forward(app: str | None) -> bool:
             return barry_desktop.activate(caption=f"^{HOME_TITLE}$")
         if "flatpak" in spec:
             return barry_desktop.activate(classes=spec.get("classes"))
-        if "qml" in spec or "qmlfile" in spec or spec.get("user"):
+        if "qml" in spec or "qmlfile" in spec or "main" in spec:
             return barry_desktop.activate(caption=spec["window"])
         return barry_desktop.activate(classes=[f"barry-{app}"])
     if app is None:
@@ -459,7 +476,7 @@ def bring_forward(app: str | None) -> bool:
     if "flatpak" in spec:
         # Its window, or a launch dialog still waiting for an answer.
         return activate(["--classname", spec["window"]]) or activate(["--classname", DIALOG_CLASS])
-    if "qml" in spec or "qmlfile" in spec or spec.get("user"):
+    if "qml" in spec or "qmlfile" in spec or "main" in spec:
         return activate(["--pid", str(proc.pid), "--name", spec["window"]])
     return activate(["--pid", str(proc.pid), "--classname", "Navigator"])
 
@@ -607,7 +624,7 @@ def launch(app: str) -> tuple[int, dict]:
         STATE.status[app] = "Starting…"
         threading.Thread(target=start_flatpak, args=(app, spec), daemon=True).start()
         return 200, {"ok": True, "running": False}
-    if spec.get("user"):
+    if "main" in spec:  # a user app in QML; a web one is a Firefox app below
         # Its XDG folders inside its data folder: all it saves is there.
         extra = barry_apps.app_env(app)
         data = extra["BARRY_APP_DATA"]
@@ -642,7 +659,7 @@ def launch(app: str) -> tuple[int, dict]:
         )
         log(f"started {app} (pid {STATE.apps[app].pid})")
         return 200, {"ok": True, "running": False}
-    profile = os.path.join(DATA, spec["profile"])
+    profile = os.path.join(DATA, spec["profile"])  # a user web app's is a full path already
     zoom = str(round(float(spec["zoom"]) / DESKTOP_SCALE, 3)) if DESKTOP else spec["zoom"]
     write_firefox_prefs(profile, zoom, spec.get("prefs", {}))
     # Start clean: a session left by a killed instance makes Firefox offer

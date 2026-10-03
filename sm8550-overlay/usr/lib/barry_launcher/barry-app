@@ -10,7 +10,8 @@
   barry-app pack FOLDER [-o OUT] check an app folder and zip it for sharing
   barry-app run FOLDER           run an app folder in a window, as Barry
                                  Launcher would (to try it while making it;
-                                 needs Qt 6's qml tool, or BARRY_QML set to it)
+                                 needs Qt 6's qml tool, or BARRY_QML set to it;
+                                 a web app needs Firefox, or BARRY_FIREFOX)
 
 Installs go through barry_launcher_shelld when it runs, so the home screen
 shows the app at once (and a running old version closes); otherwise
@@ -152,6 +153,8 @@ def cmd_run(a) -> int:
     except barry_apps.AppError as err:
         print(f"barry-app: {err}", file=sys.stderr)
         return 1
+    if m["type"] == "web":
+        return run_web(m, a)
     host = next((h for h in APP_HOSTS if os.path.isfile(h)), None)
     # Qt 6's qml tool: BARRY_QML, or qml6 / qml on the PATH, or where
     # Linux distributions keep it.
@@ -169,6 +172,31 @@ def cmd_run(a) -> int:
                QML_DISABLE_DISK_CACHE="1")
     return subprocess.call([qml, host, "--", folder, m["main"], m["id"], m["name"], data,
                             "fullscreen" if a.fullscreen else "windowed"], env=env)
+
+
+def run_web(m: dict, a) -> int:
+    """A web app: Firefox with a profile of its own and the app's zoom, in a
+    window (Barry Launcher shows it full screen, in kiosk mode)."""
+    firefox = (os.environ.get("BARRY_FIREFOX") or shutil.which("firefox")
+               or next((f for f in ("/Applications/Firefox.app/Contents/MacOS/firefox",
+                                    r"C:\Program Files\Mozilla Firefox\firefox.exe") if os.path.isfile(f)), None))
+    if not firefox:
+        print("barry-app: a web app runs in Firefox: install it, or set BARRY_FIREFOX to it", file=sys.stderr)
+        return 1
+    data = os.path.abspath(a.data) if a.data else tempfile.mkdtemp(prefix=f"barry-app-{m['id']}-")
+    profile = os.path.join(data, "firefox")
+    os.makedirs(profile, exist_ok=True)
+    with open(os.path.join(profile, "user.js"), "w", encoding="utf-8") as fh:
+        # The Thor's bottom screen has about 1.9 times a monitor's pixels per
+        # inch; this window is 1240 x 1080 like it, at the app's zoom.
+        fh.write(f'user_pref("layout.css.devPixelsPerPx", "{m["web"]["zoom"]}");\n'
+                 'user_pref("browser.shell.checkDefaultBrowser", false);\n'
+                 'user_pref("browser.aboutwelcome.enabled", false);\n')
+    print(f"Running {describe(m)} ({m['web']['url']}); its Firefox profile is {profile}")
+    args = [firefox, "--no-remote", "--profile", profile, "--width", "1240", "--height", "1080"]
+    if a.fullscreen:
+        args.append("--kiosk")
+    return subprocess.call(args + [m["web"]["url"]])
 
 
 def main() -> int:

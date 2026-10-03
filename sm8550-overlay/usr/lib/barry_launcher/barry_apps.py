@@ -14,6 +14,12 @@ such a folder: the archive may hold it directly or inside one folder):
     "description": "...", "author": "...", "homepage": "..."   optional
   }
 
+A web app has no QML: "type": "web" and a "url" (https) instead of
+"main", with an optional "zoom" (CSS zoom on the bottom screen, 0.5-4)
+and "allow" (["microphone"], ["camera"]: given without asking).
+barry_launcher_shelld opens it in Firefox, kiosk mode, with a profile of
+its own in the app's data folder (logins and all go with the app).
+
 Barry Launcher runs main.qml in a full-screen window of its own
 (shell/AppHost.qml), the way it runs its own QML apps, with its config
 and data XDG folders pointed into its data folder (app_env): whatever it or
@@ -56,6 +62,8 @@ ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*(\.[a-z0-9][a-z0-9_-]*)+$")
 ID_MAX = 64
 NAME_MAX = 20
 ICON_TYPES = (".png", ".svg")
+TYPES = ("qml", "web")
+WEB_ALLOW = ("microphone", "camera")
 # Limits against an archive that unpacks into far more than it looks.
 MAX_ARCHIVE = 100 * 1024 * 1024
 MAX_UNPACKED = 300 * 1024 * 1024
@@ -108,16 +116,34 @@ def read_manifest(root: str) -> dict:
     if len(name) > NAME_MAX:
         raise AppError(f'{MANIFEST}: "name" is {len(name)} characters; the tile has room for {NAME_MAX}')
     version = _str(m, "version")
-    main = _str(m, "main")
-    if not main.endswith(".qml"):
-        raise AppError(f'{MANIFEST}: "main" must be a .qml file')
-    _inside(root, main, "main")
+    kind = m.get("type", "qml")
+    if kind not in TYPES:
+        raise AppError(f'{MANIFEST}: "type" must be one of {", ".join(TYPES)}')
+    web = None
+    main = None
+    if kind == "qml":
+        main = _str(m, "main")
+        if not main.endswith(".qml"):
+            raise AppError(f'{MANIFEST}: "main" must be a .qml file')
+        _inside(root, main, "main")
+    else:
+        url = _str(m, "url")
+        if not re.match(r"^https://[^\s/]+(/\S*)?$", url):
+            raise AppError(f'{MANIFEST}: "url" must be an https:// address')
+        zoom = m.get("zoom", 1.25)
+        if isinstance(zoom, bool) or not isinstance(zoom, (int, float)) or not 0.5 <= zoom <= 4:
+            raise AppError(f'{MANIFEST}: "zoom" must be a number from 0.5 to 4')
+        allow = m.get("allow", [])
+        if not isinstance(allow, list) or any(a not in WEB_ALLOW for a in allow):
+            raise AppError(f'{MANIFEST}: "allow" may list {", ".join(WEB_ALLOW)}')
+        web = {"url": url, "zoom": float(zoom), "allow": sorted(set(allow))}
     icon = _str(m, "icon", required=False)
     if icon is not None:
         if not icon.lower().endswith(ICON_TYPES):
             raise AppError(f'{MANIFEST}: "icon" must be a PNG or SVG file')
         _inside(root, icon, "icon")
-    out = {"format": FORMAT, "id": app_id, "name": name, "version": version, "main": main, "icon": icon}
+    out = {"format": FORMAT, "id": app_id, "name": name, "version": version, "type": kind,
+           "main": main, "web": web, "icon": icon}
     for key in ("description", "author", "homepage"):
         v = m.get(key)
         if isinstance(v, str) and v.strip():
