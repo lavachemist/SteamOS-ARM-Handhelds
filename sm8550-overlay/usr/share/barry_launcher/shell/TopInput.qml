@@ -351,6 +351,7 @@ Rectangle {
         onTyped: function (text) { ti.post("/key", { text: text }) }
         onKey: function (name) { ti.post("/key", { key: name }) }
         onReplace: function (back, text) { ti.post("/key", { back: back, text: text }) }
+        onCombo: function (keys) { ti.post("/key", { combo: keys }) }
         // Desktop Mode: back to the trackpad. Apps: dismissed, so nothing
         // stays running behind.
         onHideRequested: ti.showTabs ? ti.mode = "trackpad" : ti.closeRequested()

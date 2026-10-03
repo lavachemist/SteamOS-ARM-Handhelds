@@ -75,6 +75,7 @@ Window {
         onTyped: function (text) { win.request("POST", "/type", { text: text }) }
         onKey: function (name) { win.request("POST", "/type", { key: name }) }
         onReplace: function (back, text) { win.request("POST", "/type", { back: back, text: text }) }
+        onCombo: function (keys) { win.request("POST", "/type", { combo: keys }) }
         onTypedWith: function (body, done) { win.request("POST", "/type", body, function (reply) { if (done) done(reply) }) }
         onHideRequested: win.hide()
     }

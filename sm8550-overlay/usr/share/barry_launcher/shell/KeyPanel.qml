@@ -6,6 +6,11 @@ pragma ComponentBehavior: Bound
 // Return, Escape, ...). asciiOnly swaps the symbol page's row of non-ASCII
 // characters, which a uinput keyboard cannot type, for navigation keys.
 //
+// A third page (Fn) has the keys a console wants: Esc, Tab, Home, End,
+// PgUp/PgDn, Del, arrows, Copy/Paste/Cut/All/Undo/Redo, and Ctrl, Alt,
+// Super and Shift. Those modifiers stick: lit until the next key, from any
+// page, which then comes out as combo (["ctrl", "c"], say).
+//
 // Glide typing: a finger that starts on a letter and slides over the keys
 // spells a word, which barry_launcher_shelld decodes (barry_glide). It goes
 // out with a space before it when it follows a word; the strip above the
@@ -34,6 +39,7 @@ Rectangle {
     signal typed(string text)
     signal key(string name)
     signal replace(int back, string text)  // backspace back times, then type text
+    signal combo(var keys)  // modifiers, then a key: ["ctrl", "shift", "c"]
     // A /type request for barry_launcher_shelld (correct, expect, keep, back,
     // text or key); done(reply) after. Only with autocorrect.
     signal typedWith(var body, var done)
@@ -42,6 +48,10 @@ Rectangle {
     function reset() {
         shifted = false
         symbols = false
+        keysPage = false
+        ctrlOn = false
+        altOn = false
+        superOn = false
         lastGlide = ""
         afterWord = false
         word = ""
@@ -54,11 +64,53 @@ Rectangle {
     implicitHeight: (5 * keyHeight + 4 * 10 + 24) * s + (glide ? stripHeight + 10 * s : 0)
     color: "#1b1d24"
 
+    // The Fn page and its sticky modifiers.
+    property bool keysPage: false
+    property bool ctrlOn: false
+    property bool altOn: false
+    property bool superOn: false
+    readonly property bool modsOn: ctrlOn || altOn || superOn
+    readonly property var shortcuts: ({ "copy": ["ctrl", "c"], "paste": ["ctrl", "v"], "cut": ["ctrl", "x"],
+                                         "selectall": ["ctrl", "a"], "undo": ["ctrl", "z"],
+                                         "redo": ["ctrl", "shift", "z"] })
+
+    function sendCombo(keys) {
+        lastGlide = ""
+        lastCorrection = null
+        word = ""
+        afterWord = false
+        clearStrip()
+        combo(keys)
+        ctrlOn = false
+        altOn = false
+        superOn = false
+        shifted = false
+    }
+
     function press(k) {
         if (k === "shift") { shifted = !shifted; return }
-        if (k === "symbols") { symbols = !symbols; shifted = false; return }
+        if (k === "symbols") { symbols = !symbols; keysPage = false; shifted = false; return }
+        if (k === "keys") { keysPage = !keysPage; symbols = false; return }
+        if (k === "abc") { keysPage = false; symbols = false; return }
+        if (k === "ctrl") { ctrlOn = !ctrlOn; return }
+        if (k === "alt") { altOn = !altOn; return }
+        if (k === "super") { superOn = !superOn; return }
         if (k === "hide") { hideRequested(); return }
         serial++
+        // Shortcuts, and keys with a lit modifier, go out as combos.
+        const mods = (ctrlOn ? ["ctrl"] : []).concat(altOn ? ["alt"] : [], superOn ? ["super"] : [])
+        if (shortcuts[k] !== undefined) {
+            const sc = shortcuts[k]
+            const extra = mods.concat(shifted ? ["shift"] : []).filter(m => sc.indexOf(m) < 0)
+            sendCombo(extra.concat(sc))
+            return
+        }
+        const named = k.length > 1 && k !== "space"
+        if (modsOn || (shifted && named && k !== "BackSpace")) {
+            const key = k === "space" ? "space" : named ? k : k.toLowerCase()
+            sendCombo(mods.concat(shifted ? ["shift"] : [], [key]))
+            return
+        }
         if (k === "BackSpace" && lastGlide !== "") {
             // Right after a glide: the whole word, and the space before it.
             replace(lastGlide.length, "")
@@ -272,7 +324,7 @@ Rectangle {
         ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"],
         ["a", "s", "d", "f", "g", "h", "j", "k", "l"],
         ["shift", "z", "x", "c", "v", "b", "n", "m", "BackSpace"],
-        ["symbols", ",", "space", ".", "Return", "hide"],
+        ["symbols", "keys", ",", "space", ".", "Return", "hide"],
     ]
     // The number row stays on the letters page, so this page takes the rarer
     // symbols; five rows like the letters, so the keyboard keeps its height.
@@ -284,11 +336,28 @@ Rectangle {
         ["=", "*", "\"", "'", ":", ";", "!", "?", "BackSpace"],
         ["symbols", "_", "space", "~", "Return", "hide"],
     ]
-    readonly property var rows: (symbols ? symbolRows : letters)
+    // Fn: what a console wants, five rows like the others.
+    readonly property var keyRows: [
+        ["Escape", "Tab", "Home", "End", "Prior", "Next", "Delete"],
+        ["copy", "paste", "cut", "selectall", "undo", "redo"],
+        ["Left", "Up", "Down", "Right"],
+        ["ctrl", "alt", "super", "shift", "BackSpace"],
+        ["abc", "symbols", "space", "Return", "hide"],
+    ]
+    readonly property var rows: (keysPage ? keyRows : symbols ? symbolRows : letters)
         .map(r => hideKey ? r : r.filter(k => k !== "hide"))
     readonly property var labels: ({
         "Escape": "Esc", "Tab": "Tab", "Home": "Home", "End": "End", "Delete": "Del",
         "Left": "←", "Up": "↑", "Down": "↓", "Right": "→",
+        "Prior": "PgUp", "Next": "PgDn", "keys": "Fn", "abc": "ABC",
+        "ctrl": "Ctrl", "alt": "Alt", "super": "Super",
+        "copy": "Copy", "paste": "Paste", "cut": "Cut", "selectall": "All", "undo": "Undo", "redo": "Redo",
+    })
+    // Key widths on the Fn page, in key units.
+    readonly property var keyWidths: ({
+        "Escape": 1.2, "Tab": 1.2, "Home": 1.2, "End": 1.2, "Prior": 1.2, "Next": 1.2, "Delete": 1.2,
+        "copy": 1.5, "paste": 1.5, "cut": 1.5, "selectall": 1.5, "undo": 1.5, "redo": 1.5,
+        "Left": 2, "Up": 2, "Down": 2, "Right": 2, "ctrl": 1.5, "alt": 1.5, "super": 1.5, "abc": 1.5,
     })
 
     // Take taps on the gaps, so they do not reach what is behind.
@@ -382,7 +451,7 @@ Rectangle {
         }
 
         PointHandler {
-            enabled: panel.glide && !panel.symbols
+            enabled: panel.glide && !panel.symbols && !panel.keysPage && !panel.modsOn
             onActiveChanged: active ? panel.glideStart(point.position) : panel.glideEnd()
             onPointChanged: if (active) panel.glideMove(point.position)
         }
@@ -394,14 +463,17 @@ Rectangle {
         readonly property bool special: k.length > 1
         readonly property real unit: (panel.width - 24 * panel.s - 9 * 10 * panel.s) / 10
 
-        width: k === "space" ? unit * 4 + 30 * panel.s
+        width: k === "space" ? unit * 3 + 20 * panel.s
+             : panel.keysPage && panel.keyWidths[k] !== undefined ? unit * panel.keyWidths[k]
              : k === "shift" || k === "BackSpace" ? unit * 1.45
              : k === "symbols" || k === "Return" ? unit * 1.5
              : unit
         height: panel.keyHeight * panel.s
         radius: 16 * panel.s
         color: tap.pressed ? "#4a4f60"
-             : (k === "shift" && panel.shifted) || (k === "symbols" && panel.symbols) ? "#6b2fb3"
+             : (k === "shift" && panel.shifted) || (k === "symbols" && panel.symbols)
+               || (k === "keys" && panel.keysPage) || (k === "ctrl" && panel.ctrlOn)
+               || (k === "alt" && panel.altOn) || (k === "super" && panel.superOn) ? "#6b2fb3"
              : special ? "#2d3140" : "#3a3e4d"
 
         Text {

@@ -199,7 +199,13 @@ WARM_DELAY_S = 60.0
 # Of the runtime, the libraries and fonts; of the profile, not the
 # attachments (*.noindex, 1.9 GB for Signal).
 WARM_RUNTIME_DIRS = ("lib/aarch64-linux-gnu", "lib/locale", "share/fonts")
-KEYS = {"BackSpace", "Return", "Tab", "Left", "Right", "Up", "Down", "Escape", "Delete", "space"}
+KEYS = {"BackSpace", "Return", "Tab", "Left", "Right", "Up", "Down", "Escape", "Delete", "space",
+        "Home", "End", "Prior", "Next"}
+MODIFIERS = {"ctrl", "alt", "shift", "super"}
+# xdotool's names for the keys a combo may end on that are not letters,
+# digits or KEYS.
+XDO_SYMBOLS = {"/": "slash", "\\": "backslash", "-": "minus", "=": "equal", ".": "period", ",": "comma",
+               ";": "semicolon", "'": "apostrophe", "`": "grave", "[": "bracketleft", "]": "bracketright"}
 
 
 def log(msg: str) -> None:
@@ -624,6 +630,8 @@ def type_input(body: dict) -> tuple[int, dict]:
     back = body.get("back", 0)
     if not isinstance(back, int) or not 0 <= back <= 100:
         return 400, {"error": "back must be 0-100"}
+    if "combo" in body:
+        return type_combo(body["combo"])
     with TYPE_LOCK:
         cmds = []
         reply: dict = {"ok": True}
@@ -659,6 +667,32 @@ def type_input(body: dict) -> tuple[int, dict]:
             if r.returncode != 0:
                 return 500, {"error": r.stderr.strip()}
         return 200, reply
+
+
+def type_combo(keys) -> tuple[int, dict]:
+    """Modifiers and a key (["ctrl", "c"]): xdotool in Game Mode; in Desktop
+    Mode barry_launcher_inputd's keyboard, a real one to KWin, so the
+    focused window gets the modifiers."""
+    if not (isinstance(keys, list) and 1 <= len(keys) <= 4 and all(isinstance(k, str) for k in keys)
+            and all(k in MODIFIERS for k in keys[:-1])):
+        return 400, {"error": "combo: modifiers, then a key"}
+    last = keys[-1]
+    if not (last in KEYS or (len(last) == 1 and (last.isalnum() or last in XDO_SYMBOLS))):
+        return 400, {"error": f"combo: no key {last!r}"}
+    with TYPE_LOCK:
+        if DESKTOP:
+            req = urllib.request.Request(f"{INPUTD}/key", json.dumps({"combo": keys}).encode(),
+                                         {"Content-Type": "application/json"})
+            try:
+                urllib.request.urlopen(req, timeout=2).close()
+            except OSError as err:
+                return 500, {"error": f"barry_launcher_inputd: {err}"}
+            return 200, {"ok": True}
+        name = "+".join(keys[:-1] + [XDO_SYMBOLS.get(last, last)])
+        r = subprocess.run(["xdotool", "key", "--", name], capture_output=True, text=True)
+        if r.returncode != 0:
+            return 500, {"error": r.stderr.strip()}
+        return 200, {"ok": True}
 
 
 def type_through_im(im, cmds: list, reply: dict) -> tuple[int, dict]:
