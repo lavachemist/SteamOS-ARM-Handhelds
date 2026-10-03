@@ -11,6 +11,9 @@ keyboard (shell/Keyboard.qml), which call it on 127.0.0.1:PORT:
                   forward
   POST /close     {"app": name}: quit it
   POST /home      bring the home screen forward
+  POST /apps/install {"path": archive}: install or update a user app
+                  (barry_apps), {"ok": bool, "app": manifest | "error": str}
+  POST /apps/remove  {"app": id}: remove a user app and its data
   GET  /keyboard  {"visible": bool, "top": bool}: top when the text field is
                   in the lower half, so the keyboard does not cover it
   POST /keyboard  {"visible": bool}: show or hide by hand
@@ -55,6 +58,11 @@ as its own app and shows the most recently mapped one (stacking order does
 not count), so switching is unmapping and mapping the wanted window again.
 Holding the AYN button (sm8550-thor-backlightd) writes HOME_REQUEST, and any
 change to it brings the home screen forward.
+
+User apps (barry_apps: QML apps installed from an archive, by the barry-app
+command or the Barry Launcher plugin) join the home screen after the built-in
+ones; each runs in shell/AppHost.qml, its output in
+~/.cache/barry_launcher/ID.log. They are picked up as they are installed.
 """
 from __future__ import annotations
 
@@ -77,6 +85,7 @@ gi.require_version("Atspi", "2.0")
 from gi.repository import Atspi, Gio, GLib  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import barry_apps  # noqa: E402
 import barry_glide  # noqa: E402
 
 # Desktop Mode (barry_launcher_desktop): under KWin instead of a nested
@@ -150,6 +159,28 @@ APPS = {
     # Plain QML apps of the shell's own.
     "dino": {"name": "Dino", "icon": "dino", "qmlfile": "Dino.qml", "window": "^Barry Launcher Dino$"},
 }
+BUILTIN_APPS = dict(APPS)
+APPS_STAMP: list = [object()]  # barry_apps.stamp() when APPS last took in the user apps
+
+
+def refresh_user_apps(force: bool = False) -> None:
+    """Take in the user apps installed, updated or removed since last time.
+    APPS is replaced, never changed, so a loop over it elsewhere goes on
+    undisturbed."""
+    global APPS
+    stamp = barry_apps.stamp()
+    if not force and stamp == APPS_STAMP[0]:
+        return
+    APPS_STAMP[0] = stamp
+    apps = dict(BUILTIN_APPS)
+    for app_id, m in barry_apps.installed().items():
+        icon = f"file://{os.path.join(m['dir'], m['icon'])}" if m["icon"] else "app"
+        apps[app_id] = {"name": m["name"], "icon": icon, "user": True, "version": m["version"],
+                        "dir": m["dir"], "main": m["main"],
+                        # ids are [a-z0-9._-]: only the dots need escaping,
+                        # for xdotool's and KWin's regexes alike.
+                        "window": f"^Barry App {app_id.replace('.', '[.]')}$"}
+    APPS = apps
 # The home screen's order and the apps it hides (the Barry Launcher plugin's
 # Apps tab sets them); apps not listed go last, in APPS' order. Apps with
 # "hideable": False show regardless.
@@ -174,7 +205,8 @@ def home_layout() -> tuple[list[str], set[str]]:
 
 def layout_json() -> dict:
     order, hidden = home_layout()
-    return {"apps": [{"id": a, "name": APPS[a]["name"], "hidden": a in hidden, "hideable": hideable(a)}
+    return {"apps": [{"id": a, "name": APPS[a]["name"], "hidden": a in hidden, "hideable": hideable(a),
+                      "user": APPS[a].get("user", False), "version": APPS[a].get("version", "")}
                      for a in order]}
 
 
@@ -193,6 +225,7 @@ def set_layout(body: dict) -> tuple[int, dict]:
     return 200, layout_json()
 SHELL_DIR = "/usr/share/barry_launcher/shell"
 TOP_INPUT_QML = f"{SHELL_DIR}/TopInputApp.qml"
+APP_HOST_QML = f"{SHELL_DIR}/AppHost.qml"
 INPUTD = "http://127.0.0.1:47825"
 
 FLATHUB = "https://dl.flathub.org/repo/flathub.flatpakrepo"
@@ -414,7 +447,7 @@ def bring_forward(app: str | None) -> bool:
             return barry_desktop.activate(caption=f"^{HOME_TITLE}$")
         if "flatpak" in spec:
             return barry_desktop.activate(classes=spec.get("classes"))
-        if "qml" in spec or "qmlfile" in spec:
+        if "qml" in spec or "qmlfile" in spec or spec.get("user"):
             return barry_desktop.activate(caption=spec["window"])
         return barry_desktop.activate(classes=[f"barry-{app}"])
     if app is None:
@@ -422,7 +455,7 @@ def bring_forward(app: str | None) -> bool:
     if "flatpak" in spec:
         # Its window, or a launch dialog still waiting for an answer.
         return activate(["--classname", spec["window"]]) or activate(["--classname", DIALOG_CLASS])
-    if "qml" in spec or "qmlfile" in spec:
+    if "qml" in spec or "qmlfile" in spec or spec.get("user"):
         return activate(["--pid", str(proc.pid), "--name", spec["window"]])
     return activate(["--pid", str(proc.pid), "--classname", "Navigator"])
 
@@ -570,6 +603,20 @@ def launch(app: str) -> tuple[int, dict]:
         STATE.status[app] = "Starting…"
         threading.Thread(target=start_flatpak, args=(app, spec), daemon=True).start()
         return 200, {"ok": True, "running": False}
+    if spec.get("user"):
+        data = os.path.join(barry_apps.APP_DATA_DIR, app)
+        os.makedirs(data, exist_ok=True)
+        extra = {"BARRY_APP_ID": app, "BARRY_APP_DIR": spec["dir"], "BARRY_APP_DATA": data}
+        if DESKTOP:
+            extra["QT_QPA_PLATFORM"] = "wayland"
+        with app_log(app) as out:
+            STATE.apps[app] = subprocess.Popen(
+                ["qml6", APP_HOST_QML, "--", spec["dir"], spec["main"], app, spec["name"], data],
+                env=app_env(**extra),
+                stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
+            )
+        log(f"started {app} {spec['version']} (pid {STATE.apps[app].pid})")
+        return 200, {"ok": True, "running": False}
     if "qml" in spec or "qmlfile" in spec:
         cmd = (["qml6", TOP_INPUT_QML, "--", spec["qml"]] if "qml" in spec
                else ["qml6", os.path.join(SHELL_DIR, spec["qmlfile"])])
@@ -631,6 +678,43 @@ def close(app: str) -> tuple[int, dict]:
         else:
             proc.terminate()
         log(f"closing {app}")
+    return 200, {"ok": True}
+
+
+def install_app(body: dict) -> tuple[int, dict]:
+    path = body.get("path")
+    if not isinstance(path, str) or not os.path.isabs(path):
+        return 400, {"ok": False, "error": "path must be the archive's full path"}
+    try:
+        m = barry_apps.install(path, reserved=set(BUILTIN_APPS))
+    except barry_apps.AppError as err:
+        log(f"cannot install {path}: {err}")
+        return 400, {"ok": False, "error": str(err)}
+    except OSError as err:
+        log(f"cannot install {path}: {err}")
+        return 400, {"ok": False, "error": f"cannot install: {err.strerror or err}"}
+    # A running copy is the old version: it closes, to start anew.
+    if running(m["id"]):
+        close(m["id"])
+    refresh_user_apps(force=True)
+    log(f"{'updated' if m['updated'] else 'installed'} {m['id']} {m['version']}")
+    return 200, {"ok": True, "app": m}
+
+
+def remove_app(body: dict) -> tuple[int, dict]:
+    app = str(body.get("app", ""))
+    if app in BUILTIN_APPS:
+        return 400, {"ok": False, "error": f"{APPS[app]['name']} is part of Barry Launcher"}
+    if running(app):
+        close(app)
+    try:
+        removed = barry_apps.remove(app, keep_data=bool(body.get("keepData")))
+    except OSError as err:
+        return 400, {"ok": False, "error": f"cannot remove: {err.strerror or err}"}
+    if not removed:
+        return 404, {"ok": False, "error": f"no app {app!r}"}
+    refresh_user_apps(force=True)
+    log(f"removed {app}")
     return 200, {"ok": True}
 
 
@@ -868,14 +952,17 @@ class Handler(BaseHTTPRequestHandler):
             with STATE.lock:
                 self._json(200, dict(STATE.top_keyboard))
         elif path == "/apps":
+            refresh_user_apps()
             order, hidden = home_layout()
             self._json(200, {name: {"running": running(name) is not None,
                                     "status": STATE.status.get(name, ""),
                                     "name": APPS[name]["name"], "icon": APPS[name]["icon"],
                                     "closable": APPS[name].get("closable", True),
+                                    "user": APPS[name].get("user", False),
                                     "hidden": name in hidden, "pos": order.index(name)}
                              for name in APPS})
         elif path == "/layout":
+            refresh_user_apps()
             self._json(200, layout_json())
         else:
             self._json(404, {"error": "not found"})
@@ -912,6 +999,10 @@ class Handler(BaseHTTPRequestHandler):
             self._json(*suggest(body))
         elif path == "/layout":
             self._json(*set_layout(body))
+        elif path == "/apps/install":
+            self._json(*install_app(body))
+        elif path == "/apps/remove":
+            self._json(*remove_app(body))
         else:
             self._json(404, {"error": "not found"})
 
@@ -1244,6 +1335,7 @@ def main() -> None:
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     srv.daemon_threads = True
     threading.Thread(target=srv.serve_forever, daemon=True).start()
+    refresh_user_apps(force=True)
     enable_accessibility()
     Atspi.init()
     listener = Atspi.EventListener.new(on_focus)
@@ -1278,9 +1370,9 @@ def main() -> None:
         # An app ending means its fields are gone too.
         for name, proc in list(STATE.apps.items()):
             if proc.poll() is not None:
-                log(f"{name} exited")
+                log(f"{name} exited ({proc.returncode})")
                 del STATE.apps[name]
-                if "qml" in APPS[name]:
+                if "qml" in APPS.get(name, {}):
                     threading.Thread(target=release_top_input, daemon=True).start()
                 STATE.set_keyboard(False)
         # AYN held: home.

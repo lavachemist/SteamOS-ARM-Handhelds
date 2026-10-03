@@ -653,7 +653,8 @@ remove_old_bottom_session() {
 remove_thor_bottom_screen() {
   remove_old_bottom_session
   rm -rf "$R/usr/lib/barry_launcher" "$R/usr/share/barry_launcher"
-  rm -f "$R/usr/lib/steamos-sm8550/sm8550-run-bottom" \
+  rm -f "$R/usr/bin/barry-app" \
+    "$R/usr/lib/steamos-sm8550/sm8550-run-bottom" \
     "$R/usr/lib/steamos-sm8550/sm8550-thor-backlightd" \
     "$R/usr/lib/systemd/user/barry_launcher.service" \
     "$R/usr/lib/systemd/user/gamescope-session.target.wants/barry_launcher.service" \
@@ -700,14 +701,16 @@ if [[ "$SOC" == sm8550 ]]; then
     rm -rf "$R/usr/lib/barry_launcher" "$R/usr/share/barry_launcher"
     mkdir -p "$R/usr/lib/barry_launcher" "$R/usr/share"
     for f in barry_launcher_session barry_launcher_dashboard barry_launcher_statsd barry_launcher_shelld \
-      barry_launcher_inputd barry_launcher_desktop; do
+      barry_launcher_inputd barry_launcher_desktop barry-app; do
       install_file "$SM8550_OVL/usr/lib/barry_launcher/$f" "$R/usr/lib/barry_launcher/$f" 0755
     done
-    # Glide typing's decoder and the Desktop Mode (KWin) side, imported by
-    # barry_launcher_shelld.
-    for f in barry_glide.py barry_desktop.py barry_trackpad.py; do
+    # Glide typing's decoder, the Desktop Mode (KWin) side and user apps
+    # (barry_apps, also barry-app's), imported by barry_launcher_shelld.
+    for f in barry_glide.py barry_desktop.py barry_trackpad.py barry_apps.py; do
       install_file "$SM8550_OVL/usr/lib/barry_launcher/$f" "$R/usr/lib/barry_launcher/$f" 0644
     done
+    # barry-app: install and make Barry Launcher apps from a terminal.
+    ln -sfn ../lib/barry_launcher/barry-app "$R/usr/bin/barry-app"
     # Desktop Mode: Barry's keyboard as KWin's input method, a small Wayland
     # client built here against the rootfs's libwayland.
     "${ROOT}/external-and-mods/barry-launcher-imd/build.sh" "$R" "$R/usr/lib/barry_launcher/barry_launcher_imd" \

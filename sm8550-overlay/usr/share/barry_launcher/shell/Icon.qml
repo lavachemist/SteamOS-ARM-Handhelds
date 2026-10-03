@@ -1,6 +1,7 @@
 // Line icons for the shell's buttons, drawn so they look the same whatever
 // fonts are installed. kind: back, forward, reload, stop, home, close, globe,
-// chat, trackpad, keyboard, the keyboard keys, and the apps' logos as line
+// chat, trackpad, keyboard, app (a user app without an icon of its own),
+// the keyboard keys, and the apps' logos as line
 // art in the same style: firefox, discord, signal (outlines from Tabler
 // Icons, MIT), and dino; all drawn on a 24-unit grid and scaled.
 import QtQuick
@@ -90,6 +91,14 @@ Shape {
                 case "stop":
                 case "close":
                     return `M ${0.25 * w} ${0.25 * h} L ${0.75 * w} ${0.75 * h} M ${0.75 * w} ${0.25 * h} L ${0.25 * w} ${0.75 * h}`
+                case "app":
+                    // four rounded tiles
+                    return [[0.18, 0.18], [0.56, 0.18], [0.18, 0.56], [0.56, 0.56]].map(([x, y]) => {
+                        const x0 = x * w, y0 = y * h, x1 = (x + 0.26) * w, y1 = (y + 0.26) * h, r = 0.05 * w
+                        return `M ${x0 + r} ${y0} L ${x1 - r} ${y0} Q ${x1} ${y0} ${x1} ${y0 + r}`
+                             + ` L ${x1} ${y1 - r} Q ${x1} ${y1} ${x1 - r} ${y1} L ${x0 + r} ${y1}`
+                             + ` Q ${x0} ${y1} ${x0} ${y1 - r} L ${x0} ${y0 + r} Q ${x0} ${y0} ${x0 + r} ${y0} Z`
+                    }).join(" ")
                 case "home":
                     return `M ${0.15 * w} ${0.5 * h} L ${0.5 * w} ${0.18 * h} L ${0.85 * w} ${0.5 * h}`
                          + ` M ${0.25 * w} ${0.42 * h} L ${0.25 * w} ${0.82 * h} L ${0.75 * w} ${0.82 * h} L ${0.75 * w} ${0.42 * h}`

@@ -1,0 +1,199 @@
+#!/usr/bin/env python3
+"""barry-app: install and make Barry Launcher apps (barry_apps).
+
+  barry-app install ARCHIVE      install or update an app (.zip, .tar.gz, ...)
+  barry-app remove ID [--keep-data]
+  barry-app list                 the installed apps
+  barry-app check PATH           would this archive or folder install? (for
+                                 app makers: the same checks as install)
+  barry-app pack FOLDER [-o OUT] check an app folder and zip it for sharing
+  barry-app run FOLDER           run an app folder in a window, as Barry
+                                 Launcher would (to try it while making it;
+                                 needs Qt 6's qml tool, or BARRY_QML set to it)
+
+Installs go through barry_launcher_shelld when it runs, so the home screen
+shows the app at once (and a running old version closes); otherwise
+straight to ~/.local/share/barry_launcher/apps, for the next start.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import urllib.error
+import urllib.request
+import zipfile
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import barry_apps  # noqa: E402
+
+SHELLD = f"http://127.0.0.1:{os.environ.get('BARRY_PORT', '47824')}"
+# Barry Launcher's, or (to try apps on a PC) a copy next to this script.
+APP_HOSTS = (os.path.join(os.path.dirname(os.path.realpath(__file__)), "AppHost.qml"),
+             "/usr/share/barry_launcher/shell/AppHost.qml")
+# Barry Launcher's own apps, which a user app may not replace (shelld
+# checks too; this is for installs without it).
+BUILTIN = {"browser", "discord", "signal", "trackpad", "keyboard", "dino"}
+PACK_SKIP = {".git", ".github", "__pycache__", ".DS_Store", "__MACOSX", ".vscode", ".idea"}
+
+
+def shelld(path: str, body: dict) -> dict | None:
+    """barry_launcher_shelld's answer, or None when it is not running."""
+    req = urllib.request.Request(SHELLD + path, json.dumps(body).encode(), {"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as err:
+        try:
+            return json.load(err)
+        except ValueError:
+            return {"ok": False, "error": f"Barry Launcher answered {err.code}"}
+    except (OSError, ValueError):
+        return None
+
+
+def describe(m: dict) -> str:
+    return f'{m["name"]} {m["version"]} ({m["id"]})'
+
+
+def cmd_install(a) -> int:
+    path = os.path.abspath(a.archive)
+    reply = shelld("/apps/install", {"path": path})
+    if reply is None:
+        try:
+            m = barry_apps.install(path, reserved=BUILTIN)
+        except barry_apps.AppError as err:
+            print(f"barry-app: {err}", file=sys.stderr)
+            return 1
+        print(f"{'Updated' if m['updated'] else 'Installed'} {describe(m)}; "
+              "Barry Launcher shows it when it next starts.")
+        return 0
+    if not reply.get("ok"):
+        print(f"barry-app: {reply.get('error')}", file=sys.stderr)
+        return 1
+    m = reply["app"]
+    print(f"{'Updated' if m['updated'] else 'Installed'} {describe(m)}: it is on the home screen.")
+    return 0
+
+
+def cmd_remove(a) -> int:
+    reply = shelld("/apps/remove", {"app": a.id, "keepData": a.keep_data})
+    if reply is None:
+        ok = barry_apps.remove(a.id, keep_data=a.keep_data)
+        reply = {"ok": ok, "error": f"no app {a.id!r}"}
+    if not reply.get("ok"):
+        print(f"barry-app: {reply.get('error')}", file=sys.stderr)
+        return 1
+    print(f"Removed {a.id}" + (" (its data is kept)" if a.keep_data else ""))
+    return 0
+
+
+def cmd_list(_a) -> int:
+    apps = barry_apps.installed()
+    if not apps:
+        print("No apps installed.")
+    for m in apps.values():
+        print(describe(m))
+    return 0
+
+
+def cmd_check(a) -> int:
+    try:
+        m = barry_apps.check(os.path.abspath(a.path))
+    except barry_apps.AppError as err:
+        print(f"barry-app: {err}", file=sys.stderr)
+        return 1
+    if m["id"] in BUILTIN:
+        print(f"barry-app: \"{m['id']}\" is one of Barry Launcher's own apps", file=sys.stderr)
+        return 1
+    print(f"OK: {describe(m)}")
+    return 0
+
+
+def cmd_pack(a) -> int:
+    folder = os.path.abspath(a.folder)
+    try:
+        m = barry_apps.read_manifest(folder)
+    except barry_apps.AppError as err:
+        print(f"barry-app: {err}", file=sys.stderr)
+        return 1
+    top = m["id"].rsplit(".", 1)[-1]
+    out = os.path.abspath(a.output or f"{top}-{m['version']}.zip")
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
+        for root, dirs, files in os.walk(folder):
+            dirs[:] = sorted(d for d in dirs if d not in PACK_SKIP)
+            for f in sorted(files):
+                if f in PACK_SKIP or f.endswith(".zip"):
+                    continue
+                full = os.path.join(root, f)
+                if os.path.islink(full):
+                    print(f"barry-app: {os.path.relpath(full, folder)} is a link; apps may not have links",
+                          file=sys.stderr)
+                    return 1
+                zf.write(full, os.path.join(top, os.path.relpath(full, folder)))
+    try:
+        barry_apps.check(out)
+    except barry_apps.AppError as err:
+        print(f"barry-app: the packed app does not install: {err}", file=sys.stderr)
+        return 1
+    print(f"Packed {describe(m)} into {out}")
+    return 0
+
+
+def cmd_run(a) -> int:
+    folder = os.path.abspath(a.folder)
+    try:
+        m = barry_apps.read_manifest(folder)
+    except barry_apps.AppError as err:
+        print(f"barry-app: {err}", file=sys.stderr)
+        return 1
+    host = next((h for h in APP_HOSTS if os.path.isfile(h)), None)
+    # Qt 6's qml tool: BARRY_QML, or qml6 / qml on the PATH, or where
+    # Linux distributions keep it.
+    qml = (os.environ.get("BARRY_QML") or shutil.which("qml6") or shutil.which("qml")
+           or next((q for q in ("/usr/lib/qt6/bin/qml", "/usr/lib64/qt6/bin/qml") if os.path.isfile(q)), None))
+    if not host or not qml:
+        print("barry-app: run needs Qt 6's qml tool: put it on the PATH, or set BARRY_QML to it", file=sys.stderr)
+        return 1
+    data = os.path.abspath(a.data) if a.data else tempfile.mkdtemp(prefix=f"barry-app-{m['id']}-")
+    os.makedirs(data, exist_ok=True)
+    print(f"Running {describe(m)}; its data folder is {data}")
+    env = dict(os.environ, BARRY_APP_ID=m["id"], BARRY_APP_DIR=folder, BARRY_APP_DATA=data)
+    return subprocess.call([qml, host, "--", folder, m["main"], m["id"], m["name"], data,
+                            "fullscreen" if a.fullscreen else "windowed"], env=env)
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(prog="barry-app", description="Install and make Barry Launcher apps.")
+    sub = p.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("install", help="install or update an app from an archive")
+    s.add_argument("archive")
+    s.set_defaults(fn=cmd_install)
+    s = sub.add_parser("remove", help="remove an installed app")
+    s.add_argument("id")
+    s.add_argument("--keep-data", action="store_true", help="keep what the app saved")
+    s.set_defaults(fn=cmd_remove)
+    s = sub.add_parser("list", help="list the installed apps")
+    s.set_defaults(fn=cmd_list)
+    s = sub.add_parser("check", help="check an app archive or folder")
+    s.add_argument("path")
+    s.set_defaults(fn=cmd_check)
+    s = sub.add_parser("pack", help="check an app folder and zip it")
+    s.add_argument("folder")
+    s.add_argument("-o", "--output", help="the zip to write (default: NAME-VERSION.zip here)")
+    s.set_defaults(fn=cmd_pack)
+    s = sub.add_parser("run", help="run an app folder in a window, to try it")
+    s.add_argument("folder")
+    s.add_argument("--data", help="its data folder (default: a new temporary one)")
+    s.add_argument("--fullscreen", action="store_true")
+    s.set_defaults(fn=cmd_run)
+    a = p.parse_args()
+    return a.fn(a)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
