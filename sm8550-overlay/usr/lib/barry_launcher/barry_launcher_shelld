@@ -349,6 +349,8 @@ class State:
         self.input_focus: bool | None = None
         self.quiet_until = 0.0  # monotonic time: no keyboard for text focus before it
         self.last_touch: float | None = None  # monotonic; None: no touchscreen found
+        self.touch_began: float | None = None  # monotonic: the latest touch's first finger down
+        self.hidden_by_hand = 0.0  # monotonic: the keyboard's own hide (its ⌄ key, a tap beside it)
         self.text_acc = None  # the focused editable field, if any
         self.keyboard_height = 0  # the key panel's height, as Keyboard.qml reports it
         self.inset: int | None = None  # GAMESCOPE_FOCUS_BOTTOM_INSET last set
@@ -1181,6 +1183,8 @@ class Handler(BaseHTTPRequestHandler):
                 STATE.home_ready.set()
             self._json(200, {"ok": True})
         elif path == "/keyboard":
+            if not body.get("visible") and STATE.keyboard()["visible"]:
+                STATE.hidden_by_hand = time.monotonic()
             STATE.set_keyboard(bool(body.get("visible")))
             self._json(200, STATE.keyboard())
         elif path == "/type":
@@ -1269,6 +1273,7 @@ def watch_touches() -> None:
                     if value >= 0:
                         if not down:
                             lead, multi, start = slot, False, None
+                            STATE.touch_began = time.monotonic()
                         else:
                             multi = True
                         down.add(slot)
@@ -1339,6 +1344,14 @@ def touched_lately() -> bool:
 
 
 def show_for_text(top: bool, why: str) -> None:
+    began = STATE.touch_began
+    if began is not None and began < STATE.hidden_by_hand:
+        # The touch that put the keyboard away (its ⌄ key, over a field the
+        # keyboard covers, say) is no tap on that field, and the caret
+        # moves and focus changes it brings are not either: only a new
+        # touch brings the keyboard back.
+        log(f"{why} from the touch that hid the keyboard: no keyboard")
+        return
     if time.monotonic() < STATE.quiet_until:
         log(f"{why} while an app opens: no keyboard")
         return
