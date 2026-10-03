@@ -91,6 +91,11 @@ HOME_READY_S = 0.15
 GLIDE_WORDS = "/usr/share/barry_launcher/glide/words.txt"
 HOME_TITLE = "Barry Launcher"
 DASHBOARD_FLAG = "/run/sm8550-thor/overlay"
+# "1" while the Keyboard or Trackpad app is open: they work the top screen
+# from here, so sm8550-thor-backlightd has Steam's gamescope hand the bottom
+# screen back should a dual-screen game be showing its second window there.
+TOP_INPUT_FLAG = "/run/sm8550-thor/top-input"
+TOP_INPUT_APPS = ("keyboard", "trackpad")
 HOME_REQUEST = "/run/sm8550-thor/home"
 HOME = os.path.expanduser("~")
 DATA = os.path.join(os.environ.get("XDG_DATA_HOME", f"{HOME}/.local/share"), "barry_launcher")
@@ -1103,9 +1108,10 @@ def main() -> None:
             return None
 
     last_home = home_request_stamp()
+    top_input_written: bool | None = None
 
     def watch() -> bool:
-        nonlocal last_home
+        nonlocal last_home, top_input_written
         # The keyboard window appears shortly after we start; mark it then,
         # so gamescope does not take it for an app.
         if not STATE.overlay_marked:
@@ -1127,6 +1133,14 @@ def main() -> None:
         # Overlays draw above the dashboard: step aside while it is up.
         if STATE.keyboard()["visible"] and dashboard_up():
             STATE.set_keyboard(False)
+        top_input = not DESKTOP and any(running(a) for a in TOP_INPUT_APPS)
+        if top_input != top_input_written:
+            try:
+                with open(TOP_INPUT_FLAG, "w", encoding="utf-8") as fh:
+                    fh.write("1" if top_input else "0")
+                top_input_written = top_input
+            except OSError:
+                pass  # no sm8550-thor-backlightd (not a Thor); tried again next pass
         return True
     GLib.timeout_add(200, watch)
     Atspi.event_main()

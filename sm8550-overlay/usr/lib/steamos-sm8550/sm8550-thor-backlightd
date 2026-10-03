@@ -36,11 +36,13 @@ over whatever the bottom screen holds while OVERLAY is "1" (and writes "0"
 itself if an idle time is set). While the overlay is up the bottom screen is on even if
 the switch says off (from OVERLAY_DELAY_S after the press, once the
 dashboard has drawn, so the app under it does not flash up); afterwards it
-returns to the switch's state. While OVERLAY is "1" Steam's gamescope also
-gets GAMESCOPE_BOTTOM_SCREEN_YIELD on its root: should it be drawing a game's
-second window on the bottom screen (a DS or 3DS emulator's, gamescope's
-dual-screen branch), it hands the screen back to Barry Launcher's gamescope
-for the dashboard and takes it again once OVERLAY is "0".
+returns to the switch's state. While OVERLAY or TOP_INPUT (Barry Launcher's
+Keyboard or Trackpad app open, written by barry_launcher_shelld) is "1",
+Steam's gamescope also gets GAMESCOPE_BOTTOM_SCREEN_YIELD on its root:
+should it be drawing a game's second window on the bottom screen (a DS or
+3DS emulator's, gamescope's dual-screen branch), it hands the screen back to
+Barry Launcher's gamescope for the dashboard or keyboard and takes it again
+once both are "0".
 
 Idle dim: Steam dims the screens (and later sleeps) when it has seen no
 input for a while, and touches on the bottom screen go to the bottom
@@ -77,6 +79,7 @@ STEAM_BOTTOM = f"{RUN_DIR}/steam-bottom-brightness"
 IN_MODIFY = 0x2
 STEAM_GAMMA = 2.2
 OVERLAY = f"{RUN_DIR}/overlay"
+TOP_INPUT = f"{RUN_DIR}/top-input"
 HOME = f"{RUN_DIR}/home"  # a request counter; any change means "go home"
 LONG_PRESS_S = 0.6
 TOUCH_NAME = "bottom_touchscreen"
@@ -204,7 +207,8 @@ def touch_inhibited_paths() -> list[str]:
 
 
 def setup_overlay() -> None:
-    """Session-writable overlay flag: the dashboard clears it on timeout."""
+    """Session-writable flags: the dashboard clears OVERLAY on timeout, and
+    barry_launcher_shelld keeps TOP_INPUT."""
     os.makedirs(RUN_DIR, exist_ok=True)
     try:
         gid = grp.getgrnam("input").gr_gid
@@ -212,9 +216,10 @@ def setup_overlay() -> None:
         gid = -1
     os.chown(RUN_DIR, -1, gid)
     os.chmod(RUN_DIR, 0o2775)
-    write(OVERLAY, "0")
-    os.chown(OVERLAY, -1, gid)
-    os.chmod(OVERLAY, 0o664)
+    for flag in (OVERLAY, TOP_INPUT):
+        write(flag, "0")
+        os.chown(flag, -1, gid)
+        os.chmod(flag, 0o664)
 
 
 def open_ayn_key() -> int | None:
@@ -363,7 +368,7 @@ def run(bl_fd: int, bottom_path: str, bottom_max: int, top_max: int) -> int:
     pressed_at: float | None = None  # AYN held down since, until handled
     home_count = 0
     yield_sent: bool | None = None  # GAMESCOPE_BOTTOM_SCREEN_YIELD as last set
-    yield_tried = -YIELD_RETRY_S
+    yield_retry_at = 0.0  # after Game Mode was not found
     log(f"following {BOTTOM} (max {bottom_max}) -> {TOP} (max {top_max})")
     while True:
         poller = select.poll()
@@ -440,12 +445,14 @@ def run(bl_fd: int, bottom_path: str, bottom_max: int, top_max: int) -> int:
             log("AYN button held: home")
 
         overlay = read(OVERLAY, "0") == "1"
-        if overlay != yield_sent and time.monotonic() - yield_tried >= YIELD_RETRY_S:
-            yield_tried = time.monotonic()
-            if set_bottom_screen_yield(overlay):
-                yield_sent = overlay
-                log(f"bottom screen {'yielded to' if overlay else 'back from'} the dashboard")
-            elif not overlay:
+        want_yield = overlay or read(TOP_INPUT, "0") == "1"
+        if want_yield != yield_sent and time.monotonic() >= yield_retry_at:
+            if set_bottom_screen_yield(want_yield):
+                yield_sent = want_yield
+                log(f"bottom screen {'yielded to' if want_yield else 'back from'} Barry Launcher")
+            elif want_yield:
+                yield_retry_at = time.monotonic() + YIELD_RETRY_S
+            else:
                 yield_sent = False  # no Game Mode, nothing to take back
         if overlay and overlay_since is None:
             overlay_since = time.monotonic()
