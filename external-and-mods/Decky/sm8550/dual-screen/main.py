@@ -37,7 +37,9 @@ Also Barry Launcher's home screen: which apps it shows, in what order
 (barry_launcher_shelld keeps them in ~/.config/barry_launcher/home.json),
 and user apps: an archive picked in Decky's file picker is installed by
 barry_launcher_shelld (as the user, into ~/.local/share/barry_launcher/apps),
-and a user app can be removed.
+and a user app can be removed. And apps that open with games: the
+frontend watches Steam's running games (Steam's and non-Steam ones alike,
+by appid) and tells barry_launcher_shelld, which keeps the links.
 """
 from __future__ import annotations
 
@@ -594,6 +596,30 @@ class Plugin:
             return await asyncio.to_thread(_shelld_answer, "/apps/remove", {"app": str(app)}, 10)
         except (OSError, ValueError) as err:
             return {"ok": False, "error": f"Barry Launcher isn't answering ({err})."}
+
+    async def get_game_links(self, **_: Any) -> dict[str, Any]:
+        try:
+            def get() -> dict:
+                with urllib.request.urlopen(f"{SHELLD}/game-links", timeout=1) as r:
+                    return json.load(r)
+            return {"ok": True, **await asyncio.to_thread(get)}
+        except (OSError, ValueError) as err:
+            return {"ok": False, "error": f"Barry Launcher isn't answering ({err})."}
+
+    async def set_game_links(self, links: list | None = None, **_: Any) -> dict[str, Any]:
+        try:
+            r = await asyncio.to_thread(_shelld_answer, "/game-links", {"links": list(links or [])})
+            return {"ok": "links" in r, **r}
+        except (OSError, ValueError) as err:
+            return {"ok": False, "error": f"Barry Launcher isn't answering ({err})."}
+
+    async def game_event(self, game: str = "", running: bool = False, **_: Any) -> dict[str, Any]:
+        """A game started or stopped: Barry Launcher opens or closes its app."""
+        try:
+            return await asyncio.to_thread(_shelld_answer, "/game-event",
+                                           {"game": str(game), "running": bool(running)}, 5)
+        except (OSError, ValueError) as err:
+            return {"ok": False, "error": str(err)}
 
     async def open_barry_keyboard(self, **_: Any) -> bool:
         """Opens Barry Launcher's keyboard; False when it cannot be seen, for

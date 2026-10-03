@@ -14,6 +14,10 @@ keyboard (shell/Keyboard.qml), which call it on 127.0.0.1:PORT:
   POST /apps/install {"path": archive}: install or update a user app
                   (barry_apps), {"ok": bool, "app": manifest | "error": str}
   POST /apps/remove  {"app": id}: remove a user app and its data
+  GET  /game-links   {"links": [{"game", "gameName", "app", "appName", "close"}]}
+  POST /game-links   {"links": [...]}: the apps that open with games
+  POST /game-event   {"game": appid, "running": bool}: a game started or
+                  stopped (the Barry Launcher plugin, which sees Steam)
   GET  /keyboard  {"visible": bool, "top": bool}: top when the text field is
                   in the lower half, so the keyboard does not cover it
   POST /keyboard  {"visible": bool}: show or hide by hand
@@ -350,6 +354,7 @@ class State:
         self.im = None  # Desktop Mode: barry_desktop.InputMethod
         self.last_top_click: float | None = None  # monotonic: trackpad click or top-screen touch
         self.top_keyboard = {"serial": 0, "visible": False}  # the Trackpad app's keyboard
+        self.opened_for_game: dict[str, str] = {}  # game appid -> the app it opened
 
     def set_top_keyboard(self, visible: bool, why: str) -> None:
         with self.lock:
@@ -750,9 +755,80 @@ def remove_app(body: dict) -> tuple[int, dict]:
         return 400, {"ok": False, "error": f"cannot remove: {err.strerror or err}"}
     if not removed:
         return 404, {"ok": False, "error": f"no app {app!r}"}
+    drop_game_links(app)
     refresh_user_apps(force=True)
     log(f"removed {app}")
     return 200, {"ok": True}
+
+
+# Apps that open with games: Steam's appid (a non-Steam game's shortcut id)
+# -> a Barry Launcher app. The Barry Launcher plugin sets them and reports
+# games starting and stopping; an app opened for a game closes with it
+# when its link says so (and only if it was opened for it).
+GAME_LINKS = os.path.join(os.path.dirname(HOME_LAYOUT), "game-links.json")
+
+
+def game_links() -> list[dict]:
+    try:
+        with open(GAME_LINKS, encoding="utf-8") as fh:
+            links = json.load(fh).get("links", [])
+    except (OSError, ValueError, AttributeError):
+        return []
+    return [l for l in links if isinstance(l, dict) and str(l.get("game", "")).isdigit()
+            and l.get("app") in APPS]
+
+
+def game_links_json() -> dict:
+    return {"links": [dict(l, appName=APPS[l["app"]]["name"]) for l in game_links()]}
+
+
+def set_game_links(body: dict) -> tuple[int, dict]:
+    links = body.get("links")
+    if not isinstance(links, list):
+        return 400, {"error": "links is a list"}
+    clean = {}
+    for l in links:
+        if not isinstance(l, dict):
+            continue
+        game, app = str(l.get("game", "")), l.get("app")
+        if not game.isdigit() or app not in APPS:
+            return 400, {"error": f"no app {app!r}" if game.isdigit() else "game is a Steam appid"}
+        clean[game] = {"game": game, "gameName": str(l.get("gameName", ""))[:100], "app": app,
+                       "close": bool(l.get("close", True))}  # one app per game: the last wins
+    os.makedirs(os.path.dirname(GAME_LINKS), exist_ok=True)
+    with open(GAME_LINKS + ".tmp", "w", encoding="utf-8") as fh:
+        json.dump({"links": list(clean.values())}, fh, indent=1)
+        fh.write("\n")
+    os.replace(GAME_LINKS + ".tmp", GAME_LINKS)
+    return 200, game_links_json()
+
+
+def drop_game_links(app: str) -> None:
+    """An app removed: no game opens it any more."""
+    links = game_links()
+    kept = [l for l in links if l["app"] != app]
+    if len(kept) != len(links):
+        set_game_links({"links": kept})
+
+
+def game_event(body: dict) -> tuple[int, dict]:
+    game = str(body.get("game", ""))
+    link = next((l for l in game_links() if l["game"] == game), None)
+    if not game.isdigit() or link is None:
+        return 200, {"ok": True, "app": None}
+    app = link["app"]
+    if body.get("running"):
+        opened = not running(app)
+        log(f"game {game} ({link['gameName'] or '?'}) started: {app}")
+        code, r = launch(app)
+        if code == 200 and opened:
+            STATE.opened_for_game[game] = app
+        return code, dict(r, app=app)
+    # Stopped: close the app only if this game opened it.
+    if STATE.opened_for_game.pop(game, None) == app and link["close"] and running(app):
+        log(f"game {game} ({link['gameName'] or '?'}) stopped: closing {app}")
+        close(app)
+    return 200, {"ok": True, "app": app}
 
 
 def setup_bundled_apps() -> None:
@@ -1048,6 +1124,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/layout":
             refresh_user_apps()
             self._json(200, layout_json())
+        elif path == "/game-links":
+            refresh_user_apps()
+            self._json(200, game_links_json())
         else:
             self._json(404, {"error": "not found"})
 
@@ -1087,6 +1166,10 @@ class Handler(BaseHTTPRequestHandler):
             self._json(*install_app(body))
         elif path == "/apps/remove":
             self._json(*remove_app(body))
+        elif path == "/game-links":
+            self._json(*set_game_links(body))
+        elif path == "/game-event":
+            self._json(*game_event(body))
         else:
             self._json(404, {"error": "not found"})
 

@@ -35,6 +35,9 @@ const setBarryApps = callable("set_barry_apps");
 const barryAppsFolder = callable("barry_apps_folder");
 const installBarryApp = callable("install_barry_app");
 const removeBarryApp = callable("remove_barry_app");
+const getGameLinks = callable("get_game_links");
+const setGameLinks = callable("set_game_links");
+const gameEvent = callable("game_event");
 // Decky's file browser (select 0: a file), as @decky/api's openFilePicker.
 const ARCHIVE_EXTENSIONS = ["zip", "gz", "tgz", "xz", "txz", "bz2", "tbz2", "tar"];
 
@@ -136,6 +139,44 @@ function unwatchClicks() {
     watchedDocs.clear();
 }
 
+// Apps that open with games: Steam's running games (its own and non-Steam
+// shortcuts alike, by appid), told to Barry Launcher as they start and
+// stop; it opens and closes the linked apps. Games already running when
+// the plugin loads are not news.
+let gamesSeen = null;
+
+function runningGames() {
+    const apps = (DFL.Router && DFL.Router.RunningApps) || [];
+    return new Set(apps.map((a) => String(a.appid)));
+}
+
+function watchGames() {
+    const now = runningGames();
+    if (gamesSeen) {
+        for (const id of now) if (!gamesSeen.has(id)) gameEvent(id, true).catch(() => {});
+        for (const id of gamesSeen) if (!now.has(id)) gameEvent(id, false).catch(() => {});
+    }
+    gamesSeen = now;
+}
+
+// Games to link: those running, then the most recently played (Steam's and
+// non-Steam), as [{ id, name, running }].
+const STEAM_GAME = 1, NON_STEAM_GAME = 1073741824;
+function linkableGames() {
+    const out = [], seen = new Set();
+    const add = (id, name, running) => {
+        id = String(id);
+        if (!seen.has(id) && name) { seen.add(id); out.push({ id, name, running }); }
+    };
+    for (const a of (DFL.Router && DFL.Router.RunningApps) || []) add(a.appid, a.display_name, true);
+    const all = (window.collectionStore && collectionStore.allAppsCollection && collectionStore.allAppsCollection.allApps) || [];
+    all.filter((a) => (a.app_type === STEAM_GAME || a.app_type === NON_STEAM_GAME) && a.rt_last_time_played > 0)
+        .sort((a, b) => b.rt_last_time_played - a.rt_last_time_played)
+        .slice(0, 40)
+        .forEach((a) => add(a.appid, a.display_name, false));
+    return out;
+}
+
 function steamKeyboardShowing(mgr) {
     // A subscribable value ({ Value, m_currentValue }) in current Steam builds.
     const v = mgr.IsShowingVirtualKeyboard;
@@ -191,6 +232,12 @@ const HandheldIcon = () => svg([
 ]);
 
 // Barry Launcher's home: a 2x2 grid of app tiles.
+// A gamepad: games and the apps that open with them.
+const GamesIcon = () => svg([
+    jsx("path", { d: "M7 7h10a5 5 0 0 1 4.6 7l-1 2.4a2.5 2.5 0 0 1 -4.3 .5l-1.3 -1.9h-6l-1.3 1.9a2.5 2.5 0 0 1 -4.3 -.5l-1 -2.4a5 5 0 0 1 4.6 -7z" }, "a"),
+    jsx("path", { d: "M8 10v3M6.5 11.5h3" }, "b"),
+    jsx("path", { d: "M15.5 10.5h.01M17.5 12.5h.01" }, "c"),
+]);
 const AppsIcon = () => svg([
     jsx("rect", { x: 3, y: 3, width: 7.5, height: 7.5, rx: 2 }, "a"),
     jsx("rect", { x: 13.5, y: 3, width: 7.5, height: 7.5, rx: 2 }, "b"),
@@ -390,6 +437,79 @@ function AppsSection() {
     ] });
 }
 
+function GamesSection() {
+    const [links, setLinks] = useState(null);
+    const [apps, setApps] = useState([]);
+    const [games] = useState(linkableGames);
+    const [game, setGame] = useState(games.length ? games[0].id : null);
+    const [app, setApp] = useState(null);
+    const [close, setClose] = useState(true);
+    const [err, setErr] = useState("");
+    const load = useCallback(() => {
+        getGameLinks().then((r) => {
+            if (r && r.ok) { setLinks(r.links); setErr(""); }
+            else setErr((r && r.error) || "Barry Launcher isn't answering.");
+        }).catch(() => setErr("Barry Launcher isn't answering."));
+        getBarryApps().then((r) => {
+            if (r && r.ok) {
+                // Trackpad and Keyboard are tools for the top screen, not
+                // companions to a game.
+                const list = r.apps.filter((a) => a.id !== "trackpad" && a.id !== "keyboard");
+                setApps(list);
+                setApp((cur) => cur || (list.length ? list[0].id : null));
+            }
+        }).catch(() => {});
+    }, []);
+    useEffect(load, [load]);
+    const save = (next) => setGameLinks(next.map(({ game, gameName, app, close }) => ({ game, gameName, app, close })))
+        .then((r) => { if (r && r.ok) setLinks(r.links); else setErr((r && r.error) || "Could not save."); })
+        .catch(() => setErr("Could not save."));
+    const link = () => {
+        const g = games.find((x) => x.id === game);
+        if (!g || !app) return;
+        save([...(links || []).filter((l) => l.game !== g.id), { game: g.id, gameName: g.name, app, close }]);
+    };
+    const linked = (links || []).find((l) => l.game === game);
+    return jsxs(DFL.PanelSection, { title: "Apps with games", children: [
+        err && note(err),
+        games.length === 0 && note("Play a game first: the games you've played are listed here."),
+        games.length > 0 && row(jsx(DFL.DropdownItem, {
+            label: "Game",
+            rgOptions: games.map((g) => ({ data: g.id, label: (g.running ? "▶ " : "") + g.name })),
+            selectedOption: game,
+            onChange: (o) => setGame(o.data),
+        })),
+        apps.length > 0 && row(jsx(DFL.DropdownItem, {
+            label: "Opens",
+            rgOptions: apps.map((a) => ({ data: a.id, label: a.name })),
+            selectedOption: app,
+            onChange: (o) => setApp(o.data),
+        })),
+        row(jsx(DFL.ToggleField, {
+            label: "Close it when the game closes",
+            checked: close,
+            onChange: setClose,
+        })),
+        row(jsx(DFL.ButtonItem, {
+            layout: "below", disabled: !game || !app, onClick: link,
+            children: linked ? "Change the link" : "Link",
+        })),
+        ...(links || []).map((l) => row(jsxs(DFL.Focusable, {
+            "flow-children": "horizontal",
+            style: { display: "flex", alignItems: "center" },
+            children: [
+                jsx("div", { style: { flex: 1 }, children: `${l.gameName || l.game} → ${l.appName}${l.close ? "" : " (stays open)"}` }),
+                jsx(DFL.DialogButton, {
+                    onClick: () => save(links.filter((x) => x.game !== l.game)),
+                    style: { minWidth: "36px", width: "36px", height: "32px", padding: 0, marginLeft: "4px" },
+                    children: "✕",
+                }),
+            ],
+        }))),
+        note("When a linked game starts, its app opens on the bottom screen. ▶: running now."),
+    ] });
+}
+
 function Content() {
     const [tab, setTab] = useState(lastTab);
     const pick = (id) => { lastTab = id; setTab(id); };
@@ -428,6 +548,7 @@ function Content() {
     const tabs = [
         { id: "screens", icon: ThorIcon },
         { id: "apps", icon: AppsIcon },
+        { id: "games", icon: GamesIcon },
         ...(st.rgbDimmer != null ? [{ id: "lights", icon: RgbIcon }] : []),
         { id: "emulators", icon: HandheldIcon },
     ];
@@ -470,6 +591,7 @@ function Content() {
         note("This setting adjusts the brightness threshold of the performance dashboard settings"),
     ] }),
     shown === "apps" && jsx(AppsSection, {}),
+    shown === "games" && jsx(GamesSection, {}),
     shown === "emulators" && jsx(TwoScreenSection, {}),
     ] });
 }
@@ -477,6 +599,8 @@ function Content() {
 var index = definePlugin(() => {
     const timer = setInterval(watchBarryKeyboard, 2000);
     watchBarryKeyboard();
+    const gameTimer = setInterval(watchGames, 1000);
+    watchGames();
     return {
         name: "Barry Launcher",
         content: jsx(Content, {}),
@@ -484,6 +608,8 @@ var index = definePlugin(() => {
         alwaysRender: false,
         onDismount() {
             clearInterval(timer);
+            clearInterval(gameTimer);
+            gamesSeen = null;
             if (unhookKeyboard) unhookKeyboard();
             unhookKeyboard = null;
             unwatchClicks();
