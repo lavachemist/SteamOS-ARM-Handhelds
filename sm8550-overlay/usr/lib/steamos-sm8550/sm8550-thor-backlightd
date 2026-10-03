@@ -36,7 +36,11 @@ over whatever the bottom screen holds while OVERLAY is "1" (and writes "0"
 itself if an idle time is set). While the overlay is up the bottom screen is on even if
 the switch says off (from OVERLAY_DELAY_S after the press, once the
 dashboard has drawn, so the app under it does not flash up); afterwards it
-returns to the switch's state.
+returns to the switch's state. While OVERLAY is "1" Steam's gamescope also
+gets GAMESCOPE_BOTTOM_SCREEN_YIELD on its root: should it be drawing a game's
+second window on the bottom screen (a DS or 3DS emulator's, gamescope's
+dual-screen branch), it hands the screen back to Barry Launcher's gamescope
+for the dashboard and takes it again once OVERLAY is "0".
 
 Idle dim: Steam dims the screens (and later sleeps) when it has seen no
 input for a while, and touches on the bottom screen go to the bottom
@@ -91,6 +95,8 @@ OVERLAY_DELAY_S = 0.5
 # Steam's shortest idle dim is minutes; one nudge per this many seconds of
 # touching keeps it awake.
 NUDGE_S = 20
+# Steam's display is looked for again this often while Game Mode is not up.
+YIELD_RETRY_S = 2
 
 
 def log(msg: str) -> None:
@@ -269,6 +275,23 @@ def nudge_steam() -> subprocess.Popen | None:
         return None
 
 
+def set_bottom_screen_yield(on: bool) -> bool:
+    """GAMESCOPE_BOTTOM_SCREEN_YIELD on Steam's display; False if Game Mode
+    is not running."""
+    user = steam_display_user()
+    if user is None:
+        return False
+    prop = "GAMESCOPE_BOTTOM_SCREEN_YIELD"
+    args = ["-f", prop, "32c", "-set", prop, "1"] if on else ["-remove", prop]
+    try:
+        return subprocess.run(
+            ["runuser", "-u", user, "--", "env", "DISPLAY=:0", "xprop", "-root", *args],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5).returncode == 0
+    except (OSError, subprocess.TimeoutExpired) as err:
+        log(f"cannot reach Steam's display: {err}")
+        return False
+
+
 def main() -> int:
     bottom_max = int(read(f"{BOTTOM}/max_brightness", "0") or 0)
     top_max = int(read(f"{TOP}/max_brightness", "0") or 0)
@@ -339,6 +362,8 @@ def run(bl_fd: int, bottom_path: str, bottom_max: int, top_max: int) -> int:
     overlay_since: float | None = None
     pressed_at: float | None = None  # AYN held down since, until handled
     home_count = 0
+    yield_sent: bool | None = None  # GAMESCOPE_BOTTOM_SCREEN_YIELD as last set
+    yield_tried = -YIELD_RETRY_S
     log(f"following {BOTTOM} (max {bottom_max}) -> {TOP} (max {top_max})")
     while True:
         poller = select.poll()
@@ -415,6 +440,13 @@ def run(bl_fd: int, bottom_path: str, bottom_max: int, top_max: int) -> int:
             log("AYN button held: home")
 
         overlay = read(OVERLAY, "0") == "1"
+        if overlay != yield_sent and time.monotonic() - yield_tried >= YIELD_RETRY_S:
+            yield_tried = time.monotonic()
+            if set_bottom_screen_yield(overlay):
+                yield_sent = overlay
+                log(f"bottom screen {'yielded to' if overlay else 'back from'} the dashboard")
+            elif not overlay:
+                yield_sent = False  # no Game Mode, nothing to take back
         if overlay and overlay_since is None:
             overlay_since = time.monotonic()
         elif not overlay:
