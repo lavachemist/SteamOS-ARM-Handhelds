@@ -533,7 +533,9 @@ class Plugin:
             return False
         try:
             with urllib.request.urlopen(f"{SHELLD}/apps", timeout=0.5) as r:
-                return "keyboard" in json.load(r)
+                # The Trackpad app has the keyboard (and "keyboard" opens it so).
+                apps = json.load(r)
+                return "trackpad" in apps or "keyboard" in apps
         except (OSError, ValueError, TypeError):
             return False
 

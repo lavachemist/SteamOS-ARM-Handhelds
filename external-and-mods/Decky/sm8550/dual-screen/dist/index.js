@@ -41,6 +41,11 @@ const setBarryApps = callable("set_barry_apps");
 // this wraps. While the bottom screen is off or Barry Launcher is not
 // running, Steam's keyboard works as before; so it does when Barry Launcher's
 // keyboard cannot be seen (a dual-screen game keeping the bottom screen).
+//
+// Steam opens no keyboard for a mouse click on a text field, though, and
+// Barry Launcher's trackpad is a mouse: its clicks on a field (Game Mode's
+// search box, say) are watched for in Steam's own windows and open the
+// keyboard too.
 let barryAvailable = false;
 let lastOpen = 0;
 let unhookKeyboard = null;
@@ -79,6 +84,53 @@ function hookKeyboard() {
     return () => { proto.SetVirtualKeyboardShownInternal = orig; };
 }
 
+// Steam's windows (Game Mode, its menus, Quick Access) as browser windows.
+function steamWindows() {
+    const wins = new Set();
+    const add = (w) => { if (w && w.document) wins.add(w); };
+    const store = window.SteamUIStore;
+    if (store) {
+        add(store.ActiveWindowInstance && store.ActiveWindowInstance.BrowserWindow);
+        const all = store.WindowStore && store.WindowStore.SteamUIWindows;
+        if (all) for (const inst of all) add(inst && inst.BrowserWindow);
+    }
+    try { if (typeof DFL.findSP === "function") add(DFL.findSP()); } catch (e) { /* not up yet */ }
+    return wins;
+}
+
+const TEXT_TYPES = ["", "text", "search", "password", "email", "url", "tel", "number"];
+
+function textField(el) {
+    for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
+        const tag = n.tagName;
+        if (tag === "TEXTAREA") return !n.readOnly && !n.disabled;
+        if (tag === "INPUT") return TEXT_TYPES.includes((n.getAttribute("type") || "").toLowerCase()) && !n.readOnly && !n.disabled;
+        if (n.isContentEditable) return true;
+    }
+    return false;
+}
+
+function onPointerDown(e) {
+    if (e.pointerType !== "mouse" || e.button !== 0 || !barryAvailable) return;
+    if (textField(e.target)) showBarryKeyboard(() => {});  // no Steam keyboard for a click anyway
+}
+
+const watchedDocs = new Set();
+
+function watchClicks() {
+    for (const w of steamWindows()) {
+        const doc = w.document;
+        if (watchedDocs.has(doc)) continue;
+        doc.addEventListener("pointerdown", onPointerDown, true);
+        watchedDocs.add(doc);
+    }
+}
+
+function unwatchClicks() {
+    for (const doc of watchedDocs) doc.removeEventListener("pointerdown", onPointerDown, true);
+    watchedDocs.clear();
+}
+
 function steamKeyboardShowing(mgr) {
     // A subscribable value ({ Value, m_currentValue }) in current Steam builds.
     const v = mgr.IsShowingVirtualKeyboard;
@@ -89,6 +141,7 @@ function steamKeyboardShowing(mgr) {
 
 async function watchBarryKeyboard() {
     if (!unhookKeyboard) unhookKeyboard = hookKeyboard();
+    watchClicks();  // windows Steam opened since
     const available = await barryKeyboardAvailable().catch(() => false);
     if (available && !barryAvailable) {
         // A Steam keyboard left up from before goes away.
@@ -352,13 +405,13 @@ function Content() {
         }),
         note("Steam's brightness slider moves both screens together, each at its own setting here."),
     ] }),
-    shown === "lights" && jsxs(DFL.PanelSection, { title: "RGB Lighting", children: [
+    shown === "lights" && jsxs(DFL.PanelSection, { title: "Joystick RGB Dimmer", children: [
         slider("Lights dimmer", st.rgbDimmer, 20, (v) => {
             movedAt.current = Date.now();
             setSt((s) => ({ ...s, rgbDimmer: v }));
             sendRgb(v);
         }),
-        note("The dashboard's 100% lights button is this bright; 25% and 50% are shares of it."),
+        note("This setting adjusts the brightness threshold of the performance dashboard settings"),
     ] }),
     shown === "apps" && jsx(AppsSection, {}),
     shown === "emulators" && jsx(TwoScreenSection, {}),
@@ -377,6 +430,7 @@ var index = definePlugin(() => {
             clearInterval(timer);
             if (unhookKeyboard) unhookKeyboard();
             unhookKeyboard = null;
+            unwatchClicks();
             barryAvailable = false;
         },
     };
