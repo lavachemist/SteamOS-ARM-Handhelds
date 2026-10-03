@@ -301,6 +301,9 @@ TOUCH_S = 1.0
 # soon after a trackpad click or a finger on the top screen.
 TOP_CLICK_S = 1.0
 TAP_SLOP = 30  # touchscreen units a tap may wander
+FIELD_SLOP = 40  # pixels around a field that a finger on it may miss by
+REVEAL_MS = (250, 700)  # after the keyboard pushes the app up: the field in view
+REVEAL_ROW_MAX = 160  # the most pixels high a field's bar (its message box, say) is
 # Swipe up from the bottom edge: Home, as a long press on the AYN button.
 # One finger, starting this close to the bottom, at least this far up,
 # within this time (screen pixels and seconds).
@@ -350,6 +353,7 @@ class State:
         self.quiet_until = 0.0  # monotonic time: no keyboard for text focus before it
         self.last_touch: float | None = None  # monotonic; None: no touchscreen found
         self.touch_began: float | None = None  # monotonic: the latest touch's first finger down
+        self.touch_at: tuple[int, int] | None = None  # where (screen pixels) that finger came down
         self.hidden_by_hand = 0.0  # monotonic: the keyboard's own hide (its ⌄ key, a tap beside it)
         self.text_acc = None  # the focused editable field, if any
         self.keyboard_height = 0  # the key panel's height, as Keyboard.qml reports it
@@ -1264,6 +1268,7 @@ def watch_touches() -> None:
                     p = pos.get(lead)
                     if lead in down and start is None and p and None not in p:
                         start, started_at = tuple(p), time.monotonic()
+                        STATE.touch_at = raw_to_screen(*start)
                     continue
                 if etype != EV_ABS:
                     continue
@@ -1287,6 +1292,13 @@ def watch_touches() -> None:
                 elif code in (ABS_MT_POSITION_X, ABS_MT_POSITION_Y):
                     pos.setdefault(slot, [None, None])[code - ABS_MT_POSITION_X] = value
     log(f"no {TOUCH_NAME} input device; the keyboard follows focus alone")
+
+
+def raw_to_screen(raw_x: int, raw_y: int) -> tuple[int, int]:
+    """The panel is portrait and turned right: its y runs left to right on
+    screen, its x bottom to top."""
+    screen_h = int(os.environ.get("THOR_BOTTOM_HEIGHT", "1080"))
+    return raw_y, screen_h - 1 - raw_x
 
 
 def touch_ended(start: tuple, end: tuple, seconds: float) -> None:
@@ -1367,6 +1379,58 @@ def show_for_text(top: bool, why: str) -> None:
         log(f"{why}{' (lower half)' if top else ''}: keyboard")
     # Always at the bottom: the app moves up above it (apply_inset).
     STATE.set_keyboard(True, False)
+    for ms in REVEAL_MS:
+        GLib.timeout_add(ms, reveal_field)
+
+
+def finger_on(acc) -> bool:
+    """Did the latest touch come down on this field? (True when there is no
+    telling: no touchscreen, or no position yet.) An app moving focus by
+    itself right after a tap elsewhere (WhatsApp, to its message box, after
+    a tap on a chat) is no tap on the field."""
+    at = STATE.touch_at
+    if at is None:
+        return True
+    try:
+        ext = acc.get_extents(Atspi.CoordType.SCREEN)
+    except GLib.Error:
+        return True
+    if ext.width <= 0 or ext.height <= 0:
+        return True
+    x, y = at
+    return (ext.x - FIELD_SLOP <= x < ext.x + ext.width + FIELD_SLOP
+            and ext.y - FIELD_SLOP <= y < ext.y + ext.height + FIELD_SLOP)
+
+
+def reveal_field() -> bool:
+    """The keyboard pushed the app up, but the focused field can still be
+    under it: an app (WhatsApp Web) that will not lay itself out shorter
+    than some height is cut off at the bottom instead. Scroll the field's
+    bar (the small box around it, with its buttons) into view, just above
+    the keyboard."""
+    acc = STATE.text_acc
+    if acc is None or not STATE.keyboard()["visible"] or DESKTOP:
+        return False
+    screen_h = int(os.environ.get("THOR_BOTTOM_HEIGHT", "1080"))
+    above = screen_h - STATE.keyboard_height
+    try:
+        if not acc.get_state_set().contains(Atspi.StateType.FOCUSED):
+            return False
+        ext = acc.get_extents(Atspi.CoordType.SCREEN)
+        if ext.height <= 0 or ext.y + ext.height <= above:
+            return False  # in sight
+        bar = acc
+        parent = acc.get_parent()
+        while parent is not None:
+            pe = parent.get_extents(Atspi.CoordType.SCREEN)
+            if pe.height > REVEAL_ROW_MAX or pe.height <= 0:
+                break
+            bar, parent = parent, parent.get_parent()
+        if bar.scroll_to(Atspi.ScrollType.BOTTOM_EDGE):
+            log("the focused field was under the keyboard: scrolled into view")
+    except GLib.Error:
+        pass
+    return False
 
 
 def im_decides() -> bool:
@@ -1388,6 +1452,9 @@ def on_focus(event) -> None:
         return
     if editable:
         STATE.text_acc = event.source
+        if not STATE.keyboard()["visible"] and not finger_on(event.source):
+            log("text focus in, away from the finger: no keyboard")
+            return
         show_for_text(top, "text focus in")
         return
     STATE.text_acc = None
@@ -1433,7 +1500,7 @@ def on_caret(event) -> None:
         return
     if editable:
         STATE.text_acc = acc
-    if editable and touched_lately():  # apps move their own carets all the time
+    if editable and touched_lately() and finger_on(acc):  # apps move their own carets all the time
         show_for_text(top, "caret moved in a focused field")
 
 
@@ -1443,10 +1510,7 @@ def on_tap(raw_x: int, raw_y: int) -> bool:
     acc = STATE.text_acc
     if im_decides() or acc is None or STATE.keyboard()["visible"]:
         return False
-    # The panel is portrait and turned right: its y runs left to right on
-    # screen, its x bottom to top.
-    screen_h = int(os.environ.get("THOR_BOTTOM_HEIGHT", "1080"))
-    sx, sy = raw_y, screen_h - 1 - raw_x
+    sx, sy = raw_to_screen(raw_x, raw_y)
     try:
         if not acc.get_state_set().contains(Atspi.StateType.FOCUSED):
             return False
