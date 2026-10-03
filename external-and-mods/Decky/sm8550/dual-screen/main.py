@@ -14,13 +14,21 @@ LEDs at the dashboard's brightness times it.
 Also stands in Barry Launcher's Keyboard app for Steam's on-screen keyboard:
 the frontend asks whether it can (the bottom screen is on and Barry
 Launcher's barry_launcher_shelld answers), and opens it there instead of
-Steam's.
+Steam's. Should Steam's gamescope be showing a dual-screen game's second
+window on the bottom screen (GAMESCOPE_BOTTOM_SCREEN_SHOWING), it hands the
+screen to Barry Launcher while the keyboard is open (sm8550-thor-backlightd);
+if it has not within YIELD_WAIT_S the keyboard would type unseen, so it is
+closed again and Steam's keyboard shows on the top screen instead.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import pwd
 import socket
+import subprocess
+import time
 import urllib.request
 from typing import Any
 
@@ -34,6 +42,44 @@ CONTROLS = "/run/sm8550-thor/controls.sock"
 DIM_MIN = 10
 RGB_DIM_MIN = 20
 SHELLD = "http://127.0.0.1:47824"
+YIELD_WAIT_S = 2.0
+
+
+def _steam_display_user() -> str | None:
+    """The user running Game Mode's main gamescope (Steam's :0), if any."""
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit():
+            continue
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as fh:
+                args = fh.read().split(b"\0")
+            if os.path.basename(args[0]) == b"gamescope" and b"--steam" in args:
+                return pwd.getpwuid(os.stat(f"/proc/{pid}").st_uid).pw_name
+        except (OSError, KeyError):
+            continue
+    return None
+
+
+def _bottom_screen_showing() -> bool:
+    """Steam's gamescope draws a game's window on the bottom screen."""
+    user = _steam_display_user()
+    if user is None:
+        return False
+    try:
+        r = subprocess.run(
+            ["runuser", "-u", user, "--", "env", "DISPLAY=:0", "xprop", "-root",
+             "GAMESCOPE_BOTTOM_SCREEN_SHOWING"],
+            capture_output=True, text=True, timeout=3)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return r.stdout.strip().endswith("= 1")
+
+
+def _shelld_post(path: str, body: dict) -> dict:
+    req = urllib.request.Request(f"{SHELLD}{path}", json.dumps(body).encode(),
+                                 {"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=2) as r:
+        return json.load(r)
 
 
 def _is_on() -> bool:
@@ -127,11 +173,22 @@ class Plugin:
             return False
 
     async def open_barry_keyboard(self, **_: Any) -> bool:
-        req = urllib.request.Request(f"{SHELLD}/launch", json.dumps({"app": "keyboard"}).encode(),
-                                     {"Content-Type": "application/json"})
+        """Opens Barry Launcher's keyboard; False when it cannot be seen, for
+        Steam's keyboard then."""
         try:
-            with urllib.request.urlopen(req, timeout=2) as r:
-                return bool(json.load(r).get("ok"))
+            if not _shelld_post("/launch", {"app": "keyboard"}).get("ok"):
+                return False
         except (OSError, ValueError, AttributeError) as err:
             decky.logger.warning(f"cannot open Barry Launcher's keyboard: {err}")
             return False
+        deadline = time.monotonic() + YIELD_WAIT_S
+        while await asyncio.to_thread(_bottom_screen_showing):
+            if time.monotonic() >= deadline:
+                decky.logger.warning("the bottom screen stayed with the game; Steam's keyboard instead")
+                try:
+                    _shelld_post("/close", {"app": "keyboard"})
+                except (OSError, ValueError) as err:
+                    decky.logger.warning(f"cannot close Barry Launcher's keyboard: {err}")
+                return False
+            await asyncio.sleep(0.1)
+        return True

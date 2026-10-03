@@ -35,7 +35,8 @@ const openBarryKeyboard = callable("open_barry_keyboard");
 // typing there goes to the field. Every way Steam opens its keyboard goes
 // through its keyboard manager's SetVirtualKeyboardShownInternal(show), which
 // this wraps. While the bottom screen is off or Barry Launcher is not
-// running, Steam's keyboard works as before.
+// running, Steam's keyboard works as before; so it does when Barry Launcher's
+// keyboard cannot be seen (a dual-screen game keeping the bottom screen).
 let barryAvailable = false;
 let lastOpen = 0;
 let unhookKeyboard = null;
@@ -45,13 +46,15 @@ function keyboardManager() {
     return inst ? inst.VirtualKeyboardManager || inst.m_VirtualKeyboardManager : null;
 }
 
-function showBarryKeyboard() {
+function showBarryKeyboard(showSteams) {
     // Steam may ask several times for one tap; bringing the app forward
     // again remaps its window, so once is enough.
     const now = Date.now();
     if (now - lastOpen < 1500) return;
     lastOpen = now;
-    openBarryKeyboard().catch(() => {});
+    openBarryKeyboard()
+        .then((shown) => { if (!shown) showSteams(); })
+        .catch(() => showSteams());
 }
 
 function hookKeyboard() {
@@ -62,7 +65,7 @@ function hookKeyboard() {
     if (typeof orig !== "function" || orig.barryWrapped) return null;
     const wrapped = function (show, ...rest) {
         if (show && barryAvailable) {
-            showBarryKeyboard();
+            showBarryKeyboard(() => orig.call(this, show, ...rest));
             return;
         }
         return orig.call(this, show, ...rest);
