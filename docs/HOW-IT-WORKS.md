@@ -130,7 +130,7 @@ this tree inside `/work` (normalised to root-owned 0644/0755):
 # SOC=sm8550 for the Retroid Pocket 6 and AYN Thor:
 SOC=sm8650 WORK=/work/kernel-sm8650 ROCKNIX_DIR=/work/rocknix-20260901 \
   bash external-and-mods/kernel-sm8650/build-gcc15.sh
-sudo bash scripts/build-gamescope-in-rootfs.sh /work/rootfs        # gamescope
+sudo bash scripts/build-gamescope-in-rootfs.sh /work/rootfs        # gamescope (fetches the fork at external-and-mods/gamescope/REF)
 sudo STEAMOS_WORK=/work BOX64_SRC=/work/box64 \
      STEAM_ARM_SEED=/work/steam-seed-home/.local/share/Steam \
      bash make-steamos-sm8650.sh                                    # image

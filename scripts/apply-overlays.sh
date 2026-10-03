@@ -35,6 +35,9 @@ export DEVICE
 SM8650_OVL="${ROOT}/sm8650-overlay"
 STOCK="${R}/opt/stock-steamos"
 GSBUILD="${GAMESCOPE_BUILD:-${WORKDIR}/gamescope-build}"
+# The source scripts/build-gamescope-in-rootfs.sh built from (PB-OS's
+# gamescope fork): its scripts, looks and udev rule go in the image.
+GSSRC="${GAMESCOPE_SRC:-${WORKDIR}/gamescope-src}"
 # Optional Turnip override. Empty = keep the Frame's own (built for A750).
 MESA_SO="${MESA_SO:-}"
 LOG="${WORKDIR}/odin-apply.log"
@@ -45,6 +48,7 @@ log() { echo "$*" | tee -a "$LOG"; }
 [[ -d "$R/usr/bin" ]] || die "missing rootfs at $R"
 [[ -f "$KOUT/boot/KERNEL" ]] || die "missing kernel $KOUT"
 [[ -x "$GSBUILD/src/gamescope" ]] || die "missing built gamescope"
+[[ -d "$GSSRC/scripts" ]] || die "missing gamescope source at $GSSRC (run scripts/build-gamescope-in-rootfs.sh)"
 if [[ "$DEVICE" == thor ]] && ! grep -qa -- '--lease-connector' "$GSBUILD/src/gamescope"; then
   die "DEVICE=thor needs a gamescope with the DRM lease patches (GAMESCOPE_BUILD=$GSBUILD has none)"
 fi
@@ -123,22 +127,22 @@ if [[ -f "$GSBUILD/layer/libVkLayer_FROG_gamescope_wsi_aarch64.so" ]]; then
   install_file "$GSBUILD/layer/libVkLayer_FROG_gamescope_wsi_aarch64.so" \
     "$R/usr/local/lib/libVkLayer_FROG_gamescope_wsi_aarch64.so" 0755
 fi
-if [[ -d "${MOD}/gamescope/scripts" ]]; then
+if [[ -d "${GSSRC}/scripts" ]]; then
   mkdir -p "$R/usr/share/gamescope" "$R/usr/local/share/gamescope"
   rm -rf "$R/usr/share/gamescope/scripts" "$R/usr/local/share/gamescope/scripts"
-  cp -a "${MOD}/gamescope/scripts" "$R/usr/share/gamescope/scripts"
-  cp -a "${MOD}/gamescope/scripts" "$R/usr/local/share/gamescope/scripts"
-  if [[ -d "${MOD}/gamescope/looks" ]]; then
+  cp -a "${GSSRC}/scripts" "$R/usr/share/gamescope/scripts"
+  cp -a "${GSSRC}/scripts" "$R/usr/local/share/gamescope/scripts"
+  if [[ -d "${GSSRC}/looks" ]]; then
     rm -rf "$R/usr/share/gamescope/looks" "$R/usr/local/share/gamescope/looks"
-    cp -a "${MOD}/gamescope/looks" "$R/usr/share/gamescope/looks"
-    cp -a "${MOD}/gamescope/looks" "$R/usr/local/share/gamescope/looks"
+    cp -a "${GSSRC}/looks" "$R/usr/share/gamescope/looks"
+    cp -a "${GSSRC}/looks" "$R/usr/local/share/gamescope/looks"
   fi
 fi
-install_file "${MOD}/gamescope/scripts/udev/60-gamescope-backlight.rules" \
+install_file "${GSSRC}/scripts/udev/60-gamescope-backlight.rules" \
   "$R/usr/lib/udev/rules.d/60-gamescope-backlight.rules" 0644
 # Also land in /lib if SteamOS uses it
 mkdir -p "$R/lib/udev/rules.d"
-install_file "${MOD}/gamescope/scripts/udev/60-gamescope-backlight.rules" \
+install_file "${GSSRC}/scripts/udev/60-gamescope-backlight.rules" \
   "$R/lib/udev/rules.d/60-gamescope-backlight.rules" 0644
 
 backup "$R/usr/lib/steamos/gamescope-session" "$STOCK/usr/lib/steamos/gamescope-session"

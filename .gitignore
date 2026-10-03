@@ -37,9 +37,7 @@
 /external-and-mods/kernel/.build/
 /external-and-mods/kernel/config/local.conf
 
-# gamescope / Box64 / lsfg-vk build trees and nested clones
-/external-and-mods/gamescope/build/
-/external-and-mods/gamescope/subprojects/
+# Box64 / lsfg-vk build trees and nested clones
 # Full Box64 clone (nested git). The updater script fetches it at build time.
 /external-and-mods/BOX64/box64/
 /external-and-mods/lsfg-vk/build/
