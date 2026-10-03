@@ -2,8 +2,8 @@
 
 > [!WARNING]
 > **Work in progress.** This needs a gamescope that PB-OS images don't ship
-> yet, and it hasn't been tested on a Thor. This page describes how it will
-> work.
+> yet. The bottom screen itself works on a Thor; the emulators haven't been
+> tried there yet.
 
 In Game Mode, PB-OS's gamescope can show an emulator's second window on the
 Thor's bottom screen. The emulator draws one screen per window, the top window
@@ -11,11 +11,26 @@ stays the game, and the bottom window replaces the Barry Launcher until the
 game closes.
 
 PB-OS doesn't ship any emulators. Install them yourself, for example with
-EmuDeck. Nothing below changes EmuDeck; you change a setting in each emulator,
-once, and the emulator remembers it.
+EmuDeck. Nothing here changes EmuDeck; each emulator needs one setting
+changed, once, and remembers it.
+
+## The quick way: the Dual Screen plugin
+
+In Game Mode, open the Quick Access menu, then **Dual Screen → Emulators →
+Two-screen emulators**. It finds melonDS, Azahar, Lime3DS, Citra and Cemu
+(AppImage or Flatpak) and makes the changes below in their settings files;
+turning it off puts back what they had. Open each emulator once before, so
+its settings file exists, and close any running emulator first: they write
+their settings back when they quit.
+
+DS games still need the standalone melonDS (see below).
+
+## By hand
 
 The easiest place to change these settings is Desktop Mode: open the emulator
-from the application menu, change the setting, and close it.
+from the application menu, change the setting, and close it (File → Exit or
+the window's close button; an emulator killed by a switch to Game Mode loses
+the change).
 
 ## Nintendo DS: melonDS
 
@@ -36,7 +51,7 @@ turn on **Nintendo DS - melonDS (Standalone)**, and add the games again.
 ## Nintendo 3DS: Azahar
 
 Azahar replaces Citra and Lime3DS, which are no longer developed. Use Azahar
-for 3DS games.
+for 3DS games; Lime3DS and Citra work the same way if you still have them.
 
 1. Open Azahar.
 2. **View → Screen Layout → Separate Windows.**
@@ -61,7 +76,8 @@ games.
 
 EmuDeck's updates keep these settings. **Reset configuration** in EmuDeck puts
 its own settings back (it saves the old file with a `.bak` ending), so after a
-reset, change them again.
+reset, change them again (with the plugin: turn **Two-screen emulators**
+off and on again).
 
 ## Other languages
 
