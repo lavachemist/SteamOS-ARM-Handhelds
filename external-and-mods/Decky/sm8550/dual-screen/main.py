@@ -26,6 +26,9 @@ dual-screen branch shows on the bottom screen. Only their config files
 change, a few keys each (TWO_SCREEN); the values found before are kept in
 TWO_SCREEN_STATE and put back when the switch goes off. Nothing changes
 while one of them runs: they write their settings back when they quit.
+The switch is on until the user turns it off, and while it is on, an
+emulator found without the settings (installed later, or reset by EmuDeck)
+gets them within TWO_SCREEN_CHECK_S once it is not running.
 """
 from __future__ import annotations
 
@@ -37,6 +40,7 @@ import pwd
 import re
 import socket
 import subprocess
+import threading
 import time
 import urllib.request
 from typing import Any
@@ -53,6 +57,8 @@ RGB_DIM_MIN = 20
 SHELLD = "http://127.0.0.1:47824"
 YIELD_WAIT_S = 2.0
 TWO_SCREEN_STATE = "/var/lib/steamos-sm8550/thor-two-screen.json"
+TWO_SCREEN_CHECK_S = 30
+_two_screen_lock = threading.Lock()
 
 # Each emulator: config files (globs under the user's home, AppImage and
 # Flatpak), their kind, and (section, key, value) to set. Kinds: "ini" (Qt,
@@ -334,48 +340,80 @@ def _two_screen_status() -> dict[str, Any]:
         except OSError:
             continue
         emulators.append({"name": name, "path": path, "twoScreens": applied})
-    return {"enabled": bool(state.get("enabled")), "emulators": emulators,
+    return {"enabled": _two_screen_enabled(state), "emulators": emulators,
             "running": _two_screen_running()}
 
 
+def _two_screen_enabled(state: dict) -> bool:
+    """On unless the user turned it off."""
+    return bool(state.get("enabled", True))
+
+
+def _two_screen_file(path: str, spec: dict, enabled: bool, originals: dict) -> bool:
+    """Sets (or puts back) one config file's keys; True if it changed."""
+    try:
+        with open(path, encoding="utf-8", newline="") as fh:
+            text = fh.read()
+    except OSError:
+        return False
+    kind, new = spec["kind"], text
+    if enabled:
+        saved = originals.setdefault(path, {})
+        for sec, key, value in spec["keys"]:
+            if kind != "xml" and not _has_section(new, sec):
+                saved.setdefault(f"{sec}\t", "added")
+            saved.setdefault(f"{sec}\t{key}", _get(text, kind, sec, key))
+            new = _put(new, kind, sec, key, _line_for(kind, key, value))
+    elif path in originals:
+        saved = originals.pop(path)
+        for sec, key, _ in spec["keys"]:
+            if f"{sec}\t{key}" in saved:
+                new = _put(new, kind, sec, key, saved[f"{sec}\t{key}"])
+        for sec in {sec for sec, _, _ in spec["keys"]}:
+            if saved.get(f"{sec}\t") == "added":
+                new = _drop_added_section(new, sec)
+    if new == text:
+        return False
+    _write_as_owner(path, new)
+    return True
+
+
 def _set_two_screen(enabled: bool) -> dict[str, Any]:
-    """Sets (or puts back) every present emulator's keys; refuses while one
-    of them runs. The reply says what happened."""
-    files = _two_screen_files()
-    running = [n for n in _two_screen_running() if any(n == f[0] for f in files)]
-    if running:
-        return {"ok": False, "error": f"Close {', '.join(running)} first: it writes its settings back when it quits."}
-    state = _load_two_screen()
-    originals: dict = state.get("originals", {})
-    changed = []
-    for name, path, spec in files:
-        try:
-            with open(path, encoding="utf-8", newline="") as fh:
-                text = fh.read()
-        except OSError:
-            continue
-        kind, new = spec["kind"], text
-        if enabled:
-            saved = originals.setdefault(path, {})
-            for sec, key, value in spec["keys"]:
-                if kind != "xml" and not _has_section(new, sec):
-                    saved.setdefault(f"{sec}\t", "added")
-                saved.setdefault(f"{sec}\t{key}", _get(text, kind, sec, key))
-                new = _put(new, kind, sec, key, _line_for(kind, key, value))
-        elif path in originals:
-            saved = originals.pop(path)
-            for sec, key, _ in spec["keys"]:
-                if f"{sec}\t{key}" in saved:
-                    new = _put(new, kind, sec, key, saved[f"{sec}\t{key}"])
-            for sec in {sec for sec, _, _ in spec["keys"]}:
-                if saved.get(f"{sec}\t") == "added":
-                    new = _drop_added_section(new, sec)
-        if new != text:
-            _write_as_owner(path, new)
-            changed.append(name)
-    _save(TWO_SCREEN_STATE, json.dumps({"enabled": enabled, "originals": originals}, indent=1) + "\n")
+    """The switch: sets (or puts back) every present emulator's keys;
+    refuses while one of them runs. The reply says what happened."""
+    with _two_screen_lock:
+        files = _two_screen_files()
+        running = [n for n in _two_screen_running() if any(n == f[0] for f in files)]
+        if running:
+            return {"ok": False, "error": f"Close {', '.join(running)} first: it writes its settings back when it quits."}
+        state = _load_two_screen()
+        originals: dict = state.get("originals", {})
+        changed = [name for name, path, spec in files if _two_screen_file(path, spec, enabled, originals)]
+        _save(TWO_SCREEN_STATE, json.dumps({"enabled": enabled, "originals": originals}, indent=1) + "\n")
     decky.logger.info(f"two-screen emulators {'on' if enabled else 'off'}: {', '.join(changed) or 'nothing to change'}")
     return {"ok": True, "changed": changed}
+
+
+def _keep_two_screen() -> list[str]:
+    """While the switch is on, gives the settings to each emulator found
+    without them that is not running; returns those changed."""
+    with _two_screen_lock:
+        state = _load_two_screen()
+        if not _two_screen_enabled(state):
+            return []
+        running = set(_two_screen_running())
+        originals: dict = state.get("originals", {})
+        changed = []
+        for name, path, spec in _two_screen_files():
+            if name in running:
+                continue
+            if _two_screen_file(path, spec, True, originals):
+                changed.append(name)
+        if changed or "enabled" not in state:
+            _save(TWO_SCREEN_STATE, json.dumps({"enabled": True, "originals": originals}, indent=1) + "\n")
+    if changed:
+        decky.logger.info(f"two-screen emulators: set {', '.join(changed)}")
+    return changed
 
 
 def _rgb_dimmer(state: dict | None) -> int | None:
@@ -386,9 +424,20 @@ def _rgb_dimmer(state: dict | None) -> int | None:
 class Plugin:
     async def _main(self) -> None:
         decky.logger.info("Dual Screen ready")
+        self._keeper = asyncio.get_event_loop().create_task(self._keep_two_screen())
 
     async def _unload(self) -> None:
-        pass
+        keeper = getattr(self, "_keeper", None)
+        if keeper:
+            keeper.cancel()
+
+    async def _keep_two_screen(self) -> None:
+        while True:
+            try:
+                await asyncio.to_thread(_keep_two_screen)
+            except Exception as err:  # never let the loop die
+                decky.logger.warning(f"two-screen emulators: {err}")
+            await asyncio.sleep(TWO_SCREEN_CHECK_S)
 
     async def get_state(self, **_: Any) -> dict[str, Any]:
         ok = os.path.exists(f"{TOP}/brightness") and os.path.exists(f"{BOTTOM}/brightness")

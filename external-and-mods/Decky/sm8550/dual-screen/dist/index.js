@@ -139,7 +139,7 @@ function TwoScreenSection() {
     const description = !found.length
         ? "No melonDS, Azahar, Lime3DS, Citra or Cemu settings found yet: open the emulator once, then come back."
         : ts.enabled
-            ? `Two screens: ${set.join(", ") || "none"}${set.length < names.length ? ` (changed since: ${names.filter((n) => !set.includes(n)).join(", ")}; turn off and on again)` : ""}.`
+            ? `Two screens: ${set.join(", ") || "none"}${set.length < names.length ? ` (${names.filter((n) => !set.includes(n)).join(", ")}: once it is closed)` : ""}.`
             : `Found: ${names.join(", ")}.`;
     return jsxs(DFL.PanelSection, { title: "Emulators", children: [
         row(jsx(DFL.ToggleField, {
@@ -159,7 +159,7 @@ function TwoScreenSection() {
             },
         })),
         err && note(err),
-        note("DS, 3DS and Wii U games show their second screen on the bottom one: melonDS gets a second window, Azahar (and Lime3DS, Citra) Separate Windows, Cemu its separate GamePad view. Off puts their settings back. DS games need the standalone melonDS, not RetroArch's."),
+        note("On by default: DS, 3DS and Wii U games show their second screen on the bottom one. melonDS gets a second window, Azahar (and Lime3DS, Citra) Separate Windows, Cemu its separate GamePad view, also for emulators installed later. Off puts their settings back. DS games need the standalone melonDS, not RetroArch's."),
     ] });
 }
 
