@@ -1,11 +1,11 @@
 {
-  "name": "Dual Screen",
+  "name": "Barry Launcher",
   "author": "lavachemist",
   "api_version": 1,
   "flags": [
     "root"
   ],
-  "version": "1.9.0",
+  "version": "1.11.0",
   "publish": {
     "tags": [
       "ayn",
@@ -14,7 +14,7 @@
       "dual-screen",
       "bottom-screen"
     ],
-    "description": "Turn the AYN Thor's bottom screen and its touch off and on, dim each screen under Steam's brightness slider, set the stick lights' dimmer; opens Barry Launcher's keyboard on the bottom screen in place of Steam's; sets melonDS, Azahar and Cemu to show their second screen there.",
+    "description": "The AYN Thor's Barry Launcher settings, in tabs (LB/RB switch them): turn the bottom screen and its touch off and on, dim each screen under Steam's brightness slider, set the stick lights' dimmer; opens Barry Launcher's keyboard on the bottom screen in place of Steam's; sets melonDS, Azahar and Cemu to show their second screen there; shows, hides and orders Barry Launcher's home apps.",
     "image": "https://opengraph.githubassets.com/1/SteamDeckHomebrew/decky-loader"
   }
 }

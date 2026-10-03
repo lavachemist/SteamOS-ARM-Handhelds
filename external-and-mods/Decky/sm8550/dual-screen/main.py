@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Decky backend: Dual Screen (AYN Thor, SteamOS-ARM).
+"""Decky backend: Barry Launcher (AYN Thor, SteamOS-ARM; the plugin's
+folder is still dual-screen).
 
 One switch for the bottom screen. Steam's brightness slider sets both panels
 (sm8550-thor-backlightd follows it), each times its own dimmer from DIMMERS,
@@ -31,6 +32,9 @@ emulator found without the settings (installed later, or reset by EmuDeck)
 gets them within TWO_SCREEN_CHECK_S once it is not running. DS games that
 Steam starts in RetroArch (one window for both screens) are only counted,
 for a note: switching them to the standalone melonDS is the user's call.
+
+Also Barry Launcher's home screen: which apps it shows, in what order
+(barry_launcher_shelld keeps them in ~/.config/barry_launcher/home.json).
 """
 from __future__ import annotations
 
@@ -477,7 +481,7 @@ def _rgb_dimmer(state: dict | None) -> int | None:
 
 class Plugin:
     async def _main(self) -> None:
-        decky.logger.info("Dual Screen ready")
+        decky.logger.info("Barry Launcher plugin ready")
         self._keeper = asyncio.get_event_loop().create_task(self._keep_two_screen())
 
     async def _unload(self) -> None:
@@ -532,6 +536,25 @@ class Plugin:
                 return "keyboard" in json.load(r)
         except (OSError, ValueError, TypeError):
             return False
+
+    async def get_barry_apps(self, **_: Any) -> dict[str, Any]:
+        """Barry Launcher's home apps in order, each shown or hidden."""
+        try:
+            def get() -> dict:
+                with urllib.request.urlopen(f"{SHELLD}/layout", timeout=1) as r:
+                    return json.load(r)
+            return {"ok": True, **await asyncio.to_thread(get)}
+        except (OSError, ValueError) as err:
+            return {"ok": False, "error": f"Barry Launcher isn't answering ({err})."}
+
+    async def set_barry_apps(self, order: list | None = None, hidden: list | None = None,
+                             **_: Any) -> dict[str, Any]:
+        try:
+            r = await asyncio.to_thread(_shelld_post, "/layout",
+                                        {"order": list(order or []), "hidden": list(hidden or [])})
+            return {"ok": "apps" in r, **r}
+        except (OSError, ValueError) as err:
+            return {"ok": False, "error": f"Barry Launcher isn't answering ({err})."}
 
     async def open_barry_keyboard(self, **_: Any) -> bool:
         """Opens Barry Launcher's keyboard; False when it cannot be seen, for

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """sm8550-thor-backlightd: AYN Thor bottom screen. One brightness for both
-panels, the Dual Screen switch, and the AYN button's dashboard overlay.
+panels, the Barry Launcher plugin's bottom-screen switch, and the AYN button's dashboard overlay.
 
 Brightness: Steam's Game Mode slider adjusts the first backlight it finds,
 the bottom panel's (ae94000.dsi.0), and writes it directly (the video group
@@ -12,7 +12,7 @@ then bind-mounts STEAM_BOTTOM, a plain file, over it before Game Mode starts
 this is the only writer of the bottom panel. Steam's level, a fraction of
 the range (from STEAM_BOTTOM, or from the top panel should gamescope write
 that), is kept in LEVEL. Each panel gets Steam's level times its own dimmer
-from DIMMERS (percent, set by the Dual Screen plugin; 100 when unset), so
+from DIMMERS (percent, set by the Barry Launcher plugin; 100 when unset), so
 Steam's slider moves both screens together. Steam's slider puts out its
 position to the power STEAM_GAMMA (30% writes 7%): right for the top LCD, but
 the bottom AMOLED is close to black that low, so the bottom panel gets the
@@ -20,7 +20,7 @@ slider's position itself. (A
 steamos-priv-write redirect alone ran pkexec for every slider step and
 lagged; it stays as a fallback.)
 
-Dual Screen switch: the Decky plugin writes "off" or "on" to STATE. While the
+Bottom-screen switch: the Barry Launcher Decky plugin writes "off" or "on" to STATE. While the
 bottom screen is off its backlight is powered down (bl_power; the brightness
 Steam sets is kept underneath, so the top panel still follows) and its
 touchscreen is inhibited. Both are enforced on every pass, because the panel

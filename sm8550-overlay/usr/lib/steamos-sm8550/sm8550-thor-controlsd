@@ -22,7 +22,7 @@ config files, so it wins) and applied with a reload. Lighting: the
 multicolor LEDs around the sticks (rgb:l1-l4 and rgb:r1-r4 on the Thor, as
 Armada's armada-rgb lists them), saved to LIGHT_STATE and set again at start.
 The LEDs shine at brightness x dimmer: the dashboard's brightness buttons
-are shares of the dimmer, which the Dual Screen plugin sets. The LEDs' PWM
+are shares of the dimmer, which the Barry Launcher plugin sets. The LEDs' PWM
 level is that to the power LED_GAMMA, so 25% looks about a quarter as bright
 (light output is linear; the eye is not).
 """

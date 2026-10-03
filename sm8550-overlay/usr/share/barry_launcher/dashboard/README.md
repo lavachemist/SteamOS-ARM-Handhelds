@@ -90,7 +90,7 @@ display not reachable); leave that control out. Change them with
   none was made, and games then get the highest rate
 - `{lighting: {enabled, color, brightness}}`: any of the keys; `color` is
   `rrggbb`, `brightness` 0-100. Kept across reboots. The LEDs shine at
-  `brightness` x `dimmer` (20-100, set by the Dual Screen plugin) on a
+  `brightness` x `dimmer` (20-100, set by the Barry Launcher plugin) on a
   perceptual curve, so brightness 100 is as bright as the dimmer allows
 
 ## Minimal skin

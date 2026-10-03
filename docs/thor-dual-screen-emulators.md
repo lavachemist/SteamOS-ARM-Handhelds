@@ -14,10 +14,10 @@ PB-OS doesn't ship any emulators. Install them yourself, for example with
 EmuDeck. Nothing here changes EmuDeck; each emulator needs one setting
 changed, once, and remembers it.
 
-## The quick way: the Dual Screen plugin
+## The quick way: the Barry Launcher plugin
 
-The Thor does this for you: **Quick Access → Dual Screen → Emulators →
-Two-screen emulators** is on by default. It finds melonDS, Azahar, Lime3DS,
+The Thor does this for you: **Quick Access → Barry Launcher → Emulators tab
+(the Game Boy icon) → Two-screen emulators** is on by default. It finds melonDS, Azahar, Lime3DS,
 Citra and Cemu (AppImage or Flatpak) and makes the changes below in their
 settings files, also for an emulator installed later or reset by EmuDeck,
 within half a minute and while that emulator isn't running (they write their

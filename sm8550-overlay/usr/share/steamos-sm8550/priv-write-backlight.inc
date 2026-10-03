@@ -4,7 +4,7 @@
 # top one by steering the write there, rescaled between the two ranges
 # (after Armada's steamos-priv-write). Normally Steam writes the bottom
 # panel directly and sm8550-thor-backlightd copies it to the top; this is the
-# fallback. The Dual Screen plugin's "off" is bl_power, unaffected by this; its
+# fallback. The Barry Launcher plugin's "off" is bl_power, unaffected by this; its
 # dimmers are applied by sm8550-thor-backlightd once it sees the write.
 # Inserted by apply-overlays.sh.
 if [[ "$WRITE_PATH" == /sys/class/backlight/ae94000.dsi.0/brightness \

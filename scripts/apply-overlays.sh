@@ -23,7 +23,7 @@ fi
 export SOC
 # Device-only extras on top of the SoC's (make-steamos-sm8650.sh --device).
 # Empty = none: the image suits every device of the SoC. thor = the AYN
-# Thor's bottom screen (Barry Launcher, Firefox, Dual Screen plugin), which
+# Thor's bottom screen (Barry Launcher, Firefox, Barry Launcher plugin), which
 # also needs a gamescope built with the DRM lease patches.
 DEVICE="${DEVICE:-}"
 case "$DEVICE" in

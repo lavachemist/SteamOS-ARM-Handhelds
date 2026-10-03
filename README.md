@@ -63,7 +63,7 @@ Here is a link to all of our benchmark tests: [docs/benchmark-results.md](docs/b
 - **Tailscale** installed but switched off, with no account in the image.
 - **AYN Thor extras** (only with `--device thor`): the bottom screen as a
   second display in Game Mode, the Barry Launcher (apps, keyboard,
-  trackpad, performance dashboard) and a Dual Screen Decky plugin.
+  trackpad, performance dashboard) and a Barry Launcher Decky plugin.
   DS, 3DS and Wii U games on both screens are in progress:
   [docs/thor-dual-screen-emulators.md](docs/thor-dual-screen-emulators.md).
 
