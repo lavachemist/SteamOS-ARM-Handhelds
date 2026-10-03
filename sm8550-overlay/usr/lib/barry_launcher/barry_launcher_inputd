@@ -15,6 +15,12 @@ keyboard pages (shell/TopInput.qml), which call it on 127.0.0.1:PORT:
                  {"combo": ["ctrl", "2"]}: US layout; characters it cannot
                  type are skipped (the reply counts them)
   POST /release  let go of every held button and key
+  POST /trackpad {"active": bool, "regions": {"pad"|"left"|"right"|"dismiss":
+                 [x, y, w, h] fractions of the screen}, "speed": n}: Desktop
+                 Mode's Trackpad window, at least every 2 s while it is up;
+                 this then reads the bottom touchscreen itself
+                 (barry_trackpad). The reply (and GET /trackpad) says
+                 whether a finger is on the pad and counts dismiss taps.
 
 Game Mode: the bottom screen's gamescope takes no input devices of its own
 (its touches come over the lease socket), so these devices reach only the
@@ -39,6 +45,9 @@ import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import barry_trackpad  # noqa: E402
 
 PORT = 47825
 UINPUT = "/dev/uinput"
@@ -225,6 +234,7 @@ class Input:
 
 
 INPUT: Input
+TRACKPAD: barry_trackpad.Trackpad
 
 
 def number(value, limit: float) -> float | None:
@@ -270,6 +280,8 @@ def handle(path: str, body: dict) -> tuple[int, dict]:
             return 400, {"error": "need text, a known key, a combo or back"}
     elif path == "/release":
         INPUT.release()
+    elif path == "/trackpad":
+        return TRACKPAD.update(body)
     else:
         return 404, {"error": "not found"}
     return 200, {"ok": True}
@@ -311,10 +323,15 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             self._json(*handle(self.path.split("?", 1)[0], body))
+        except BrokenPipeError:
+            pass  # the caller stopped waiting for the reply
         except OSError as err:
             self._json(500, {"error": str(err)})
 
     def do_GET(self) -> None:
+        if self.path == "/trackpad":
+            self._json(200, TRACKPAD.state())
+            return
         self._json(200 if self.path == "/" else 404, {"ok": True} if self.path == "/" else {"error": "not found"})
 
     def log_message(self, *_args) -> None:
@@ -322,19 +339,22 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> int:
-    global INPUT
+    global INPUT, TRACKPAD
     try:
         INPUT = Input()
     except OSError as err:
         log(f"cannot create the uinput devices: {err}")
         return 1
     log("trackpad and keyboard devices ready")
+    TRACKPAD = barry_trackpad.Trackpad(INPUT, log)
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     srv.daemon_threads = True
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     try:
         srv.serve_forever()
     finally:
+        if TRACKPAD.active:
+            TRACKPAD._stop("quitting")  # never leave KWin without the touchscreen
         INPUT.mouse.close()
         INPUT.keyboard.close()
     return 0

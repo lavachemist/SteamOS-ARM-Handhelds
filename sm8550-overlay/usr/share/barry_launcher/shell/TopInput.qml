@@ -23,6 +23,62 @@ Rectangle {
     signal closeRequested()
 
     readonly property string api: "http://127.0.0.1:47825"
+
+    // Desktop Mode's trackpad: KWin would take the pad's touches while it
+    // moves a window, so barry_launcher_inputd reads the touchscreen itself
+    // (barry_trackpad) while this says, every 250 ms, that it is up and
+    // where its pad and buttons are. This only draws.
+    property bool desktop: false
+    readonly property bool engine: desktop && mode === "trackpad" && visible
+    property bool engineTouching: false
+    property var engineHeld: ({})  // the Left and Right click buttons, as the engine sees them
+    property var enginePresses: null  // null until the engine first answers
+    property int dismissSeen: -1
+    property real desktopSpeed: 1.6
+
+    function frac(item) {
+        const p = item.mapToItem(ti, 0, 0)
+        return [p.x / width, p.y / height, item.width / width, item.height / height]
+    }
+
+    function engineRegions() {
+        const r = { pad: frac(padFace) }
+        for (let i = 0; i < buttons.children.length; i++) {
+            const b = buttons.children[i]
+            if (b.modelData !== undefined)
+                r[b.modelData] = frac(b)
+        }
+        return r
+    }
+
+    function engineBeat(active) {
+        const x = new XMLHttpRequest()
+        x.onreadystatechange = function () {
+            if (x.readyState !== XMLHttpRequest.DONE || x.status !== 200)
+                return
+            let st = null
+            try { st = JSON.parse(x.responseText) } catch (e) { return }
+            ti.engineTouching = st.touching === true
+            ti.engineHeld = st.held || {}
+            ti.enginePresses = st.presses || {}
+            if (ti.dismissSeen >= 0 && st.dismiss > ti.dismissSeen)
+                ti.closeRequested()
+            ti.dismissSeen = st.dismiss
+        }
+        x.open("POST", api + "/trackpad")
+        x.setRequestHeader("Content-Type", "application/json")
+        x.send(JSON.stringify(active ? { active: true, regions: engineRegions(), speed: desktopSpeed }
+                                     : { active: false }))
+    }
+
+    Timer {
+        interval: 100  // often enough to light the click buttons as they are pressed
+        running: ti.engine
+        repeat: true
+        triggeredOnStart: true
+        onTriggered: ti.engineBeat(true)
+    }
+    onEngineChanged: if (!engine) engineBeat(false)
     color: "black"
 
     function post(path, body) {
@@ -139,12 +195,12 @@ Rectangle {
         }
         radius: 36 * ti.s
         color: "#101117"
-        border.color: pad.touching ? "#8a5cf0" : "#2d3140"
+        border.color: pad.touching || ti.engineTouching ? "#8a5cf0" : "#2d3140"
         border.width: 3 * ti.s
 
         Text {
             anchors.centerIn: parent
-            visible: !pad.touching
+            visible: !pad.touching && !ti.engineTouching
             text: ti.mode === "keyboard" ? "Trackpad" : "Trackpad for the top screen\ntap: click · two fingers: scroll, tap: right-click\ntap, then touch and move: drag"
             horizontalAlignment: Text.AlignHCenter
             color: "#eef0f4"
@@ -311,9 +367,19 @@ Rectangle {
                      : (buttons.width - buttons.dismissWidth - (ti.showTabs ? 1 : 2) * buttons.spacing) / 2
                 height: buttons.height
                 radius: 36 * ti.s
-                color: hold.pressed ? "#4a4f60" : "#1b1d24"
-                border.color: "#3a3e4d"
-                border.width: 2 * ti.s
+                // Lit while pressed, and a moment after, so a quick click shows.
+                readonly property bool lit: !dismiss && (hold.pressed || ti.engineHeld[modelData] === true || flash.running)
+                readonly property int presses: ti.enginePresses ? (ti.enginePresses[modelData] || 0) : -1
+                property int lastPresses: -1
+                onPressesChanged: {
+                    if (lastPresses >= 0 && presses > lastPresses)
+                        flash.restart()
+                    lastPresses = presses
+                }
+                Timer { id: flash; interval: 200 }
+                color: lit ? "#2a2140" : hold.pressed ? "#4a4f60" : "#1b1d24"
+                border.color: lit ? "#8a5cf0" : "#3a3e4d"
+                border.width: (lit ? 3 : 2) * ti.s
                 Icon {
                     anchors.centerIn: parent
                     visible: mb.dismiss

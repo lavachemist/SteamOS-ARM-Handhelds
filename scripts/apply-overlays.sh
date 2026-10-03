@@ -705,7 +705,7 @@ if [[ "$SOC" == sm8550 ]]; then
     done
     # Glide typing's decoder and the Desktop Mode (KWin) side, imported by
     # barry_launcher_shelld.
-    for f in barry_glide.py barry_desktop.py; do
+    for f in barry_glide.py barry_desktop.py barry_trackpad.py; do
       install_file "$SM8550_OVL/usr/lib/barry_launcher/$f" "$R/usr/lib/barry_launcher/$f" 0644
     done
     # Desktop Mode: Barry's keyboard as KWin's input method, a small Wayland

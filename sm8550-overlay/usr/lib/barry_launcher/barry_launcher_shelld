@@ -554,12 +554,14 @@ def close(app: str) -> tuple[int, dict]:
 
 
 def release_top_input() -> None:
-    """Let go of anything the trackpad or keyboard held on the top screen."""
-    req = urllib.request.Request(f"{INPUTD}/release", b"{}", {"Content-Type": "application/json"})
-    try:
-        urllib.request.urlopen(req, timeout=1).close()
-    except OSError:
-        pass
+    """Let go of anything the trackpad or keyboard held on the top screen,
+    and (Desktop Mode) give KWin the bottom touchscreen back at once."""
+    for path, body in (("/release", b"{}"), ("/trackpad", b'{"active": false}')):
+        req = urllib.request.Request(f"{INPUTD}{path}", body, {"Content-Type": "application/json"})
+        try:
+            urllib.request.urlopen(req, timeout=1).close()
+        except OSError:
+            pass
 
 
 TYPE_LOCK = threading.Lock()  # one typing request at a time, in the order they came
