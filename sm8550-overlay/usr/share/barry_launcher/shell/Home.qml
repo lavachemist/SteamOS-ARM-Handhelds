@@ -11,6 +11,16 @@ Rectangle {
     property real s: 1
     property var running: ({})
     property var status: ({})  // app -> "Installing…" etc. while it gets ready
+    // The tiles in order, without the hidden ones (shelld's /apps; the
+    // Barry Launcher plugin's Apps tab sets them). These until it answers.
+    property var tiles: [
+        { app: "browser", name: "Firefox", icon: "firefox", closable: true },
+        { app: "discord", name: "Discord", icon: "discord", closable: true },
+        { app: "signal", name: "Signal", icon: "signal", closable: true },
+        { app: "trackpad", name: "Trackpad", icon: "trackpad", closable: false },
+        { app: "keyboard", name: "Keyboard", icon: "keyboard", closable: false },
+        { app: "dino", name: "Dino", icon: "dino", closable: true },
+    ]
     signal launch(string app)
     signal close(string app)
 
@@ -102,38 +112,28 @@ Rectangle {
         columnSpacing: 60 * home.s
         rowSpacing: 30 * home.s
 
-        Tile {
-            app: "browser"
-            name: "Firefox"
-            iconKind: "firefox"
+        Repeater {
+            model: home.tiles
+            delegate: Tile {
+                required property var modelData
+                app: modelData.app
+                name: modelData.name
+                iconKind: modelData.icon
+                closable: modelData.closable
+            }
         }
-        Tile {
-            app: "discord"
-            name: "Discord"
-            iconKind: "discord"
-        }
-        Tile {
-            app: "signal"
-            name: "Signal"
-            iconKind: "signal"
-        }
-        Tile {
-            app: "trackpad"
-            name: "Trackpad"
-            iconKind: "trackpad"
-            closable: false
-        }
-        Tile {
-            app: "keyboard"
-            name: "Keyboard"
-            iconKind: "keyboard"
-            closable: false
-        }
-        Tile {
-            app: "dino"
-            name: "Dino"
-            iconKind: "dino"
-        }
+    }
+
+    Text {
+        visible: home.tiles.length === 0
+        anchors.centerIn: parent
+        width: parent.width * 0.8
+        horizontalAlignment: Text.AlignHCenter
+        wrapMode: Text.WordWrap
+        text: "All apps are hidden: Quick Access → Barry Launcher → Apps shows them again."
+        color: "#eef0f4"
+        opacity: 0.6
+        font { family: "Noto Sans"; pixelSize: 36 * home.s }
     }
 
     Text {

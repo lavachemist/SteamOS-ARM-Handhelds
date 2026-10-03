@@ -104,14 +104,14 @@ DATA = os.path.join(os.environ.get("XDG_DATA_HOME", f"{HOME}/.local/share"), "ba
 # phone layout (it sends phones to the app), so it gets its desktop layout,
 # which needs about 1000 CSS pixels across.
 APPS = {
-    "browser": {"profile": "browser", "args": [], "zoom": "2.5"},
+    "browser": {"name": "Firefox", "icon": "firefox", "profile": "browser", "args": [], "zoom": "2.5"},
     # Voice chat: this profile only runs Discord, so the microphone needs no
     # prompt (kiosk mode may not show one), and incoming voice may play
     # without a tap (Firefox's autoplay block would otherwise hold it back).
     # Calls use only the interface with the default route: Firefox otherwise
     # makes a VPN's address (Tailscale's ranks first) the offer's default,
     # Discord's voice server sends media there, and calls stay silent.
-    "discord": {"profile": "discord", "args": ["--kiosk", "https://discord.com/app"], "zoom": "1.25",
+    "discord": {"name": "Discord", "icon": "discord", "profile": "discord", "args": ["--kiosk", "https://discord.com/app"], "zoom": "1.25",
                 "prefs": {"permissions.default.microphone": 1,
                           "media.navigator.permission.disabled": True,
                           "media.autoplay.default": 0,
@@ -122,7 +122,7 @@ APPS = {
     # Its launch script asks on the first start, in a GTK dialog that the
     # bottom touchscreen cannot answer, whether to keep its keys in the
     # plaintext store (its default); an existing config.json counts as yes.
-    "signal": {"flatpak": "org.signal.Signal", "window": "^org\\.signal\\.signal$",
+    "signal": {"name": "Signal", "icon": "signal", "flatpak": "org.signal.Signal", "window": "^org\\.signal\\.signal$",
                "args": ["--ozone-platform=x11", "--force-device-scale-factor=1.75",
                         "--force-renderer-accessibility"],
                # Desktop Mode: Wayland, with the input method (text-input v3).
@@ -131,12 +131,50 @@ APPS = {
                "classes": ["signal", "signal-desktop", "org.signal.Signal"],
                "seed": {"~/.var/app/org.signal.Signal/config/Signal/config.json": "{}\n"},
                "warm": ["~/.var/app/org.signal.Signal/config/Signal"]},
-    # The top screen's trackpad and keyboard: QML windows by title.
-    "trackpad": {"qml": "trackpad", "window": "^Barry Launcher Trackpad$"},
-    "keyboard": {"qml": "keyboard", "window": "^Barry Launcher Top Keyboard$"},
+    # The top screen's trackpad and keyboard: QML windows by title. They
+    # close by themselves on Home, so their tiles have no close badge.
+    "trackpad": {"name": "Trackpad", "icon": "trackpad", "closable": False,
+                 "qml": "trackpad", "window": "^Barry Launcher Trackpad$"},
+    "keyboard": {"name": "Keyboard", "icon": "keyboard", "closable": False,
+                 "qml": "keyboard", "window": "^Barry Launcher Top Keyboard$"},
     # Plain QML apps of the shell's own.
-    "dino": {"qmlfile": "Dino.qml", "window": "^Barry Launcher Dino$"},
+    "dino": {"name": "Dino", "icon": "dino", "qmlfile": "Dino.qml", "window": "^Barry Launcher Dino$"},
 }
+# The home screen's order and the apps it hides (the Barry Launcher plugin's
+# Apps tab sets them); apps not listed go last, in APPS' order.
+HOME_LAYOUT = os.path.join(os.environ.get("XDG_CONFIG_HOME", f"{HOME}/.config"), "barry_launcher", "home.json")
+
+
+def home_layout() -> tuple[list[str], set[str]]:
+    try:
+        with open(HOME_LAYOUT, encoding="utf-8") as fh:
+            saved = json.load(fh)
+        order = [a for a in saved.get("order", []) if a in APPS]
+        hidden = {a for a in saved.get("hidden", []) if a in APPS}
+    except (OSError, ValueError, AttributeError):
+        order, hidden = [], set()
+    order = list(dict.fromkeys(order)) + [a for a in APPS if a not in order]
+    return order, hidden
+
+
+def layout_json() -> dict:
+    order, hidden = home_layout()
+    return {"apps": [{"id": a, "name": APPS[a]["name"], "hidden": a in hidden} for a in order]}
+
+
+def set_layout(body: dict) -> tuple[int, dict]:
+    order, hidden = body.get("order"), body.get("hidden", [])
+    if not isinstance(order, list) or not isinstance(hidden, list):
+        return 400, {"error": "order and hidden are lists of apps"}
+    order = [a for a in order if a in APPS]
+    order = list(dict.fromkeys(order)) + [a for a in APPS if a not in order]
+    os.makedirs(os.path.dirname(HOME_LAYOUT), exist_ok=True)
+    tmp = HOME_LAYOUT + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump({"order": order, "hidden": sorted(a for a in hidden if a in APPS)}, fh, indent=1)
+        fh.write("\n")
+    os.replace(tmp, HOME_LAYOUT)
+    return 200, layout_json()
 SHELL_DIR = "/usr/share/barry_launcher/shell"
 TOP_INPUT_QML = f"{SHELL_DIR}/TopInputApp.qml"
 INPUTD = "http://127.0.0.1:47825"
@@ -789,8 +827,15 @@ class Handler(BaseHTTPRequestHandler):
                 apply_inset()
             self._json(200, STATE.keyboard())
         elif path == "/apps":
+            order, hidden = home_layout()
             self._json(200, {name: {"running": running(name) is not None,
-                                    "status": STATE.status.get(name, "")} for name in APPS})
+                                    "status": STATE.status.get(name, ""),
+                                    "name": APPS[name]["name"], "icon": APPS[name]["icon"],
+                                    "closable": APPS[name].get("closable", True),
+                                    "hidden": name in hidden, "pos": order.index(name)}
+                             for name in APPS})
+        elif path == "/layout":
+            self._json(200, layout_json())
         else:
             self._json(404, {"error": "not found"})
 
@@ -824,6 +869,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(*glide(body))
         elif path == "/suggest":
             self._json(*suggest(body))
+        elif path == "/layout":
+            self._json(*set_layout(body))
         else:
             self._json(404, {"error": "not found"})
 

@@ -48,6 +48,15 @@ Window {
                 }
                 home.running = r
                 home.status = st
+                // Only when it changed: a new model rebuilds the tiles.
+                const tiles = Object.keys(apps)
+                    .filter(name => apps[name].name !== undefined && !apps[name].hidden)
+                    .sort((a, b) => apps[a].pos - apps[b].pos)
+                    .map(name => ({ app: name, name: apps[name].name, icon: apps[name].icon,
+                                    closable: apps[name].closable !== false }))
+                if (tiles.length || Object.keys(apps).some(name => apps[name].hidden))
+                    if (JSON.stringify(tiles) !== JSON.stringify(home.tiles))
+                        home.tiles = tiles
             } catch (e) {}
         }
         x.open("GET", api + "/apps")
