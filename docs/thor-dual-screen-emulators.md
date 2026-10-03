@@ -28,7 +28,9 @@ Turning the switch off puts back what the emulators had, and leaves them
 alone from then on. While it's on, changing these settings inside an
 emulator doesn't stick; turn the switch off first.
 
-DS games still need the standalone melonDS (see below).
+DS games still need the standalone melonDS (see below). When Steam starts DS
+games in RetroArch, the plugin says how many, but leaves them as they are:
+switching them changes their Steam entries and where their saves live.
 
 ## By hand
 
@@ -51,7 +53,9 @@ one window, so it can't use the bottom screen.
 
 If EmuDeck added your DS games to Steam, it most likely used RetroArch. In
 Steam ROM Manager, turn off the **Nintendo DS - RetroArch melonDS DS** parser,
-turn on **Nintendo DS - melonDS (Standalone)**, and add the games again.
+turn on **Nintendo DS - melonDS (Standalone)**, and add the games again. Copy
+your saves first: RetroArch keeps them in its own folder, and melonDS won't
+find them there.
 
 ## Nintendo 3DS: Azahar
 

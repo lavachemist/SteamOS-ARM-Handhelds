@@ -28,7 +28,9 @@ TWO_SCREEN_STATE and put back when the switch goes off. Nothing changes
 while one of them runs: they write their settings back when they quit.
 The switch is on until the user turns it off, and while it is on, an
 emulator found without the settings (installed later, or reset by EmuDeck)
-gets them within TWO_SCREEN_CHECK_S once it is not running.
+gets them within TWO_SCREEN_CHECK_S once it is not running. DS games that
+Steam starts in RetroArch (one window for both screens) are only counted,
+for a note: switching them to the standalone melonDS is the user's call.
 """
 from __future__ import annotations
 
@@ -330,6 +332,58 @@ def _two_screen_applied(text: str, spec: dict) -> bool:
                for sec, key, value in spec["keys"])
 
 
+def _vdf_map(data: bytes, i: int) -> tuple[dict, int]:
+    """One map of Steam's binary VDF from data[i]; (map, index after it)."""
+    out: dict = {}
+    while i < len(data):
+        kind = data[i]
+        i += 1
+        if kind == 0x08:
+            return out, i
+        end = data.index(b"\0", i)
+        key = data[i:end].decode(errors="replace")
+        i = end + 1
+        if kind == 0x00:
+            out[key], i = _vdf_map(data, i)
+        elif kind == 0x01:
+            end = data.index(b"\0", i)
+            out[key] = data[i:end].decode(errors="replace")
+            i = end + 1
+        elif kind in (0x02, 0x03, 0x04, 0x06):
+            i += 4
+        elif kind in (0x07, 0x0a):
+            i += 8
+        else:
+            raise ValueError(f"VDF type {kind:#x}")
+    return out, i
+
+
+def _ds_on_retroarch() -> int:
+    """Steam shortcuts (Steam ROM Manager's) that run DS games in RetroArch,
+    which draws both screens in one window. Only read, never changed: the
+    user switches them to the standalone melonDS themselves."""
+    home = _user_home()
+    seen, count = set(), 0
+    for path in glob.glob(os.path.join(home, ".local/share/Steam/userdata/*/config/shortcuts.vdf")):
+        real = os.path.realpath(path)
+        if real in seen:
+            continue
+        seen.add(real)
+        try:
+            with open(real, "rb") as fh:
+                shortcuts, _ = _vdf_map(fh.read(), 0)
+        except (OSError, ValueError):
+            continue
+        for entry in shortcuts.get("shortcuts", {}).values():
+            if not isinstance(entry, dict):
+                continue
+            cmd = " ".join(str(entry.get(k, "")) for k in ("exe", "Exe", "LaunchOptions")).lower()
+            if (("retroarch" in cmd or "libretro" in cmd) and
+                    (re.search(r"(melonds|desmume)\w*_libretro", cmd) or re.search(r"\.nds\b", cmd))):
+                count += 1
+    return count
+
+
 def _two_screen_status() -> dict[str, Any]:
     state = _load_two_screen()
     emulators = []
@@ -341,7 +395,7 @@ def _two_screen_status() -> dict[str, Any]:
             continue
         emulators.append({"name": name, "path": path, "twoScreens": applied})
     return {"enabled": _two_screen_enabled(state), "emulators": emulators,
-            "running": _two_screen_running()}
+            "running": _two_screen_running(), "dsOnRetroArch": _ds_on_retroarch()}
 
 
 def _two_screen_enabled(state: dict) -> bool:

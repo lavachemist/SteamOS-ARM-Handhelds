@@ -159,6 +159,7 @@ function TwoScreenSection() {
             },
         })),
         err && note(err),
+        ts.dsOnRetroArch > 0 && note(`${ts.dsOnRetroArch} DS game${ts.dsOnRetroArch === 1 ? "" : "s"} in Steam start${ts.dsOnRetroArch === 1 ? "s" : ""} in RetroArch, which shows both screens on the top one. To use the bottom screen, in Desktop Mode open Steam ROM Manager, turn off the RetroArch DS parser, turn on "Nintendo DS - melonDS (Standalone)" and add the games again. Copy your saves over first: they stay with RetroArch.`),
         note("On by default: DS, 3DS and Wii U games show their second screen on the bottom one. melonDS gets a second window, Azahar (and Lime3DS, Citra) Separate Windows, Cemu its separate GamePad view, also for emulators installed later. Off puts their settings back. DS games need the standalone melonDS, not RetroArch's."),
     ] });
 }
