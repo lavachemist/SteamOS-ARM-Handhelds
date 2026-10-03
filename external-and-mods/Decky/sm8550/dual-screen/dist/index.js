@@ -324,13 +324,16 @@ function AppsSection() {
                 jsx("div", { style: { flex: 1, opacity: a.hidden ? 0.5 : 1 }, children: a.name }),
                 button("▲", () => move(i, -1), i === 0),
                 button("▼", () => move(i, 1), i === apps.length - 1),
+                // Trackpad and Keyboard always show (Barry Launcher says
+                // which): their switch stays on.
                 jsx("div", { style: { marginLeft: "10px" }, children: jsx(DFL.Toggle, {
                     value: !a.hidden,
+                    disabled: a.hideable === false,
                     onChange: (v) => save(apps.map((b) => (b.id === a.id ? { ...b, hidden: !v } : b))),
                 }) }),
             ],
         }), )),
-        apps && note("Switch: shown on Barry Launcher's home screen. ▲ ▼: its place there."),
+        apps && note("Switch: shown on Barry Launcher's home screen (Trackpad and Keyboard always are). ▲ ▼: its place there."),
     ] });
 }
 
