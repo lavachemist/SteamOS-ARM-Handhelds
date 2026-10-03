@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """barry-app: install and make Barry Launcher apps (barry_apps).
 
-  barry-app install ARCHIVE      install or update an app (.zip, .tar.gz, ...)
-  barry-app remove ID [--keep-data]
+  barry-app install ARCHIVE      install or update an app (.zip, .tar.gz, ...,
+                                 or an app folder)
+  barry-app remove ID [--keep-data]  (with its data, log and home screen place)
   barry-app list                 the installed apps
   barry-app check PATH           would this archive or folder install? (for
                                  app makers: the same checks as install)
@@ -37,7 +38,7 @@ APP_HOSTS = (os.path.join(os.path.dirname(os.path.realpath(__file__)), "AppHost.
              "/usr/share/barry_launcher/shell/AppHost.qml")
 # Barry Launcher's own apps, which a user app may not replace (shelld
 # checks too; this is for installs without it).
-BUILTIN = {"browser", "discord", "signal", "trackpad", "keyboard", "dino"}
+BUILTIN = {"browser", "discord", "signal", "trackpad", "keyboard"}
 PACK_SKIP = {".git", ".github", "__pycache__", ".DS_Store", "__MACOSX", ".vscode", ".idea"}
 
 
@@ -162,7 +163,10 @@ def cmd_run(a) -> int:
     data = os.path.abspath(a.data) if a.data else tempfile.mkdtemp(prefix=f"barry-app-{m['id']}-")
     os.makedirs(data, exist_ok=True)
     print(f"Running {describe(m)}; its data folder is {data}")
-    env = dict(os.environ, BARRY_APP_ID=m["id"], BARRY_APP_DIR=folder, BARRY_APP_DATA=data)
+    # As on the device: what Qt saves for the app stays in its data folder.
+    env = dict(os.environ, BARRY_APP_ID=m["id"], BARRY_APP_DIR=folder, BARRY_APP_DATA=data,
+               XDG_CONFIG_HOME=os.path.join(data, ".config"), XDG_DATA_HOME=os.path.join(data, ".local", "share"),
+               QML_DISABLE_DISK_CACHE="1")
     return subprocess.call([qml, host, "--", folder, m["main"], m["id"], m["name"], data,
                             "fullscreen" if a.fullscreen else "windowed"], env=env)
 

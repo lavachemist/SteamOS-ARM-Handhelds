@@ -1,9 +1,10 @@
 pragma ComponentBehavior: Bound
-// Barry Launcher's Dino app for the AYN Thor's bottom screen: an endless
-// runner after Chrome's offline dinosaur game, in the launcher's colours.
-// Tap to start and to jump; cacti, and birds once the score passes 400.
-// The best score is kept. barry_launcher_shelld starts it like the other
-// apps; the close button quits.
+// Dino, a Barry Launcher app (barry_apps) that comes with Barry Launcher:
+// an endless runner after Chrome's offline dinosaur game, in the
+// launcher's colours. Tap to start and to jump; cacti, and birds once the
+// score passes 400. The best score is kept in the app's data folder; the
+// close button quits. Removable like any app, and in barry-launcher-apps'
+// releases to install again.
 //
 // Credit: the original is Google Chrome's Dinosaur Game ("Lonely T-Rex",
 // codename Project Bolan, 2014) by Sebastien Gabriel, Alan Bettes and
@@ -14,16 +15,13 @@ pragma ComponentBehavior: Bound
 // Chromium code and none of Chrome's sprite images.
 import QtCore
 import QtQuick
-import QtQuick.Window
 
-Window {
+Rectangle {
     id: win
-    title: "Barry Launcher Dino"
+    required property var barry  // from Barry Launcher (AppHost.qml)
     color: "black"
-    visibility: Window.FullScreen
-    visible: true
 
-    readonly property real s: Math.min(width / 1240, height / 1080)
+    readonly property real s: barry.scale
     readonly property color ink: "#cfe0ff"
     readonly property real px: 7 * s                 // one pixel of the sprites
     readonly property real groundY: height * 0.7
@@ -48,6 +46,7 @@ Window {
 
     Settings {
         id: saved
+        location: win.barry.dataDirUrl + "dino.ini"
         category: "dino"
         property int best: 0
     }
@@ -175,56 +174,61 @@ Window {
         }
     }
 
+    // An obstacle (a cactus group or a bird), and a cloud.
+    component Obstacle: Item {
+        id: ob
+        required property int index
+        property bool active: false
+        property string kind: "cactus"   // "cactus" or "bird"
+        property int count: 1            // cacti side by side
+        property real tall: 100 * win.s
+        property real lift: 0            // birds: height above the ground
+        visible: active
+        width: kind === "bird" ? birdSprite.width : count * (tall * 0.62 + 8 * win.s)
+        height: kind === "bird" ? birdSprite.height : tall
+        y: win.groundY - height - lift
+        Row {
+            visible: ob.kind === "cactus"
+            spacing: 8 * win.s
+            Repeater {
+                model: ob.count
+                delegate: Cactus { tall: ob.tall }
+            }
+        }
+        Sprite {
+            id: birdSprite
+            visible: ob.kind === "bird"
+            cell: win.px * 0.9
+            rows: Math.floor(win.legClock * 6) % 2 ? win.birdUp : win.birdDown
+        }
+    }
+
+    component Cloud: Rectangle {
+        required property int index
+        property real cx: -1e6  // placed once the window has its size
+        x: cx
+        y: win.height * (0.16 + 0.07 * (index % 2))
+        width: 130 * win.s; height: 40 * win.s
+        radius: height / 2
+        color: "transparent"
+        border.color: win.ink
+        border.width: 3 * win.s
+        opacity: 0.25
+    }
+
     // Obstacles: a fixed pool, moved by step().
     readonly property int poolSize: 5
     Repeater {
         id: pool
         model: win.poolSize
-        delegate: Item {
-            id: ob
-            required property int index
-            property bool active: false
-            property string kind: "cactus"   // "cactus" or "bird"
-            property int count: 1            // cacti side by side
-            property real tall: 100 * win.s
-            property real lift: 0            // birds: height above the ground
-            visible: active
-            width: kind === "bird" ? birdSprite.width : count * (tall * 0.62 + 8 * win.s)
-            height: kind === "bird" ? birdSprite.height : tall
-            y: win.groundY - height - lift
-            Row {
-                visible: ob.kind === "cactus"
-                spacing: 8 * win.s
-                Repeater {
-                    model: ob.count
-                    delegate: Cactus { tall: ob.tall }
-                }
-            }
-            Sprite {
-                id: birdSprite
-                visible: ob.kind === "bird"
-                cell: win.px * 0.9
-                rows: Math.floor(win.legClock * 6) % 2 ? win.birdUp : win.birdDown
-            }
-        }
+        delegate: Obstacle {}
     }
 
     // Clouds, slowly drifting.
     Repeater {
         id: clouds
         model: 3
-        delegate: Rectangle {
-            required property int index
-            property real cx: -1e6  // placed once the window has its size
-            x: cx
-            y: win.height * (0.16 + 0.07 * (index % 2))
-            width: 130 * win.s; height: 40 * win.s
-            radius: height / 2
-            color: "transparent"
-            border.color: win.ink
-            border.width: 3 * win.s
-            opacity: 0.25
-        }
+        delegate: Cloud {}
     }
 
     // Ground: a line with specks scrolling under it.
@@ -313,17 +317,22 @@ Window {
         width: 76 * win.s; height: 76 * win.s
         radius: width / 2
         color: closeArea.pressed ? "#5a2020" : "#2d3140"
-        Icon {
-            anchors.centerIn: parent
-            width: 40 * win.s; height: 40 * win.s
-            kind: "close"
-            color: "#eef0f4"
-            lineWidth: 6 * win.s
+        // An X: two bars.
+        Repeater {
+            model: [45, -45]
+            delegate: Rectangle {
+                required property int modelData
+                anchors.centerIn: parent
+                width: 44 * win.s; height: 6 * win.s
+                radius: height / 2
+                rotation: modelData
+                color: "#eef0f4"
+            }
         }
         MouseArea {
             id: closeArea
             anchors.fill: parent
-            onClicked: Qt.quit()
+            onClicked: win.barry.close()
         }
     }
 
@@ -337,7 +346,7 @@ Window {
             if (win.width <= 0)
                 return
             for (let i = 0; i < clouds.count; i++) {
-                const c = clouds.itemAt(i)
+                const c = clouds.itemAt(i) as Cloud
                 if (c.cx === -1e6)
                     c.cx = win.width * (0.2 + 0.33 * i)
                 c.cx -= (win.phase === "running" ? 60 : 20) * win.s * Math.min(frameTime, 0.05)
@@ -369,13 +378,13 @@ Window {
         dinoV = 0
         nextGap = width * 0.6
         for (let i = 0; i < pool.count; i++)
-            pool.itemAt(i).active = false
+            (pool.itemAt(i) as Obstacle).active = false
     }
 
     function spawn() {
         let ob = null
         for (let i = 0; i < pool.count; i++)
-            if (!pool.itemAt(i).active) { ob = pool.itemAt(i); break }
+            if (!(pool.itemAt(i) as Obstacle).active) { ob = pool.itemAt(i) as Obstacle; break }
         if (!ob)
             return
         if (score > 400 && Math.random() < 0.3) {
@@ -418,7 +427,7 @@ Window {
             nextGap = speed * (0.62 + Math.random() * 0.75) + 160 * s
         }
         for (let i = 0; i < pool.count; i++) {
-            const ob = pool.itemAt(i)
+            const ob = pool.itemAt(i) as Obstacle
             if (!ob.active)
                 continue
             ob.x -= speed * dt * (ob.kind === "bird" ? 1.08 : 1)

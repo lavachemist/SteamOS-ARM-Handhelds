@@ -63,6 +63,8 @@ User apps (barry_apps: QML apps installed from an archive, by the barry-app
 command or the Barry Launcher plugin) join the home screen after the built-in
 ones; each runs in shell/AppHost.qml, its output in
 ~/.cache/barry_launcher/ID.log. They are picked up as they are installed.
+Those that come with Barry Launcher (Dino) are installed at its start
+unless the user removed them.
 """
 from __future__ import annotations
 
@@ -156,9 +158,11 @@ APPS = {
     # A tile of its own for the same app, opening it with the keyboard up
     # (launch).
     TOP_KEYBOARD: {"name": "Keyboard", "icon": "keyboard", "closable": False, "hideable": False},
-    # Plain QML apps of the shell's own.
-    "dino": {"name": "Dino", "icon": "dino", "qmlfile": "Dino.qml", "window": "^Barry Launcher Dino$"},
 }
+# Dino was one of the apps above; it is a user app now (barry_apps), that
+# comes with Barry Launcher. Its old id, for moving its place and score.
+OLD_DINO = "dino"
+NEW_DINO = "io.github.project-barry.dino"
 BUILTIN_APPS = dict(APPS)
 APPS_STAMP: list = [object()]  # barry_apps.stamp() when APPS last took in the user apps
 
@@ -604,9 +608,11 @@ def launch(app: str) -> tuple[int, dict]:
         threading.Thread(target=start_flatpak, args=(app, spec), daemon=True).start()
         return 200, {"ok": True, "running": False}
     if spec.get("user"):
-        data = os.path.join(barry_apps.APP_DATA_DIR, app)
-        os.makedirs(data, exist_ok=True)
-        extra = {"BARRY_APP_ID": app, "BARRY_APP_DIR": spec["dir"], "BARRY_APP_DATA": data}
+        # Its XDG folders inside its data folder: all it saves is there.
+        extra = barry_apps.app_env(app)
+        data = extra["BARRY_APP_DATA"]
+        for d in (data, extra["XDG_CONFIG_HOME"], extra["XDG_DATA_HOME"]):
+            os.makedirs(d, exist_ok=True)
         if DESKTOP:
             extra["QT_QPA_PLATFORM"] = "wayland"
         with app_log(app) as out:
@@ -701,12 +707,26 @@ def install_app(body: dict) -> tuple[int, dict]:
     return 200, {"ok": True, "app": m}
 
 
+def stop(app: str, wait_s: float = 3.0) -> None:
+    """Close an app and wait until it has ended: one that saves as it
+    quits could otherwise write into a folder just removed."""
+    proc = running(app)
+    if not proc:
+        return
+    close(app)
+    try:
+        proc.wait(wait_s)
+    except subprocess.TimeoutExpired:
+        log(f"{app} did not quit; killing it")
+        proc.kill()
+        proc.wait(2)
+
+
 def remove_app(body: dict) -> tuple[int, dict]:
     app = str(body.get("app", ""))
     if app in BUILTIN_APPS:
         return 400, {"ok": False, "error": f"{APPS[app]['name']} is part of Barry Launcher"}
-    if running(app):
-        close(app)
+    stop(app)
     try:
         removed = barry_apps.remove(app, keep_data=bool(body.get("keepData")))
     except OSError as err:
@@ -716,6 +736,53 @@ def remove_app(body: dict) -> tuple[int, dict]:
     refresh_user_apps(force=True)
     log(f"removed {app}")
     return 200, {"ok": True}
+
+
+def setup_bundled_apps() -> None:
+    """Install the apps that come with Barry Launcher (barry_apps), and move
+    the old built-in Dino's place on the home screen and best score to the
+    Dino app."""
+    for app in barry_apps.install_bundled():
+        log(f"installed {app}, which comes with Barry Launcher")
+    try:
+        with open(HOME_LAYOUT, encoding="utf-8") as fh:
+            saved = json.load(fh)
+        if isinstance(saved, dict) and OLD_DINO in saved.get("order", []):
+            saved["order"] = [NEW_DINO if a == OLD_DINO else a for a in saved["order"]]
+            saved["hidden"] = [NEW_DINO if a == OLD_DINO else a for a in saved.get("hidden", [])]
+            with open(HOME_LAYOUT + ".tmp", "w", encoding="utf-8") as fh:
+                json.dump(saved, fh, indent=1)
+                fh.write("\n")
+            os.replace(HOME_LAYOUT + ".tmp", HOME_LAYOUT)
+            log("moved Dino's place on the home screen to the Dino app")
+    except (OSError, ValueError):
+        pass
+    # The old Dino kept its best score in qml6's own settings ([dino] best=N).
+    ini = os.path.join(barry_apps.APP_DATA_DIR, NEW_DINO, "dino.ini")
+    if os.path.isdir(os.path.dirname(ini)) and not os.path.exists(ini):
+        for conf in glob.glob(f"{HOME}/.config/*.conf") + glob.glob(f"{HOME}/.config/*/*.conf"):
+            try:
+                with open(conf, encoding="utf-8") as fh:
+                    text = fh.read()
+            except (OSError, UnicodeDecodeError):
+                continue
+            section = text.split("[dino]", 1)[1].split("\n[", 1)[0] if "[dino]" in text else ""
+            best = next((line.split("=", 1)[1].strip() for line in section.splitlines()
+                         if line.startswith("best=")), None)
+            if best and best.isdigit():
+                with open(ini, "w", encoding="utf-8") as fh:
+                    fh.write(f"[dino]\nbest={best}\n")
+                # And out of the shared file: nothing of the old Dino left.
+                before, _, rest = text.partition("[dino]")
+                after = rest.split("\n[", 1)
+                left = before.rstrip("\n") + ("\n\n[" + after[1] if len(after) > 1 else "\n")
+                if left.strip():
+                    with open(conf, "w", encoding="utf-8") as fh:
+                        fh.write(left)
+                else:
+                    os.remove(conf)
+                log(f"moved Dino's best score ({best}) from {conf}")
+                break
 
 
 def release_top_input() -> None:
@@ -1335,6 +1402,7 @@ def main() -> None:
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     srv.daemon_threads = True
     threading.Thread(target=srv.serve_forever, daemon=True).start()
+    setup_bundled_apps()
     refresh_user_apps(force=True)
     enable_accessibility()
     Atspi.init()

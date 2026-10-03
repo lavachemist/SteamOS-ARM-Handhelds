@@ -15,9 +15,16 @@ such a folder: the archive may hold it directly or inside one folder):
   }
 
 Barry Launcher runs main.qml in a full-screen window of its own
-(shell/AppHost.qml), the way it runs its own QML apps. Installing an app
-that is already there (same id) updates it and keeps its data
-(~/.local/share/barry_launcher/app-data/ID); removing it deletes both.
+(shell/AppHost.qml), the way it runs its own QML apps, with its config
+and data XDG folders pointed into its data folder (app_env): whatever it or
+Qt saves for it (Settings, LocalStorage) stays in
+~/.local/share/barry_launcher/app-data/ID. Installing an app that is
+already there (same id) updates it and keeps that data; removing it
+deletes the app, its data, its log and its place on the home screen.
+
+Apps that come with Barry Launcher (BUNDLED, folders) are installed at
+its start unless the user removed them (REMOVED lists those), and
+updated when Barry Launcher brings a newer version.
 
 barry_launcher_shelld lists and starts the installed apps; the barry-app
 command and the Barry Launcher Decky plugin install and remove them.
@@ -37,6 +44,11 @@ HOME = os.path.expanduser("~")
 DATA = os.path.join(os.environ.get("XDG_DATA_HOME", f"{HOME}/.local/share"), "barry_launcher")
 APPS_DIR = os.path.join(DATA, "apps")
 APP_DATA_DIR = os.path.join(DATA, "app-data")
+CONFIG = os.path.join(os.environ.get("XDG_CONFIG_HOME", f"{HOME}/.config"), "barry_launcher")
+HOME_LAYOUT = os.path.join(CONFIG, "home.json")  # barry_launcher_shelld's
+REMOVED = os.path.join(CONFIG, "removed-apps.json")
+LOGS = os.path.join(os.environ.get("XDG_CACHE_HOME", f"{HOME}/.cache"), "barry_launcher")
+BUNDLED = "/usr/share/barry_launcher/apps"
 MANIFEST = "barry-app.json"
 FORMAT = 1
 # A dot keeps every user app's id apart from Barry Launcher's own apps.
@@ -194,15 +206,22 @@ def check(path: str) -> dict:
 
 
 def install(archive: str, reserved: set[str] = frozenset()) -> dict:
-    """Install (or update) the app in archive; its manifest, with
-    "updated": whether it replaced an installed version."""
-    if not os.path.isfile(archive):
+    """Install (or update) the app in archive (or an app folder); its
+    manifest, with "updated": whether it replaced an installed version."""
+    if not os.path.isfile(archive) and not os.path.isdir(archive):
         raise AppError(f"no file {archive}")
     os.makedirs(APPS_DIR, exist_ok=True)
     tmp = tempfile.mkdtemp(prefix=".new-", dir=APPS_DIR)
     try:
-        _unpack(archive, tmp)
-        root = _package_root(tmp)
+        if os.path.isdir(archive):
+            read_manifest(archive)  # before copying anything
+            root = os.path.join(tmp, "app")
+            shutil.copytree(archive, root, symlinks=True)
+            if any(os.path.islink(os.path.join(d, f)) for d, ds, fs in os.walk(root) for f in ds + fs):
+                raise AppError("the app folder has a link, which apps may not have")
+        else:
+            _unpack(archive, tmp)
+            root = _package_root(tmp)
         m = read_manifest(root)
         if m["id"] in reserved:
             raise AppError(f'"{m["id"]}" is one of Barry Launcher\'s own apps')
@@ -216,14 +235,16 @@ def install(archive: str, reserved: set[str] = frozenset()) -> dict:
         os.makedirs(os.path.join(APP_DATA_DIR, m["id"]), exist_ok=True)
         if old:
             shutil.rmtree(old, ignore_errors=True)
+        _set_removed(m["id"], False)
         return dict(m, updated=old is not None)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
 def remove(app_id: str, keep_data: bool = False) -> bool:
-    """Remove an installed app (and its data unless keep_data); False if it
-    was not installed."""
+    """Remove an installed app: its files, its log, its place on the home
+    screen, and (unless keep_data) everything it saved. False if it was not
+    installed. The app must not be running (it could save again)."""
     if not ID_RE.match(app_id or ""):
         return False
     dest = os.path.join(APPS_DIR, app_id)
@@ -232,7 +253,107 @@ def remove(app_id: str, keep_data: bool = False) -> bool:
     shutil.rmtree(dest)
     if not keep_data:
         shutil.rmtree(os.path.join(APP_DATA_DIR, app_id), ignore_errors=True)
+    for log in (os.path.join(LOGS, f"{app_id}.log"),):
+        try:
+            os.remove(log)
+        except OSError:
+            pass
+    _forget_layout(app_id)
+    if bundled().get(app_id):
+        _set_removed(app_id, True)  # not back at the next start
     return True
+
+
+def app_env(app_id: str) -> dict[str, str]:
+    """The environment an app runs with: its ids and folders, and the
+    config and data XDG folders inside its data folder, so that what Qt
+    saves for it (Settings without a location, LocalStorage) goes there
+    too. The cache stays the user's: font and shader caches are shared, not
+    the app's (a folder of its own would rebuild them, about 5 MB, for each
+    app), and Qt's compiled-QML cache, which would be the app's, is off."""
+    data = os.path.join(APP_DATA_DIR, app_id)
+    return {"BARRY_APP_ID": app_id, "BARRY_APP_DIR": os.path.join(APPS_DIR, app_id), "BARRY_APP_DATA": data,
+            "XDG_CONFIG_HOME": os.path.join(data, ".config"),
+            "XDG_DATA_HOME": os.path.join(data, ".local", "share"),
+            "QML_DISABLE_DISK_CACHE": "1"}
+
+
+def _read_json(path: str, default):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return default
+
+
+def _write_json(path: str, value) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(value, fh, indent=1)
+        fh.write("\n")
+    os.replace(tmp, path)
+
+
+def _forget_layout(app_id: str) -> None:
+    layout = _read_json(HOME_LAYOUT, None)
+    if not isinstance(layout, dict):
+        return
+    changed = False
+    for key in ("order", "hidden"):
+        if isinstance(layout.get(key), list) and app_id in layout[key]:
+            layout[key] = [a for a in layout[key] if a != app_id]
+            changed = True
+    if changed:
+        _write_json(HOME_LAYOUT, layout)
+
+
+def _set_removed(app_id: str, removed: bool) -> None:
+    ids = _read_json(REMOVED, [])
+    ids = [a for a in ids if isinstance(a, str)] if isinstance(ids, list) else []
+    if removed == (app_id in ids):
+        return
+    _write_json(REMOVED, sorted(set(ids) | {app_id}) if removed else [a for a in ids if a != app_id])
+
+
+def bundled() -> dict[str, dict]:
+    """id -> manifest, with "dir", of the apps that come with Barry Launcher."""
+    apps = {}
+    try:
+        names = sorted(os.listdir(BUNDLED))
+    except OSError:
+        return apps
+    for name in names:
+        root = os.path.join(BUNDLED, name)
+        try:
+            m = read_manifest(root)
+        except AppError:
+            continue
+        apps[m["id"]] = dict(m, dir=root)
+    return apps
+
+
+def _version(v: str) -> tuple:
+    return tuple(int(p) if p.isdigit() else 0 for p in re.split(r"[.+-]", v))
+
+
+def install_bundled() -> list[str]:
+    """Install the apps that come with Barry Launcher and are not there, or
+    are older; not the ones the user removed. The ids installed."""
+    removed = _read_json(REMOVED, [])
+    have = installed()
+    done = []
+    for app_id, m in bundled().items():
+        if app_id in removed:
+            continue
+        if app_id in have and _version(have[app_id]["version"]) >= _version(m["version"]):
+            continue
+        try:
+            install(m["dir"])
+            done.append(app_id)
+        except (AppError, OSError):
+            continue
+    return done
 
 
 def installed() -> dict[str, dict]:

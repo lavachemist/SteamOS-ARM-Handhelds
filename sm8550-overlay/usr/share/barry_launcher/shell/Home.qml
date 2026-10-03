@@ -20,7 +20,6 @@ Rectangle {
         { app: "signal", name: "Signal", icon: "signal", closable: true },
         { app: "trackpad", name: "Trackpad", icon: "trackpad", closable: false },
         { app: "keyboard", name: "Keyboard", icon: "keyboard", closable: false },
-        { app: "dino", name: "Dino", icon: "dino", closable: true },
     ]
     readonly property int rows: Math.max(1, Math.ceil(tiles.length / 3))
     // The tiles' scale: as big as before for two rows, smaller to fit three.
