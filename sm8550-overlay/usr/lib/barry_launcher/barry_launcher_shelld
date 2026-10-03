@@ -14,6 +14,8 @@ keyboard (shell/Keyboard.qml), which call it on 127.0.0.1:PORT:
   GET  /keyboard  {"visible": bool, "top": bool}: top when the text field is
                   in the lower half, so the keyboard does not cover it
   POST /keyboard  {"visible": bool}: show or hide by hand
+  GET  /top-keyboard {"serial": n, "visible": bool}: the Trackpad app's
+                  keyboard, asked up (or down) each time serial counts on
   POST /type      {"text": "..."} or {"key": "BackSpace"|"Return"|...}
 
 A POST needs a JSON body, a Host of 127.0.0.1 or localhost and no Origin:
@@ -41,8 +43,13 @@ Most apps are Firefox instances, each with its own profile under
 ~/.local/share/barry_launcher: the browser, and Discord's web app in kiosk
 mode (no address bar or tabs). Signal has no web app: it is
 Signal Desktop from Flathub, installed for the user on its first start.
-Trackpad and Keyboard drive the top screen instead (shell/TopInputApp.qml,
-through barry_launcher_inputd); each is a window of its own like the rest.
+Trackpad drives the top screen instead (shell/TopInputApp.qml, through
+barry_launcher_inputd), in a window of its own like the rest: a trackpad
+with a keyboard below it that slides away and back. A click on a top-screen
+text field (focus over AT-SPI, within TOP_CLICK_S of a trackpad click or a
+finger on the top screen) brings its keyboard up; so does a launch of
+"keyboard" (its Keyboard tile, and the Barry Launcher plugin in place of
+Steam's keyboard).
 Without Steam, gamescope treats every window
 as its own app and shows the most recently mapped one (stacking order does
 not count), so switching is unmapping and mapping the wanted window again.
@@ -91,11 +98,12 @@ HOME_READY_S = 0.15
 GLIDE_WORDS = "/usr/share/barry_launcher/glide/words.txt"
 HOME_TITLE = "Barry Launcher"
 DASHBOARD_FLAG = "/run/sm8550-thor/overlay"
-# "1" while the Keyboard or Trackpad app is open: they work the top screen
-# from here, so sm8550-thor-backlightd has Steam's gamescope hand the bottom
+# "1" while the Trackpad app is open: it works the top screen from here, so sm8550-thor-backlightd has Steam's gamescope hand the bottom
 # screen back should a dual-screen game be showing its second window there.
 TOP_INPUT_FLAG = "/run/sm8550-thor/top-input"
-TOP_INPUT_APPS = ("keyboard", "trackpad")
+TOP_INPUT_APP = "trackpad"
+# Launching this opens the Trackpad app with its keyboard up.
+TOP_KEYBOARD = "keyboard"
 HOME_REQUEST = "/run/sm8550-thor/home"
 HOME = os.path.expanduser("~")
 DATA = os.path.join(os.environ.get("XDG_DATA_HOME", f"{HOME}/.local/share"), "barry_launcher")
@@ -131,12 +139,13 @@ APPS = {
                "classes": ["signal", "signal-desktop", "org.signal.Signal"],
                "seed": {"~/.var/app/org.signal.Signal/config/Signal/config.json": "{}\n"},
                "warm": ["~/.var/app/org.signal.Signal/config/Signal"]},
-    # The top screen's trackpad and keyboard: QML windows by title. They
-    # close by themselves on Home, so their tiles have no close badge.
+    # The top screen's trackpad and keyboard: a QML window by title. It
+    # closes by itself on Home, so its tile has no close badge.
     "trackpad": {"name": "Trackpad", "icon": "trackpad", "closable": False,
                  "qml": "trackpad", "window": "^Barry Launcher Trackpad$"},
-    "keyboard": {"name": "Keyboard", "icon": "keyboard", "closable": False,
-                 "qml": "keyboard", "window": "^Barry Launcher Top Keyboard$"},
+    # A tile of its own for the same app, opening it with the keyboard up
+    # (launch).
+    TOP_KEYBOARD: {"name": "Keyboard", "icon": "keyboard", "closable": False},
     # Plain QML apps of the shell's own.
     "dino": {"name": "Dino", "icon": "dino", "qmlfile": "Dino.qml", "window": "^Barry Launcher Dino$"},
 }
@@ -221,6 +230,9 @@ SWITCH_QUIET_S = 1.5
 # Text focus shows the keyboard only this soon after a touch.
 TOUCH_NAME = "bottom_touchscreen"
 TOUCH_S = 1.0
+# A top-screen text field brings the Trackpad app's keyboard up only this
+# soon after a trackpad click or a finger on the top screen.
+TOP_CLICK_S = 1.0
 TAP_SLOP = 30  # touchscreen units a tap may wander
 # Swipe up from the bottom edge: Home, as a long press on the AYN button.
 # One finger, starting this close to the bottom, at least this far up,
@@ -230,6 +242,9 @@ HOME_SWIPE_MIN = 150
 HOME_SWIPE_S = 0.8
 EV_SYN, EV_KEY, EV_ABS, BTN_TOUCH = 0, 1, 3, 0x14A
 BTN_LEFT, BTN_RIGHT = 0x110, 0x111
+# Presses that count as clicks on the top screen (TOP_CLICK_S): a finger on
+# it, and barry_launcher_inputd's mouse buttons.
+TOP_PRESS_DEVICES = (("top_touchscreen", (BTN_TOUCH,)), ("Barry Launcher Trackpad", (BTN_LEFT, BTN_RIGHT)))
 ABS_MT_SLOT, ABS_MT_POSITION_X, ABS_MT_POSITION_Y, ABS_MT_TRACKING_ID = 0x2F, 0x35, 0x36, 0x39
 INPUT_EVENT = struct.Struct("llHHi")
 # Launch-script dialogs (zenity) of Flatpak apps: watched this long.
@@ -272,6 +287,13 @@ class State:
         self.home_serial = 0  # counts trips home, for the home screen's slide-in
         self.home_ready = threading.Event()
         self.im = None  # Desktop Mode: barry_desktop.InputMethod
+        self.last_top_click: float | None = None  # monotonic: trackpad click or top-screen touch
+        self.top_keyboard = {"serial": 0, "visible": False}  # the Trackpad app's keyboard
+
+    def set_top_keyboard(self, visible: bool, why: str) -> None:
+        with self.lock:
+            self.top_keyboard = {"serial": self.top_keyboard["serial"] + 1, "visible": visible}
+        log(f"{why}: trackpad keyboard {'up' if visible else 'down'}")
 
     def keyboard(self) -> dict:
         with self.lock:
@@ -407,8 +429,8 @@ def go_home() -> None:
         STATE.home_ready.clear()
     STATE.home_ready.wait(HOME_READY_S)
     STATE.set_keyboard(False)
-    # The trackpad and keyboard are tools, not apps to come back to: leaving
-    # them closes them. Their exit lets go of anything held on top (watch).
+    # The trackpad is a tool, not an app to come back to: leaving it closes
+    # it. Their exit lets go of anything held on top (watch).
     for app, spec in APPS.items():
         if "qml" in spec and running(app):
             close(app)
@@ -522,6 +544,11 @@ def start_flatpak(app: str, spec: dict) -> None:
 
 
 def launch(app: str) -> tuple[int, dict]:
+    keyboard = app == TOP_KEYBOARD
+    if keyboard:
+        app = TOP_INPUT_APP
+        if running(app):
+            STATE.set_top_keyboard(True, "keyboard asked for")
     spec = APPS.get(app)
     if spec is None:
         return 404, {"error": f"no app {app!r}"}
@@ -539,12 +566,14 @@ def launch(app: str) -> tuple[int, dict]:
     if "qml" in spec or "qmlfile" in spec:
         cmd = (["qml6", TOP_INPUT_QML, "--", spec["qml"]] if "qml" in spec
                else ["qml6", os.path.join(SHELL_DIR, spec["qmlfile"])])
+        if keyboard:
+            cmd.append("keyboard")  # opens with its keyboard up
         extra = {}
         if DESKTOP and "qml" in spec:
             # The top screen's trackpad and keyboard must never take focus
             # from the top screen's window: a KWin rule (barry_launcher_desktop)
             # says so, so they can be Wayland windows, with proper multitouch.
-            cmd[-1:-1] = ["desktop"]
+            cmd.insert(cmd.index("--") + 1, "desktop")
             extra["QT_QPA_PLATFORM"] = "wayland"
         STATE.apps[app] = subprocess.Popen(
             cmd,
@@ -583,6 +612,8 @@ def launch(app: str) -> tuple[int, dict]:
 
 
 def close(app: str) -> tuple[int, dict]:
+    if app == TOP_KEYBOARD:
+        app = TOP_INPUT_APP
     if app not in APPS:
         return 404, {"error": f"no app {app!r}"}
     proc = running(app)
@@ -826,6 +857,9 @@ class Handler(BaseHTTPRequestHandler):
                 STATE.keyboard_height = int(h)
                 apply_inset()
             self._json(200, STATE.keyboard())
+        elif path == "/top-keyboard":
+            with STATE.lock:
+                self._json(200, dict(STATE.top_keyboard))
         elif path == "/apps":
             order, hidden = home_layout()
             self._json(200, {name: {"running": running(name) is not None,
@@ -1015,10 +1049,10 @@ def show_for_text(top: bool, why: str) -> None:
     if not touched_lately():
         log(f"{why} without a touch: no keyboard")
         return
-    if not DESKTOP and any(running(a) for a in TOP_INPUT_APPS):
-        # The Keyboard or Trackpad app fills the screen: no field of ours is
-        # in sight, and this keyboard would squeeze that app above it.
-        log(f"{why} under the top screen's keyboard or trackpad: no keyboard")
+    if not DESKTOP and running(TOP_INPUT_APP):
+        # The Trackpad app fills the screen: no field of ours is in sight,
+        # and this keyboard would squeeze that app above it.
+        log(f"{why} under the top screen's trackpad: no keyboard")
         return
     if not STATE.keyboard()["visible"]:
         log(f"{why}{' (lower half)' if top else ''}: keyboard")
@@ -1037,6 +1071,7 @@ def on_focus(event) -> None:
     if event.detail1 != 1:
         return  # the next focus gain decides
     if not on_this_screen(event.source):
+        top_text_focus(event.source, "top-screen text focus in")
         return
     try:
         editable, top = text_field(event.source)
@@ -1052,6 +1087,27 @@ def on_focus(event) -> None:
     STATE.set_keyboard(False)
 
 
+def top_text_focus(acc, why: str) -> None:
+    """Game Mode: a click on a text field on the top screen brings up the
+    Trackpad app's keyboard. Only a click: games and apps focus and move
+    carets by themselves too. Focus leaving a field does not put it away,
+    since typing can move focus (a list of suggestions, say): the ⌄ key
+    does."""
+    if DESKTOP or not running(TOP_INPUT_APP):
+        return
+    if STATE.top_keyboard["visible"] and why.startswith("caret"):
+        return  # typing moves the caret all the time
+    last = STATE.last_top_click
+    if last is None or time.monotonic() - last >= TOP_CLICK_S:
+        return
+    try:
+        editable, _ = text_field(acc)
+    except GLib.Error:
+        return
+    if editable:
+        STATE.set_top_keyboard(True, why)
+
+
 def on_caret(event) -> None:
     """A tap in a field that already has focus moves only its caret."""
     if im_decides() or STATE.keyboard()["visible"]:
@@ -1061,6 +1117,7 @@ def on_caret(event) -> None:
         if not acc.get_state_set().contains(Atspi.StateType.FOCUSED):
             return
         if not on_this_screen(acc):
+            top_text_focus(acc, "caret moved in a top-screen field")
             return
         editable, top = text_field(acc)
     except GLib.Error:
@@ -1120,29 +1177,44 @@ def on_im_event(ev: dict) -> None:
             show_for_text(False, "caret moved in the active field")
 
 
-def watch_presses(name: str, codes: tuple) -> None:
-    """Desktop Mode: a press on another touch device (the top screen, the
-    trackpad's clicks) counts as a touch too, for showing the keyboard."""
+def watch_presses(name: str, codes: tuple, attr: str = "last_touch", retry: bool = False) -> None:
+    """A press on another touch device (the top screen, the trackpad's
+    clicks) is noted in STATE.attr: Desktop Mode counts it as a touch for
+    showing the keyboard; Game Mode as a click for the Trackpad app's. With
+    retry, a device not there yet (barry_launcher_inputd makes the trackpad's)
+    is looked for again, and again after it goes away."""
+    while True:
+        found = watch_presses_once(name, codes, attr)
+        if not retry:
+            return
+        time.sleep(1 if found else 5)
+
+
+def watch_presses_once(name: str, codes: tuple, attr: str) -> bool:
     for name_file in glob.glob("/sys/class/input/event*/device/name"):
         try:
             with open(name_file, encoding="utf-8") as fh:
                 if fh.read().strip() != name:
                     continue
             fd = os.open("/dev/input/" + name_file.split("/")[4], os.O_RDONLY)
-        except OSError:
+        except OSError as err:
+            log(f"cannot read {name}: {err}")
             continue
         log(f"watching presses on {name}")
-        with os.fdopen(fd, "rb", buffering=0) as fh:
-            while True:
-                data = fh.read(INPUT_EVENT.size)
-                if len(data) < INPUT_EVENT.size:
-                    return
-                _, _, etype, code, value = INPUT_EVENT.unpack(data)
-                if etype == EV_KEY and code in codes and value == 1:
-                    STATE.last_touch = time.monotonic()
-                if TIMING and etype == EV_KEY and code in codes and value in (0, 1):
-                    log(f"timing: {name} {'press' if value else 'release'} {time.monotonic():.3f}")
-        return
+        try:
+            with os.fdopen(fd, "rb", buffering=0) as fh:
+                while True:
+                    data = fh.read(INPUT_EVENT.size)
+                    if len(data) < INPUT_EVENT.size:
+                        return True
+                    _, _, etype, code, value = INPUT_EVENT.unpack(data)
+                    if etype == EV_KEY and code in codes and value == 1:
+                        setattr(STATE, attr, time.monotonic())
+                    if TIMING and etype == EV_KEY and code in codes and value in (0, 1):
+                        log(f"timing: {name} {'press' if value else 'release'} {time.monotonic():.3f}")
+        except OSError:
+            return True  # the device went away (inputd restarted)
+    return False
 
 
 def start_desktop() -> None:
@@ -1157,7 +1229,7 @@ def start_desktop() -> None:
         GLib.timeout_add(1000, place)
     STATE.im = barry_desktop.InputMethod(on_im_event)
     threading.Thread(target=STATE.im.run, daemon=True).start()
-    for name, codes in (("top_touchscreen", (BTN_TOUCH,)), ("Barry Launcher Trackpad", (BTN_LEFT, BTN_RIGHT))):
+    for name, codes in TOP_PRESS_DEVICES:
         threading.Thread(target=watch_presses, args=(name, codes), daemon=True).start()
 
 
@@ -1174,6 +1246,10 @@ def main() -> None:
     threading.Thread(target=watch_touches, daemon=True).start()
     if DESKTOP:
         start_desktop()
+    else:
+        for name, codes in TOP_PRESS_DEVICES:
+            threading.Thread(target=watch_presses, args=(name, codes, "last_top_click", True),
+                             daemon=True).start()
     apply_inset()  # no inset left over from before a restart
     threading.Thread(target=warm_apps, daemon=True).start()
     threading.Thread(target=load_dictionary, daemon=True).start()
@@ -1209,7 +1285,7 @@ def main() -> None:
         # Overlays draw above the dashboard: step aside while it is up.
         if STATE.keyboard()["visible"] and dashboard_up():
             STATE.set_keyboard(False)
-        top_input = not DESKTOP and any(running(a) for a in TOP_INPUT_APPS)
+        top_input = not DESKTOP and running(TOP_INPUT_APP) is not None
         if top_input != top_input_written:
             try:
                 with open(TOP_INPUT_FLAG, "w", encoding="utf-8") as fh:

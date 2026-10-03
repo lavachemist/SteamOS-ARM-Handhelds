@@ -1,14 +1,19 @@
 pragma ComponentBehavior: Bound
 // The bottom screen as the top screen's trackpad and keyboard. Moves a
 // virtual mouse and keyboard through barry_launcher_inputd, which only the
-// top screen sees. Used by the Game Mode apps Trackpad and Keyboard
-// (TopInputApp.qml) and the Desktop Mode window (Desktop.qml).
+// top screen sees. Used by the Trackpad app (TopInputApp.qml) and the
+// Desktop Mode window (Desktop.qml).
 //
 // Trackpad: one finger moves the pointer (faster strokes go further), a tap
 // clicks, a two-finger tap right-clicks, a three-finger tap middle-clicks,
 // two fingers scroll, and a tap followed by a touch holds the button down to
 // drag. The buttons along the bottom can be held while another finger moves.
-// Keyboard: the keys, with a smaller trackpad above them.
+// Keyboard: the keys, with a smaller trackpad above them. The keys slide up
+// from the bottom edge, overshooting a little and settling back, while the
+// pad shrinks to make room; put away (the ⌄ key), they slide down and the pad
+// fills the screen again. The app's keyboard button between the click buttons
+// brings them back, and so does barry_launcher_shelld when a click lands in
+// a top-screen text field (followShelld).
 import QtQuick
 
 Rectangle {
@@ -17,6 +22,9 @@ Rectangle {
     property string mode: "trackpad"  // or "keyboard"
     property bool showTabs: true  // switch between trackpad and keyboard here
     property string closeLabel: ""  // a close button, when set
+    // Follow barry_launcher_shelld's asks to bring the keyboard up (a click
+    // in a top-screen text field, Steam's keyboard).
+    property bool followShelld: false
     // Pointer speed: pixels on the top screen per pixel on the pad, before
     // acceleration.
     property real speed: 1.6
@@ -62,7 +70,7 @@ Rectangle {
             ti.engineHeld = st.held || {}
             ti.enginePresses = st.presses || {}
             if (ti.dismissSeen >= 0 && st.dismiss > ti.dismissSeen)
-                ti.closeRequested()
+                ti.middleTapped()
             ti.dismissSeen = st.dismiss
         }
         x.open("POST", api + "/trackpad")
@@ -80,6 +88,65 @@ Rectangle {
     }
     onEngineChanged: if (!engine) engineBeat(false)
     color: "black"
+
+    // How far the keyboard is up: 0 down (full trackpad), 1 up; a little
+    // past either end as it springs into place.
+    property real kb: 0
+    readonly property real kbUp: Math.max(0, Math.min(1, kb))
+    NumberAnimation {
+        id: slide
+        target: ti
+        property: "kb"
+        easing.type: Easing.OutBack
+    }
+    function slideKeyboard() {
+        const up = mode === "keyboard"
+        slide.stop()
+        slide.to = up ? 1 : 0
+        // Up: a quick rise with a visible overshoot; down: a softer settle.
+        slide.duration = up ? 460 : 380
+        slide.easing.overshoot = up ? 1.4 : 0.8
+        slide.start()
+    }
+    onModeChanged: {
+        slideKeyboard()
+        if (mode !== "keyboard")
+            keys.reset()  // no shift or Ctrl left on for next time
+    }
+    // Opened with the keyboard up: it rises as the window appears.
+    Component.onCompleted: if (mode === "keyboard") slideKeyboard()
+
+    // The middle button (apps): the keyboard. Desktop Mode's window has tabs
+    // for that and its middle region closes it.
+    function middleTapped() {
+        if (showTabs)
+            closeRequested()
+        else
+            mode = "keyboard"
+    }
+
+    property int shelldSerial: -1
+    Timer {
+        interval: 100
+        running: ti.followShelld && ti.visible
+        repeat: true
+        onTriggered: {
+            const x = new XMLHttpRequest()
+            x.onreadystatechange = function () {
+                if (x.readyState !== XMLHttpRequest.DONE || x.status !== 200)
+                    return
+                let st = null
+                try { st = JSON.parse(x.responseText) } catch (e) { return }
+                // Only asks made while open: the one that opened the app
+                // came as its argument.
+                if (ti.shelldSerial >= 0 && st.serial !== ti.shelldSerial)
+                    ti.mode = st.visible ? "keyboard" : "trackpad"
+                ti.shelldSerial = st.serial
+            }
+            x.open("GET", "http://127.0.0.1:47824/top-keyboard")
+            x.send()
+        }
+    }
 
     function post(path, body) {
         const x = new XMLHttpRequest()
@@ -186,13 +253,21 @@ Rectangle {
         }
     }
 
+    // Where the pad ends: above the click buttons with the keyboard down,
+    // above the keys with it up, and in between (springing with it) as it
+    // moves.
+    readonly property real padBottomDown: height - 20 * s - buttonsHeight
+    readonly property real padBottomUp: height - keys.implicitHeight
+    readonly property real buttonsHeight: 150 * s
+
     Rectangle {
         id: padFace
         anchors {
             left: parent.left; right: parent.right
-            top: bar.visible ? bar.bottom : parent.top; bottom: ti.mode === "keyboard" ? keys.top : buttons.top
+            top: bar.visible ? bar.bottom : parent.top
             margins: 20 * ti.s
         }
+        height: ti.padBottomDown + ti.kb * (ti.padBottomUp - ti.padBottomDown) - 20 * ti.s - y
         radius: 36 * ti.s
         color: "#101117"
         border.color: pad.touching || ti.engineTouching ? "#8a5cf0" : "#2d3140"
@@ -202,6 +277,7 @@ Rectangle {
             anchors.centerIn: parent
             visible: !pad.touching && !ti.engineTouching
             text: ti.mode === "keyboard" ? "Trackpad" : "Trackpad for the top screen\ntap: click · two fingers: scroll, tap: right-click\ntap, then touch and move: drag"
+                  + (ti.showTabs ? "" : "\nclick a text field, or the middle button, for the keyboard")
             horizontalAlignment: Text.AlignHCenter
             color: "#eef0f4"
             opacity: 0.35
@@ -349,13 +425,19 @@ Rectangle {
     }
 
     // Trackpad mode: mouse buttons to hold while another finger moves.
+    // They slide down out of the way as the keyboard comes up, fading.
     Row {
         id: buttons
-        visible: ti.mode === "trackpad"
-        anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 20 * ti.s }
-        height: visible ? 150 * ti.s : 0
+        z: 1
+        visible: ti.kb < 1
+        x: 20 * ti.s
+        width: parent.width - 40 * ti.s
+        y: ti.padBottomDown + ti.kb * (ti.buttonsHeight + 40 * ti.s)
+        opacity: 1 - Math.min(1, ti.kbUp * 1.6)
+        height: ti.buttonsHeight
         spacing: 20 * ti.s
-        // Apps: a dismiss button between the two, as on the keyboard.
+        // Apps: a keyboard button between the two (the region keeps the
+        // name "dismiss" for barry_trackpad).
         readonly property real dismissWidth: ti.showTabs ? 0 : 160 * ti.s
         Repeater {
             model: ti.showTabs ? ["left", "right"] : ["left", "dismiss", "right"]
@@ -383,9 +465,9 @@ Rectangle {
                 Icon {
                     anchors.centerIn: parent
                     visible: mb.dismiss
-                    width: 64 * ti.s
-                    height: 64 * ti.s
-                    kind: "hide"
+                    width: 80 * ti.s
+                    height: 80 * ti.s
+                    kind: "keyboard"
                     color: "#eef0f4"
                     lineWidth: 6 * ti.s
                 }
@@ -401,25 +483,35 @@ Rectangle {
                     id: hold
                     gesturePolicy: mb.dismiss ? TapHandler.ReleaseWithinBounds : TapHandler.WithinBounds
                     onPressedChanged: if (!mb.dismiss) ti.post("/button", { button: mb.modelData, state: pressed ? "down" : "up" })
-                    onTapped: if (mb.dismiss) ti.closeRequested()
+                    onTapped: if (mb.dismiss) ti.middleTapped()
                 }
             }
         }
     }
 
+    // Below the keys: their color, so the overshoot shows no gap under them.
+    Rectangle {
+        visible: keys.visible
+        anchors { left: parent.left; right: parent.right; top: keys.bottom }
+        height: 120 * ti.s
+        color: keys.color
+    }
+
     KeyPanel {
         id: keys
-        visible: ti.mode === "keyboard"
-        anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-        height: visible ? implicitHeight : 0
+        visible: ti.kb > 0.001
+        enabled: ti.mode === "keyboard"  // no keys typed as they slide away
+        x: 0
+        width: parent.width
+        y: parent.height - ti.kb * implicitHeight
+        height: implicitHeight
         s: ti.s
         asciiOnly: true
         onTyped: function (text) { ti.post("/key", { text: text }) }
         onKey: function (name) { ti.post("/key", { key: name }) }
         onReplace: function (back, text) { ti.post("/key", { back: back, text: text }) }
         onCombo: function (keys) { ti.post("/key", { combo: keys }) }
-        // Desktop Mode: back to the trackpad. Apps: dismissed, so nothing
-        // stays running behind.
-        onHideRequested: ti.showTabs ? ti.mode = "trackpad" : ti.closeRequested()
+        // Put away: the trackpad fills the screen.
+        onHideRequested: ti.mode = "trackpad"
     }
 }
