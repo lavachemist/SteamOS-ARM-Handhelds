@@ -19,13 +19,22 @@ window on the bottom screen (GAMESCOPE_BOTTOM_SCREEN_SHOWING), it hands the
 screen to Barry Launcher while the keyboard is open (sm8550-thor-backlightd);
 if it has not within YIELD_WAIT_S the keyboard would type unseen, so it is
 closed again and Steam's keyboard shows on the top screen instead.
+
+Also "Two-screen emulators": the user's own emulators (none ship with PB-OS)
+set to draw their second screen in a window of its own, which gamescope's
+dual-screen branch shows on the bottom screen. Only their config files
+change, a few keys each (TWO_SCREEN); the values found before are kept in
+TWO_SCREEN_STATE and put back when the switch goes off. Nothing changes
+while one of them runs: they write their settings back when they quit.
 """
 from __future__ import annotations
 
 import asyncio
+import glob
 import json
 import os
 import pwd
+import re
 import socket
 import subprocess
 import time
@@ -43,6 +52,44 @@ DIM_MIN = 10
 RGB_DIM_MIN = 20
 SHELLD = "http://127.0.0.1:47824"
 YIELD_WAIT_S = 2.0
+TWO_SCREEN_STATE = "/var/lib/steamos-sm8550/thor-two-screen.json"
+
+# Each emulator: config files (globs under the user's home, AppImage and
+# Flatpak), their kind, and (section, key, value) to set. Kinds: "ini" (Qt,
+# key=value), "toml" (key = value), "xml" (<key>value</key>).
+TWO_SCREEN = {
+    "Azahar": {
+        "configs": [".config/azahar-emu/qt-config.ini", ".var/app/*/config/azahar-emu/qt-config.ini"],
+        "kind": "ini", "process": r"azahar",
+        # View > Screen Layout > Separate Windows (LayoutOption 4).
+        "keys": [("Layout", "layout_option", "4"), ("Layout", "layout_option\\default", "false")],
+    },
+    "Lime3DS": {
+        "configs": [".config/lime3ds-emu/qt-config.ini", ".var/app/*/config/lime3ds-emu/qt-config.ini"],
+        "kind": "ini", "process": r"lime3ds",
+        "keys": [("Layout", "layout_option", "4"), ("Layout", "layout_option\\default", "false")],
+    },
+    "Citra": {
+        "configs": [".config/citra-emu/qt-config.ini", ".var/app/*/config/citra-emu/qt-config.ini"],
+        "kind": "ini", "process": r"citra",
+        "keys": [("Layout", "layout_option", "4"), ("Layout", "layout_option\\default", "false")],
+    },
+    "melonDS": {
+        "configs": [".config/melonDS/melonDS.toml", ".var/app/*/config/melonDS/melonDS.toml"],
+        "kind": "toml", "process": r"melonds",
+        # A second window, kept across launches: the top screen in the first
+        # (screenSizing_TopOnly 4), the bottom one in the second (BotOnly 5).
+        "keys": [("Instance0.Window0", "ScreenSizing", "4"),
+                 ("Instance0.Window1", "Enabled", "true"),
+                 ("Instance0.Window1", "ScreenSizing", "5")],
+    },
+    "Cemu": {
+        "configs": [".config/Cemu/settings.xml", ".var/app/*/config/Cemu/settings.xml"],
+        "kind": "xml", "process": r"cemu",
+        # Options > Separate GamePad view.
+        "keys": [(None, "open_pad", "true")],
+    },
+}
 
 
 def _steam_display_user() -> str | None:
@@ -126,6 +173,211 @@ def _controlsd(req: dict) -> dict | None:
         return None
 
 
+# Two-screen emulators --------------------------------------------------
+
+def _user_home() -> str:
+    home = getattr(decky, "DECKY_USER_HOME", None)
+    if home:
+        return home
+    user = _steam_display_user()
+    return pwd.getpwnam(user).pw_dir if user else os.path.expanduser("~")
+
+
+def _sections(lines: list[str]) -> list[tuple[str | None, int, int]]:
+    """(name, first line, end) of each [section] of an ini/toml file; None
+    for the lines before the first."""
+    out, name, start = [], None, 0
+    for i, line in enumerate(lines):
+        m = re.match(r"\s*\[([^\]]+)\]\s*$", line)
+        if m:
+            out.append((name, start, i))
+            name, start = m.group(1), i + 1
+    out.append((name, start, len(lines)))
+    return out
+
+
+def _key_line(line: str, key: str) -> bool:
+    return "=" in line and line.split("=", 1)[0].strip() == key
+
+
+def _eol(text: str) -> str:
+    """The file's line ending, kept as found (Cemu writes CRLF)."""
+    return "\r\n" if "\r\n" in text else "\n"
+
+
+def _get(text: str, kind: str, section: str | None, key: str) -> str | None:
+    """The key's whole line (ini/toml) or element (xml), None if absent."""
+    if kind == "xml":
+        m = re.search(rf"^[ \t]*<{re.escape(key)}>.*?</{re.escape(key)}>[ \t]*(?=\r?$)", text, re.M)
+        return m.group(0) if m else None
+    lines = text.split(_eol(text))
+    for name, start, end in _sections(lines):
+        if name == section:
+            for line in lines[start:end]:
+                if _key_line(line, key):
+                    return line
+    return None
+
+
+def _line_for(kind: str, key: str, value: str) -> str:
+    return {"ini": f"{key}={value}", "toml": f"{key} = {value}", "xml": f"    <{key}>{value}</{key}>"}[kind]
+
+
+def _put(text: str, kind: str, section: str | None, key: str, line: str | None) -> str:
+    """Sets the key's line (None: removes it), adding the section if needed."""
+    eol = _eol(text)
+    if kind == "xml":
+        m = re.search(rf"^[ \t]*<{re.escape(key)}>.*?</{re.escape(key)}>[ \t]*(?:\r?\n)?", text, re.M)
+        if m:
+            return text[:m.start()] + ((line + eol) if line is not None else "") + text[m.end():]
+        if line is None:
+            return text
+        at = text.find("</content>")
+        return text if at < 0 else text[:at] + line + eol + text[at:]
+    lines = text.split(eol)
+    for name, start, end in _sections(lines):
+        if name != section:
+            continue
+        for i in range(start, end):
+            if _key_line(lines[i], key):
+                if line is None:
+                    del lines[i]
+                else:
+                    lines[i] = line
+                return eol.join(lines)
+        if line is None:
+            return text
+        # After the section's last non-blank line.
+        at = end
+        while at > start and not lines[at - 1].strip():
+            at -= 1
+        lines.insert(at, line)
+        return eol.join(lines)
+    if line is None:
+        return text
+    body = text.rstrip("\r\n")
+    return f"{body}{eol}{eol}[{section}]{eol}{line}{eol}"
+
+
+def _has_section(text: str, section: str | None) -> bool:
+    return section is None or any(name == section for name, _, _ in _sections(text.split(_eol(text))))
+
+
+def _drop_added_section(text: str, section: str) -> str:
+    """Takes away a section _put appended at the end, once it is empty."""
+    eol = _eol(text)
+    tail = f"{eol}{eol}[{section}]{eol}"
+    return text[:-len(tail)] + eol if text.endswith(tail) else text
+
+
+def _write_as_owner(path: str, text: str) -> None:
+    st = os.stat(path)
+    tmp = path + ".dual-screen.tmp"
+    with open(tmp, "w", encoding="utf-8", newline="") as fh:
+        fh.write(text)
+    os.chown(tmp, st.st_uid, st.st_gid)
+    os.chmod(tmp, st.st_mode & 0o7777)
+    os.replace(tmp, path)
+
+
+def _two_screen_files() -> list[tuple[str, str, dict]]:
+    """(emulator, config path, spec) for each config file present."""
+    home = _user_home()
+    out = []
+    for name, spec in TWO_SCREEN.items():
+        for pattern in spec["configs"]:
+            for path in sorted(glob.glob(os.path.join(home, pattern))):
+                out.append((name, path, spec))
+    return out
+
+
+def _two_screen_running() -> list[str]:
+    """Emulators of TWO_SCREEN running now."""
+    found = set()
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit():
+            continue
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as fh:
+                args = fh.read().split(b"\0")
+        except OSError:
+            continue
+        exe = os.path.basename(args[0].decode(errors="replace")).lower()
+        for name, spec in TWO_SCREEN.items():
+            if re.search(spec["process"], exe):
+                found.add(name)
+    return sorted(found)
+
+
+def _load_two_screen() -> dict:
+    try:
+        with open(TWO_SCREEN_STATE, encoding="utf-8") as fh:
+            d = json.load(fh)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _two_screen_applied(text: str, spec: dict) -> bool:
+    return all(_get(text, spec["kind"], sec, key) is not None and
+               _get(text, spec["kind"], sec, key).strip() == _line_for(spec["kind"], key, value).strip()
+               for sec, key, value in spec["keys"])
+
+
+def _two_screen_status() -> dict[str, Any]:
+    state = _load_two_screen()
+    emulators = []
+    for name, path, spec in _two_screen_files():
+        try:
+            with open(path, encoding="utf-8", newline="") as fh:
+                applied = _two_screen_applied(fh.read(), spec)
+        except OSError:
+            continue
+        emulators.append({"name": name, "path": path, "twoScreens": applied})
+    return {"enabled": bool(state.get("enabled")), "emulators": emulators,
+            "running": _two_screen_running()}
+
+
+def _set_two_screen(enabled: bool) -> dict[str, Any]:
+    """Sets (or puts back) every present emulator's keys; refuses while one
+    of them runs. The reply says what happened."""
+    files = _two_screen_files()
+    running = [n for n in _two_screen_running() if any(n == f[0] for f in files)]
+    if running:
+        return {"ok": False, "error": f"Close {', '.join(running)} first: it writes its settings back when it quits."}
+    state = _load_two_screen()
+    originals: dict = state.get("originals", {})
+    changed = []
+    for name, path, spec in files:
+        try:
+            with open(path, encoding="utf-8", newline="") as fh:
+                text = fh.read()
+        except OSError:
+            continue
+        kind, new = spec["kind"], text
+        if enabled:
+            saved = originals.setdefault(path, {})
+            for sec, key, value in spec["keys"]:
+                if kind != "xml" and not _has_section(new, sec):
+                    saved.setdefault(f"{sec}\t", "added")
+                saved.setdefault(f"{sec}\t{key}", _get(text, kind, sec, key))
+                new = _put(new, kind, sec, key, _line_for(kind, key, value))
+        elif path in originals:
+            saved = originals.pop(path)
+            for sec, key, _ in spec["keys"]:
+                if f"{sec}\t{key}" in saved:
+                    new = _put(new, kind, sec, key, saved[f"{sec}\t{key}"])
+            for sec in {sec for sec, _, _ in spec["keys"]}:
+                if saved.get(f"{sec}\t") == "added":
+                    new = _drop_added_section(new, sec)
+        if new != text:
+            _write_as_owner(path, new)
+            changed.append(name)
+    _save(TWO_SCREEN_STATE, json.dumps({"enabled": enabled, "originals": originals}, indent=1) + "\n")
+    decky.logger.info(f"two-screen emulators {'on' if enabled else 'off'}: {', '.join(changed) or 'nothing to change'}")
+    return {"ok": True, "changed": changed}
+
+
 def _rgb_dimmer(state: dict | None) -> int | None:
     light = state.get("lighting") if state else None
     return light.get("dimmer", 100) if light else None
@@ -161,6 +413,12 @@ class Plugin:
     async def set_rgb_dimmer(self, value: int = 100, **_: Any) -> int | None:
         v = max(RGB_DIM_MIN, min(100, int(value)))
         return _rgb_dimmer(_controlsd({"op": "set", "lighting": {"dimmer": v}}))
+
+    async def get_two_screen(self, **_: Any) -> dict[str, Any]:
+        return await asyncio.to_thread(_two_screen_status)
+
+    async def set_two_screen(self, enabled: bool = True, **_: Any) -> dict[str, Any]:
+        return await asyncio.to_thread(_set_two_screen, bool(enabled))
 
     async def barry_keyboard_available(self, **_: Any) -> bool:
         """The bottom screen is on and Barry Launcher can open its keyboard."""

@@ -27,6 +27,8 @@ const setBottomScreen = callable("set_bottom_screen");
 const setDimmers = callable("set_dimmers");
 const setRgbDimmer = callable("set_rgb_dimmer");
 const barryKeyboardAvailable = callable("barry_keyboard_available");
+const getTwoScreen = callable("get_two_screen");
+const setTwoScreen = callable("set_two_screen");
 const openBarryKeyboard = callable("open_barry_keyboard");
 
 // Steam's on-screen keyboard never shows on the top screen: whenever Steam
@@ -117,6 +119,50 @@ function useThrottled(send) {
     }, [send]);
 }
 
+// The user's emulators set to put their second screen in a window of its
+// own, which gamescope shows on the bottom screen (the backend changes only
+// their config files, and puts them back when this goes off).
+function TwoScreenSection() {
+    const [ts, setTs] = useState(null);
+    const [busy, setBusy] = useState(false);
+    const [err, setErr] = useState("");
+    const load = useCallback(() => { getTwoScreen().then(setTs).catch(() => {}); }, []);
+    useEffect(() => {
+        load();
+        const t = setInterval(load, 5000);
+        return () => clearInterval(t);
+    }, [load]);
+    if (!ts) return null;
+    const found = ts.emulators || [];
+    const names = [...new Set(found.map((e) => e.name))];
+    const set = [...new Set(found.filter((e) => e.twoScreens).map((e) => e.name))];
+    const description = !found.length
+        ? "No melonDS, Azahar, Lime3DS, Citra or Cemu settings found yet: open the emulator once, then come back."
+        : ts.enabled
+            ? `Two screens: ${set.join(", ") || "none"}${set.length < names.length ? ` (changed since: ${names.filter((n) => !set.includes(n)).join(", ")}; turn off and on again)` : ""}.`
+            : `Found: ${names.join(", ")}.`;
+    return jsxs(DFL.PanelSection, { title: "Emulators", children: [
+        row(jsx(DFL.ToggleField, {
+            label: "Two-screen emulators",
+            description,
+            checked: !!ts.enabled,
+            disabled: busy || !found.length,
+            onChange: (v) => {
+                setBusy(true);
+                setErr("");
+                setTwoScreen(v).then((r) => {
+                    if (r && !r.ok) setErr(r.error || "Could not change the emulators' settings.");
+                }).catch(() => setErr("Could not change the emulators' settings.")).finally(() => {
+                    setBusy(false);
+                    load();
+                });
+            },
+        })),
+        err && note(err),
+        note("DS, 3DS and Wii U games show their second screen on the bottom one: melonDS gets a second window, Azahar (and Lime3DS, Citra) Separate Windows, Cemu its separate GamePad view. Off puts their settings back. DS games need the standalone melonDS, not RetroArch's."),
+    ] });
+}
+
 function Content() {
     const [st, setSt] = useState(null);
     // The "both screens" slider: where it was last put, or the common level.
@@ -178,6 +224,7 @@ function Content() {
         }),
         note("The dashboard's 100% lights button is this bright; 25% and 50% are shares of it."),
     ] }),
+    jsx(TwoScreenSection, {}),
     ] });
 }
 
