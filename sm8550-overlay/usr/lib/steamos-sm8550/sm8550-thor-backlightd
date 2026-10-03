@@ -42,7 +42,10 @@ Steam's gamescope also gets GAMESCOPE_BOTTOM_SCREEN_YIELD on its root:
 should it be drawing a game's second window on the bottom screen (a DS or
 3DS emulator's, gamescope's dual-screen branch), it hands the screen back to
 Barry Launcher's gamescope for the dashboard or keyboard and takes it again
-once both are "0".
+once both are "0". Holding the AYN button while such a game has the bottom
+screen (GAMESCOPE_BOTTOM_SCREEN_SHOWING, 1 shown or 2 waiting) yields it for
+Barry Launcher's home as well, until the button is held again or the game's
+window is gone.
 
 Idle dim: Steam dims the screens (and later sleeps) when it has seen no
 input for a while, and touches on the bottom screen go to the bottom
@@ -280,21 +283,36 @@ def nudge_steam() -> subprocess.Popen | None:
         return None
 
 
-def set_bottom_screen_yield(on: bool) -> bool:
-    """GAMESCOPE_BOTTOM_SCREEN_YIELD on Steam's display; False if Game Mode
-    is not running."""
+def steam_xprop(*args: str) -> subprocess.CompletedProcess | None:
+    """xprop -root ARGS on Steam's display; None if Game Mode is not running."""
     user = steam_display_user()
     if user is None:
-        return False
-    prop = "GAMESCOPE_BOTTOM_SCREEN_YIELD"
-    args = ["-f", prop, "32c", "-set", prop, "1"] if on else ["-remove", prop]
+        return None
     try:
         return subprocess.run(
             ["runuser", "-u", user, "--", "env", "DISPLAY=:0", "xprop", "-root", *args],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5).returncode == 0
+            capture_output=True, text=True, timeout=5)
     except (OSError, subprocess.TimeoutExpired) as err:
         log(f"cannot reach Steam's display: {err}")
+        return None
+
+
+def set_bottom_screen_yield(on: bool) -> bool:
+    """GAMESCOPE_BOTTOM_SCREEN_YIELD on Steam's display; False if Game Mode
+    is not running."""
+    prop = "GAMESCOPE_BOTTOM_SCREEN_YIELD"
+    r = steam_xprop(*(["-f", prop, "32c", "-set", prop, "1"] if on else ["-remove", prop]))
+    return r is not None and r.returncode == 0
+
+
+def bottom_screen_game() -> bool:
+    """Steam's gamescope has a game's window for the bottom screen, shown
+    there or waiting for it (GAMESCOPE_BOTTOM_SCREEN_SHOWING 1 or 2)."""
+    r = steam_xprop("GAMESCOPE_BOTTOM_SCREEN_SHOWING")
+    if r is None or r.returncode != 0:
         return False
+    value = r.stdout.rsplit("=", 1)[-1].strip()
+    return value in ("1", "2")
 
 
 def main() -> int:
@@ -369,6 +387,8 @@ def run(bl_fd: int, bottom_path: str, bottom_max: int, top_max: int) -> int:
     home_count = 0
     yield_sent: bool | None = None  # GAMESCOPE_BOTTOM_SCREEN_YIELD as last set
     yield_retry_at = 0.0  # after Game Mode was not found
+    home_over_game = False  # Home yields the bottom screen of a dual-screen game
+    home_checked = 0.0
     log(f"following {BOTTOM} (max {bottom_max}) -> {TOP} (max {top_max})")
     while True:
         poller = select.poll()
@@ -438,14 +458,27 @@ def run(bl_fd: int, bottom_path: str, bottom_max: int, top_max: int) -> int:
 
         if pressed_at is not None and time.monotonic() - pressed_at >= LONG_PRESS_S:
             pressed_at = None  # the release does nothing more
-            home_count += 1
-            write(HOME, str(home_count))
             if read(OVERLAY, "0") == "1":
                 write(OVERLAY, "0")
-            log("AYN button held: home")
+            if home_over_game:
+                # Held again: the game's window gets the bottom screen back.
+                home_over_game = False
+                log("AYN button held: back to the game")
+            else:
+                home_over_game = bottom_screen_game()
+                home_checked = time.monotonic()
+                home_count += 1
+                write(HOME, str(home_count))
+                log(f"AYN button held: home{' over the game' if home_over_game else ''}")
+        elif home_over_game and time.monotonic() - home_checked >= YIELD_RETRY_S:
+            # The game quit meanwhile: nothing to go back to.
+            home_checked = time.monotonic()
+            if not bottom_screen_game():
+                home_over_game = False
+                log("the game's window is gone; Home stays")
 
         overlay = read(OVERLAY, "0") == "1"
-        want_yield = overlay or read(TOP_INPUT, "0") == "1"
+        want_yield = overlay or home_over_game or read(TOP_INPUT, "0") == "1"
         if want_yield != yield_sent and time.monotonic() >= yield_retry_at:
             if set_bottom_screen_yield(want_yield):
                 yield_sent = want_yield
