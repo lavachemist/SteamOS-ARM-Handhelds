@@ -32,6 +32,7 @@ EVENT = struct.Struct("llHHi")
 # 1240 x 1080 TopInput.qml lays out at s = 1.
 SCREEN_W, SCREEN_H = 1240, 1080
 HEARTBEAT_S = 2.0  # no word from the window this long: KWin gets the screen back
+OWED_RETRY_S = 5
 # As TopInput.qml, in design pixels and seconds.
 TAP_SLOP = 14
 TAP_S = 0.22
@@ -83,6 +84,11 @@ class Trackpad:
         self.held = {"left": 0, "right": 0}
         self.presses = {"left": 0, "right": 0}
         self.event: str | None = None
+        # A touchscreen KWin did not take back (its session ended while the
+        # trackpad had it, and KWin keeps it off across logins): asked again
+        # every OWED_RETRY_S until a KWin says yes.
+        self.owed: str | None = None
+        self.owed_tried = 0.0
         self.stop = threading.Event()
         # Taking the touchscreen from KWin and giving it back, one at a time:
         # the window says it is up every 250 ms, and asking KWin takes a while.
@@ -128,6 +134,13 @@ class Trackpad:
                 with self.switch:
                     if self.active and time.monotonic() - self.beat > HEARTBEAT_S:
                         self._stop("no word from the trackpad window")
+            if self.owed and not self.active and time.monotonic() - self.owed_tried >= OWED_RETRY_S:
+                with self.switch:
+                    if self.owed and not self.active:
+                        self.owed_tried = time.monotonic()
+                        if kwin_touch(self.owed, True):
+                            self.log(f"KWin has {self.owed} back, late")
+                            self.owed = None
 
     def _start(self) -> None:
         event = touch_device()
@@ -144,6 +157,7 @@ class Trackpad:
             self.log("KWin would not let go of the touchscreen: the trackpad window keeps its touches")
             return
         self.event = event
+        self.owed = None
         self.stop.clear()
         self.active = True
         threading.Thread(target=self._read, args=(fd,), daemon=True).start()
@@ -160,7 +174,9 @@ class Trackpad:
         if self.event and kwin_touch(self.event, True):
             self.log(f"KWin has the touchscreen back ({why})")
         else:
-            self.log(f"could not give KWin the touchscreen back ({why})")
+            self.log(f"could not give KWin the touchscreen back ({why}); asking again every {OWED_RETRY_S} s")
+            self.owed = self.event
+            self.owed_tried = time.monotonic()
         self.event = None
 
     # The touchscreen's side ---------------------------------------------

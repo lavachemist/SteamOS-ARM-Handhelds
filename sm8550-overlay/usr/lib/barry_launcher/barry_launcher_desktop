@@ -12,6 +12,16 @@ if curl -fs -X POST -H "Content-Type: application/json" -d "{}" "$api/home" >/de
   exit 0
 fi
 systemctl --user start barry_launcher_inputd.service
+# The bottom touchscreen is KWin's: Barry's trackpad takes it while open and
+# could not give it back if the session ended meanwhile, which KWin then
+# keeps across logins (kcminputrc), leaving Barry deaf to touch.
+for name in /sys/class/input/event*/device/name; do
+  if [[ "$(cat "$name" 2>/dev/null)" == bottom_touchscreen ]]; then
+    ev="${name#/sys/class/input/}"
+    busctl --user set-property org.kde.KWin "/org/kde/KWin/InputDevice/${ev%%/*}" \
+      org.kde.KWin.InputDevice enabled b true >/dev/null 2>&1 || true
+  fi
+done
 # KWin starts its input method at login, so on the first run it is still
 # Plasma's: --notify makes KWin switch to Barry's at once.
 im=/usr/share/applications/org.barry_launcher.keyboard.desktop
